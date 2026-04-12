@@ -1,0 +1,19 @@
+{
+  "name": "@plexus/shared-types",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "eslint": "^9.6.0"
+  }
+}

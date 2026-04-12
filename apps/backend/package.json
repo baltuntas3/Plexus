@@ -1,0 +1,42 @@
+{
+  "name": "@plexus/backend",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  },
+  "dependencies": {
+    "@plexus/shared-types": "workspace:*",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.0",
+    "zod": "^3.23.8",
+    "jsonwebtoken": "^9.0.2",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "pino": "^9.3.1",
+    "pino-pretty": "^11.2.1",
+    "openai": "^4.52.0",
+    "@anthropic-ai/sdk": "^0.24.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/bcrypt": "^5.0.2",
+    "@types/cors": "^2.8.17",
+    "@types/jest": "^29.5.12",
+    "typescript": "^5.5.0",
+    "tsx": "^4.16.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.0",
+    "eslint": "^9.6.0"
+  }
+}

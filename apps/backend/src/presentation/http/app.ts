@@ -6,12 +6,15 @@ import { errorHandler } from "./middleware/error-handler.js";
 import { createAuthRouter } from "./routes/auth-router.js";
 import { createPromptRouter } from "./routes/prompt-router.js";
 import { createModelsRouter } from "./routes/models-router.js";
+import { createDatasetRouter } from "./routes/dataset-router.js";
 import type { AuthComposition } from "../../composition/auth-composition.js";
 import type { PromptComposition } from "../../composition/prompt-composition.js";
+import type { DatasetComposition } from "../../composition/dataset-composition.js";
 
 export interface AppDependencies {
   auth: AuthComposition;
   prompts: PromptComposition;
+  datasets: DatasetComposition;
 }
 
 export const createApp = (deps: AppDependencies): Express => {
@@ -27,6 +30,7 @@ export const createApp = (deps: AppDependencies): Express => {
 
   app.use("/auth", createAuthRouter(deps.auth));
   app.use("/prompts", createPromptRouter(deps.prompts, deps.auth.tokenService));
+  app.use("/datasets", createDatasetRouter(deps.datasets, deps.auth.tokenService));
   app.use("/models", createModelsRouter(deps.auth.tokenService));
 
   app.use(errorHandler);

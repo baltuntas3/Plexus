@@ -32,9 +32,15 @@ describe("enhanced generation prompt", () => {
     expect(ENHANCED_SYSTEM_PROMPT).toContain('-- "Billing" -->');
   });
 
-  it("describes the allowed critic-revision loop pattern", () => {
-    expect(ENHANCED_SYSTEM_PROMPT).toContain("Check: tone");
-    expect(ENHANCED_SYSTEM_PROMPT).toContain("Revise tone");
+  it("describes the required critic-revision loop pattern", () => {
+    expect(ENHANCED_SYSTEM_PROMPT).toContain("Check:");
+    expect(ENHANCED_SYSTEM_PROMPT).toContain("Revise:");
+    expect(ENHANCED_SYSTEM_PROMPT).toContain("critic-revision");
+  });
+
+  it("forbids plain end/output nodes as terminals", () => {
+    expect(ENHANCED_SYSTEM_PROMPT).toContain("FORBIDDEN as a terminal");
+    expect(ENHANCED_SYSTEM_PROMPT).toContain("zero outgoing edges");
   });
 
   it("enforces strict output format (flowchart TD, no fences)", () => {

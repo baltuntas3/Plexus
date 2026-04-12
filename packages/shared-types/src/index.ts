@@ -1,6 +1,7 @@
 export * from "./auth.js";
 export * from "./braid.js";
 export * from "./common.js";
+export * from "./dataset.js";
 export * from "./lint.js";
 export * from "./model.js";
 export * from "./prompt.js";

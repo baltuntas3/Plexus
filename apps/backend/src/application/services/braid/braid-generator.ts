@@ -33,7 +33,7 @@ const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 // Bump whenever generation prompt templates change so stale cache entries
 // generated with older templates are not reused. Old entries will simply
 // expire via TTL.
-const PROMPT_TEMPLATE_VERSION = "v2-enhanced";
+const PROMPT_TEMPLATE_VERSION = "v3-enhanced-verification-loops";
 
 export class BraidGenerator {
   constructor(

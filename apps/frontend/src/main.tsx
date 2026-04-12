@@ -10,6 +10,7 @@ import { installApiAuthInterceptor } from "./lib/configure-api.js";
 
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
+import "@xyflow/react/dist/style.css";
 
 installApiAuthInterceptor();
 

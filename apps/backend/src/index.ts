@@ -6,6 +6,7 @@ import { createAuthComposition } from "./composition/auth-composition.js";
 import { createPromptComposition } from "./composition/prompt-composition.js";
 import { createAIComposition } from "./composition/ai-composition.js";
 import { createBraidComposition } from "./composition/braid-composition.js";
+import { createDatasetComposition } from "./composition/dataset-composition.js";
 
 const bootstrap = async (): Promise<void> => {
   await connectMongo();
@@ -14,7 +15,8 @@ const bootstrap = async (): Promise<void> => {
   const ai = createAIComposition();
   const braid = createBraidComposition(ai.factory);
   const prompts = createPromptComposition(braid.generator, braid.linter);
-  const app = createApp({ auth, prompts });
+  const datasets = createDatasetComposition(ai.factory);
+  const app = createApp({ auth, prompts, datasets });
 
   const server = app.listen(env.PORT, () => {
     logger.info(`API listening on http://localhost:${env.PORT}`);

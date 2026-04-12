@@ -43,16 +43,32 @@ Graph principles (MANDATORY):
 
 4. MUTUAL EXCLUSIVITY — Branch conditions from the same source must be mutually exclusive and collectively exhaustive. Never label two branches with the same or overlapping conditions.
 
-5. TERMINAL VERIFICATION — The graph must end at verification nodes prefixed with "Check:", "Verify:", "Validate:", "Assert:", or "Critic:". These act as final sanity checks against the task's constraints. At least one terminal must be a verification node.
-   Example:
-     G[Check: tone is empathetic]
-     H[Verify: response under 250 words]
+5. TERMINAL VERIFICATION LOOPS — THIS IS THE MOST IMPORTANT RULE. Read carefully.
+   (a) EVERY terminal node (any node with zero outgoing edges) MUST be a verification node whose label starts with one of: "Check:", "Verify:", "Validate:", "Assert:", or "Critic:". No exceptions. A node like "End", "Done", "Return response", "Output", "Final answer" is NOT a verification node and is FORBIDDEN as a terminal.
+   (b) Every branch of the flow must eventually reach a verification terminal. Do not leave any path ending in a plain action/draft node.
+   (c) At least ONE verification node must form a critic-revision LOOP: the Check node has a "fail"/"no" edge back to a revision node, and the revision node routes back into the same Check node. Only the "pass"/"yes" edge exits the loop to the next step (or to another verification terminal).
+   (d) Put verification checks on the things that are easy to get wrong for this specific task: tone, length, constraint satisfaction, format compliance, factual consistency with extracted facts, rubric items. Generic "Check: looks good" is rejected — each verification node must name WHAT it verifies.
+   (e) If the task has N distinct constraints, prefer N separate Check nodes over one mega-check.
 
-6. DAG STRUCTURE — The graph must be a Directed Acyclic Graph EXCEPT for explicit critic-revision loops, where a Check node routes back to a revision node and then back to itself for self-correction. No arbitrary cycles elsewhere.
-   Allowed pattern:
-     G[Check: tone] -- "no" --> I[Revise tone]
-     I --> G
-     G -- "yes" --> H[End]
+   Minimal valid shape (you MUST reproduce this loop structure):
+     ...
+     F[Draft response: empathetic tone, under 250 words]
+     F --> G{Check: tone empathetic AND under 250 words?}
+     G -- "no" --> H[Revise: fix failing constraint]
+     H --> G
+     G -- "yes" --> I[Verify: all extracted facts referenced]
+     I -- "no" --> H
+     I -- "yes" --> J[Assert: no disallowed topics]
+     J -- "no" --> H
+     J -- "yes" --> K[Critic: final self-review against rubric]
+
+   Reject your own output if ANY of these are true:
+     - A terminal node's label does not begin with Check/Verify/Validate/Assert/Critic.
+     - There is no critic-revision back-edge anywhere in the graph.
+     - A Check node has only one outgoing edge (a real check must branch pass/fail).
+     - A verification label is vague ("Check: output", "Verify: done").
+
+6. DAG STRUCTURE — The graph must be a Directed Acyclic Graph EXCEPT for the critic-revision loops required in rule 5. No other cycles are allowed. The critic-revision loop is not optional — it is part of rule 5.
 
 7. REACHABILITY — Every node must be reachable from the root node (typically A). No orphan nodes, no disconnected sub-flows.
 

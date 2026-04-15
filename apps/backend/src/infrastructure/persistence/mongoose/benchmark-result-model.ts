@@ -1,0 +1,57 @@
+import { Schema, model } from "mongoose";
+
+const RESULT_STATUSES = ["completed", "failed"] as const;
+
+// One row per (benchmarkId × testCaseId × promptVersionId × solverModel).
+// The compound unique index is the idempotency contract that lets the runner
+// safely resume after a restart — an upsert on this key will update the
+// existing row rather than create a duplicate.
+
+const benchmarkResultSchema = new Schema(
+  {
+    benchmarkId: {
+      type: Schema.Types.ObjectId,
+      ref: "Benchmark",
+      required: true,
+      index: true,
+    },
+    testCaseId: { type: String, required: true },
+    promptVersionId: {
+      type: Schema.Types.ObjectId,
+      ref: "PromptVersion",
+      required: true,
+    },
+    solverModel: { type: String, required: true },
+
+    input: { type: String, required: true },
+    candidateOutput: { type: String, required: true, default: "" },
+
+    judgeAccuracy: { type: Number, required: true },
+    judgeCoherence: { type: Number, required: true },
+    judgeInstruction: { type: Number, required: true },
+    judgeReasoning: { type: String, required: true, default: "" },
+    rawScore: { type: Number, required: true },
+    verbosityPenalty: { type: Number, required: true },
+    finalScore: { type: Number, required: true },
+
+    candidateInputTokens: { type: Number, required: true, default: 0 },
+    candidateOutputTokens: { type: Number, required: true, default: 0 },
+    candidateCostUsd: { type: Number, required: true, default: 0 },
+    judgeInputTokens: { type: Number, required: true, default: 0 },
+    judgeOutputTokens: { type: Number, required: true, default: 0 },
+    judgeCostUsd: { type: Number, required: true, default: 0 },
+    totalCostUsd: { type: Number, required: true, default: 0 },
+
+    latencyMs: { type: Number, required: true, default: 0 },
+    status: { type: String, enum: RESULT_STATUSES, required: true },
+    error: { type: String, default: null },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } },
+);
+
+benchmarkResultSchema.index(
+  { benchmarkId: 1, testCaseId: 1, promptVersionId: 1, solverModel: 1 },
+  { unique: true },
+);
+
+export const BenchmarkResultModel = model("BenchmarkResult", benchmarkResultSchema);

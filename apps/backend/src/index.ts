@@ -6,7 +6,8 @@ import { createAuthComposition } from "./composition/auth-composition.js";
 import { createPromptComposition } from "./composition/prompt-composition.js";
 import { createAIComposition } from "./composition/ai-composition.js";
 import { createBraidComposition } from "./composition/braid-composition.js";
-import { createDatasetComposition } from "./composition/dataset-composition.js";
+import { createBenchmarkComposition } from "./composition/benchmark-composition.js";
+import { InProcessJobQueue } from "./infrastructure/queue/in-process-job-queue.js";
 
 const bootstrap = async (): Promise<void> => {
   await connectMongo();
@@ -15,8 +16,14 @@ const bootstrap = async (): Promise<void> => {
   const ai = createAIComposition();
   const braid = createBraidComposition(ai.factory);
   const prompts = createPromptComposition(braid.generator, braid.linter);
-  const datasets = createDatasetComposition(ai.factory);
-  const app = createApp({ auth, prompts, datasets });
+  const queue = new InProcessJobQueue({
+    concurrency: 2,
+    onError: (jobId, jobName, err) => {
+      logger.error({ jobId, jobName, err }, "job failed");
+    },
+  });
+  const benchmarks = createBenchmarkComposition(ai.factory, queue);
+  const app = createApp({ auth, prompts, benchmarks });
 
   const server = app.listen(env.PORT, () => {
     logger.info(`API listening on http://localhost:${env.PORT}`);

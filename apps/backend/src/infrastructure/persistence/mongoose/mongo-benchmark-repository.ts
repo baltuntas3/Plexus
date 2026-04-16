@@ -111,14 +111,20 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
 
   async updateTestCases(
     id: string,
-    updates: Array<{ id: string; expectedOutput: string | null }>,
+    updates: Array<{ id: string; input?: string; expectedOutput: string | null }>,
+    additions: Array<{ id: string; input: string; expectedOutput: string | null }>,
   ): Promise<void> {
     const doc = await BenchmarkModel.findById(id);
     if (!doc) return;
     const bm = doc as unknown as BenchmarkDoc;
     for (const update of updates) {
       const tc = bm.testCases.find((t) => t.id === update.id);
-      if (tc) tc.expectedOutput = update.expectedOutput;
+      if (!tc) continue;
+      if (update.input !== undefined) tc.input = update.input;
+      tc.expectedOutput = update.expectedOutput;
+    }
+    for (const addition of additions) {
+      bm.testCases.push(addition);
     }
     await doc.save();
   }

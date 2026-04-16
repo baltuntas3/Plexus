@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
@@ -5,11 +6,12 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 export interface UpdateTestCasesCommand {
   benchmarkId: string;
   ownerId: string;
-  updates: Array<{ id: string; expectedOutput: string | null }>;
+  updates: Array<{ id: string; input?: string; expectedOutput: string | null }>;
+  additions: Array<{ input: string; expectedOutput: string | null }>;
 }
 
-// Allows the owner to annotate generated test cases with expected outputs
-// while the benchmark is still in "draft" status.
+// Allows the owner to edit test case inputs, annotate expected outputs, and
+// add new cases while the benchmark is still in "draft" status.
 export class UpdateTestCasesUseCase {
   constructor(private readonly benchmarks: IBenchmarkRepository) {}
 
@@ -24,6 +26,7 @@ export class UpdateTestCasesUseCase {
         "Test cases can only be edited while the benchmark is in draft status",
       );
     }
-    await this.benchmarks.updateTestCases(command.benchmarkId, command.updates);
+    const additions = command.additions.map((a) => ({ ...a, id: randomUUID() }));
+    await this.benchmarks.updateTestCases(command.benchmarkId, command.updates, additions);
   }
 }

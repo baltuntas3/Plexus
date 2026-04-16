@@ -44,6 +44,7 @@ export interface IBenchmarkRepository {
   updateProgress(id: string, progress: BenchmarkProgress): Promise<void>;
   updateTestCases(
     id: string,
-    updates: Array<{ id: string; expectedOutput: string | null }>,
+    updates: Array<{ id: string; input?: string; expectedOutput: string | null }>,
+    additions: Array<{ id: string; input: string; expectedOutput: string | null }>,
   ): Promise<void>;
 }

@@ -74,7 +74,7 @@ interface ChatPanelProps {
   promptId: string;
   version: string;
   currentMermaid: string | null;
-  onResult: (mermaidCode: string, qualityScore: GraphQualityScoreDto) => void;
+  onResult: (mermaidCode: string, qualityScore: GraphQualityScoreDto, newVersion: string | null) => void;
 }
 
 const ChatPanel = ({ promptId, version, currentMermaid, onResult }: ChatPanelProps) => {
@@ -112,12 +112,17 @@ const ChatPanel = ({ promptId, version, currentMermaid, onResult }: ChatPanelPro
         },
       });
 
-      const agentMsg: ChatMessage = {
-        role: "agent",
-        content: `Graph updated — ${result.qualityScore.overall.toFixed(0)}/100 quality · $${result.usage.totalUsd.toFixed(4)}`,
-      };
-      setMessages((prev) => [...prev, agentMsg]);
-      onResult(result.mermaidCode, result.qualityScore);
+      if (result.type === "question") {
+        const agentMsg: ChatMessage = { role: "agent", content: result.question };
+        setMessages((prev) => [...prev, agentMsg]);
+      } else {
+        const label = result.newVersion
+          ? `Created ${result.newVersion} — ${result.qualityScore.overall.toFixed(0)}/100 quality · $${result.usage.totalUsd.toFixed(4)}`
+          : `Graph updated — ${result.qualityScore.overall.toFixed(0)}/100 quality · $${result.usage.totalUsd.toFixed(4)}`;
+        const agentMsg: ChatMessage = { role: "agent", content: label };
+        setMessages((prev) => [...prev, agentMsg]);
+        onResult(result.mermaidCode, result.qualityScore, result.newVersion);
+      }
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Agent failed";
       const errMsg: ChatMessage = { role: "agent", content: `Error: ${message}` };
@@ -343,8 +348,14 @@ export const VersionDetailPage = () => {
     setEditingBraid(false);
   };
 
-  // Called by ChatPanel when the agent successfully returns a new graph
-  const handleChatResult = (mermaidCode: string, score: GraphQualityScoreDto) => {
+  // Called by ChatPanel when the agent successfully returns a new graph.
+  // When initial generation created a new version, navigate there so the user
+  // is always looking at the canonical BRAID version.
+  const handleChatResult = (mermaidCode: string, score: GraphQualityScoreDto, newVersion: string | null) => {
+    if (newVersion && id) {
+      navigate(`/prompts/${id}/versions/${newVersion}`);
+      return;
+    }
     setLiveMermaid(mermaidCode);
     setBraidDraft(mermaidCode);
     setQualityScore(score);

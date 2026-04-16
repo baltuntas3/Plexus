@@ -74,7 +74,8 @@ export interface BenchmarkTestCaseDto {
 }
 
 export interface UpdateTestCasesRequest {
-  updates: Array<{ id: string; expectedOutput: string | null }>;
+  updates: Array<{ id: string; input?: string; expectedOutput: string | null }>;
+  additions?: Array<{ input: string; expectedOutput: string | null }>;
 }
 
 export interface BenchmarkDetailDto extends BenchmarkDto {

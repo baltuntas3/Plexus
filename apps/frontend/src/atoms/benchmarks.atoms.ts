@@ -49,13 +49,13 @@ export const updateTestCasesAtom = atom(
   async (
     get,
     _set,
-    { benchmarkId, updates }: { benchmarkId: string } & UpdateTestCasesRequest,
+    { benchmarkId, updates, additions }: { benchmarkId: string } & UpdateTestCasesRequest,
   ): Promise<void> => {
     const tokens = get(tokensAtom);
     if (!tokens) throw new Error("Not authenticated");
     await apiRequest(`/benchmarks/${benchmarkId}/test-cases`, {
       method: "PATCH",
-      body: { updates },
+      body: { updates, additions },
       token: tokens.accessToken,
     });
   },

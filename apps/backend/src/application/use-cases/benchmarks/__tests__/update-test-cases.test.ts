@@ -30,6 +30,7 @@ describe("UpdateTestCasesUseCase", () => {
         { id: "tc1", expectedOutput: "answer one" },
         { id: "tc2", expectedOutput: null },
       ],
+      additions: [],
     });
 
     const updated = await benchmarks.findById(bm.id);
@@ -44,7 +45,7 @@ describe("UpdateTestCasesUseCase", () => {
     await benchmarks.updateStatus(bm.id, { status: "queued" });
 
     await expect(
-      useCase.execute({ benchmarkId: bm.id, ownerId: "u1", updates: [] }),
+      useCase.execute({ benchmarkId: bm.id, ownerId: "u1", updates: [], additions: [] }),
     ).rejects.toThrow(/draft/);
   });
 
@@ -54,7 +55,7 @@ describe("UpdateTestCasesUseCase", () => {
     const bm = await buildDraftBenchmark(benchmarks);
 
     await expect(
-      useCase.execute({ benchmarkId: bm.id, ownerId: "other", updates: [] }),
+      useCase.execute({ benchmarkId: bm.id, ownerId: "other", updates: [], additions: [] }),
     ).rejects.toThrow(/don't own/);
   });
 });

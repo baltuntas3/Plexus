@@ -20,11 +20,16 @@ export interface ChatBraidCommand {
   currentMermaid?: string;
 }
 
-export interface ChatBraidResult {
-  mermaidCode: string;
-  qualityScore: GraphQualityScore;
-  cost: TokenCost;
-}
+export type ChatBraidResult =
+  | { type: "question"; question: string }
+  | {
+      type: "diagram";
+      mermaidCode: string;
+      // Non-null when initial generation created a new version; null on refinement.
+      newVersionName: string | null;
+      qualityScore: GraphQualityScore;
+      cost: TokenCost;
+    };
 
 export class ChatBraidUseCase {
   constructor(
@@ -55,15 +60,13 @@ export class ChatBraidUseCase {
       currentMermaid: command.currentMermaid,
     });
 
+    // Agent asked a clarifying question — nothing to save or lint.
+    if (chatResult.type === "question") {
+      return { type: "question", question: chatResult.question };
+    }
+
     // Validate output; throws ValidationError on bad Mermaid
     const graph = BraidGraph.parse(chatResult.mermaidCode);
-
-    // Persist — preserve existing generatorModel on refinement
-    if (command.currentMermaid) {
-      await this.versions.updateBraidGraph(version.id, graph.mermaidCode);
-    } else {
-      await this.versions.setBraidGraph(version.id, graph.mermaidCode, command.generatorModel);
-    }
 
     const cost = calculateCost(
       command.generatorModel,
@@ -72,6 +75,23 @@ export class ChatBraidUseCase {
     );
     const qualityScore = this.linter.lint(graph);
 
-    return { mermaidCode: graph.mermaidCode, qualityScore, cost };
+    if (command.currentMermaid) {
+      // Refinement — update the existing BRAID version in place.
+      await this.versions.updateBraidGraph(version.id, graph.mermaidCode);
+      return { type: "diagram", mermaidCode: graph.mermaidCode, newVersionName: null, qualityScore, cost };
+    }
+
+    // Initial generation — create a new version so the classical prompt
+    // and the BRAID version are separate, comparable entries.
+    const count = await this.versions.countByPrompt(command.promptId);
+    const newVersionName = `v${count + 1}`;
+    const newVersion = await this.versions.create({
+      promptId: command.promptId,
+      version: newVersionName,
+      classicalPrompt: version.classicalPrompt,
+    });
+    await this.versions.setBraidGraph(newVersion.id, graph.mermaidCode, command.generatorModel);
+
+    return { type: "diagram", mermaidCode: graph.mermaidCode, newVersionName, qualityScore, cost };
   }
 }

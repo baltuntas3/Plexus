@@ -73,8 +73,10 @@ export const BenchmarkDetailPage = () => {
   const [benchmark, setBenchmark] = useState<BenchmarkDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
-  // Local edits to expected outputs while in draft mode.
+  // Local edits while in draft mode.
+  const [inputEdits, setInputEdits] = useState<Record<string, string>>({});
   const [expectedOutputs, setExpectedOutputs] = useState<Record<string, string>>({});
+  const [newCases, setNewCases] = useState<Array<{ localId: string; input: string; expectedOutput: string }>>([]);
   const [judgeAnalysis, setJudgeAnalysis] = useState<BenchmarkJudgeAnalysisDto | null>(null);
   const [judgeAnalysisLoading, setJudgeAnalysisLoading] = useState(false);
   const [judgeAnalysisError, setJudgeAnalysisError] = useState<string | null>(null);
@@ -87,12 +89,16 @@ export const BenchmarkDetailPage = () => {
       .then((bm) => {
         if (!cancelled) {
           setBenchmark(bm);
-          // Seed local state with any previously saved expected outputs.
-          const initial: Record<string, string> = {};
+          // Seed local edits with any previously saved values.
+          const inputs: Record<string, string> = {};
+          const outputs: Record<string, string> = {};
           for (const tc of bm.testCases) {
-            if (tc.expectedOutput) initial[tc.id] = tc.expectedOutput;
+            inputs[tc.id] = tc.input;
+            if (tc.expectedOutput) outputs[tc.id] = tc.expectedOutput;
           }
-          setExpectedOutputs(initial);
+          setInputEdits(inputs);
+          setExpectedOutputs(outputs);
+          setNewCases([]);
         }
       })
       .catch((err) => {
@@ -174,12 +180,17 @@ export const BenchmarkDetailPage = () => {
     if (!id || !benchmark) return;
     setStarting(true);
     try {
-      // Save any annotated expected outputs before starting.
+      // Flush all local edits before starting.
       const updates = benchmark.testCases.map((tc) => ({
         id: tc.id,
+        input: inputEdits[tc.id] !== tc.input ? inputEdits[tc.id] : undefined,
         expectedOutput: expectedOutputs[tc.id] ?? null,
       }));
-      await updateTestCases({ benchmarkId: id, updates });
+      const additions = newCases.map((nc) => ({
+        input: nc.input,
+        expectedOutput: nc.expectedOutput || null,
+      }));
+      await updateTestCases({ benchmarkId: id, updates, additions });
       await startBenchmark(id);
       const bm = await fetchDetail(id);
       setBenchmark(bm);
@@ -287,9 +298,28 @@ export const BenchmarkDetailPage = () => {
           <TestCasesPanel
             testCases={benchmark.testCases}
             editable={benchmark.status === "draft"}
+            inputEdits={inputEdits}
+            onInputChange={(tcId, value) =>
+              setInputEdits((prev) => ({ ...prev, [tcId]: value }))
+            }
             expectedOutputs={expectedOutputs}
-            onExpectedOutputChange={(id, value) =>
-              setExpectedOutputs((prev) => ({ ...prev, [id]: value }))
+            onExpectedOutputChange={(tcId, value) =>
+              setExpectedOutputs((prev) => ({ ...prev, [tcId]: value }))
+            }
+            newCases={newCases}
+            onNewCaseChange={(localId, field, value) =>
+              setNewCases((prev) =>
+                prev.map((nc) => nc.localId === localId ? { ...nc, [field]: value } : nc),
+              )
+            }
+            onAddCase={() =>
+              setNewCases((prev) => [
+                ...prev,
+                { localId: crypto.randomUUID(), input: "", expectedOutput: "" },
+              ])
+            }
+            onRemoveNewCase={(localId) =>
+              setNewCases((prev) => prev.filter((nc) => nc.localId !== localId))
             }
             results={benchmark.results}
             versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
@@ -340,11 +370,23 @@ export const BenchmarkDetailPage = () => {
 
 // --- Test Cases Panel ---
 
+interface NewCase {
+  localId: string;
+  input: string;
+  expectedOutput: string;
+}
+
 interface TestCasesPanelProps {
   testCases: BenchmarkTestCaseDto[];
   editable: boolean;
+  inputEdits: Record<string, string>;
+  onInputChange: (id: string, value: string) => void;
   expectedOutputs: Record<string, string>;
   onExpectedOutputChange: (id: string, value: string) => void;
+  newCases: NewCase[];
+  onNewCaseChange: (localId: string, field: "input" | "expectedOutput", value: string) => void;
+  onAddCase: () => void;
+  onRemoveNewCase: (localId: string) => void;
   results: BenchmarkResultDto[];
   versionLabels: Record<string, string>;
 }
@@ -352,18 +394,73 @@ interface TestCasesPanelProps {
 const SCORE_COLOR: Record<number, string> = { 5: "teal", 4: "green", 3: "yellow", 2: "orange", 1: "red" };
 const scoreColor = (v: number) => SCORE_COLOR[Math.round(v)] ?? "gray";
 
+const CandidateCard = ({
+  r,
+  versionLabels,
+}: {
+  r: BenchmarkResultDto;
+  versionLabels: Record<string, string>;
+}) => {
+  const vLabel = versionLabels[r.promptVersionId] ?? r.promptVersionId.slice(-6);
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap="xs">
+            <Badge variant="light" color="blue" size="sm">{vLabel}</Badge>
+            <Text size="xs" c="dimmed">{r.solverModel}</Text>
+          </Group>
+          <Group gap={4}>
+            <Tooltip label="Accuracy" withArrow>
+              <Badge color={scoreColor(r.judgeAccuracy)} size="xs" variant="filled">
+                Acc {r.judgeAccuracy}/5
+              </Badge>
+            </Tooltip>
+            <Tooltip label="Coherence" withArrow>
+              <Badge color={scoreColor(r.judgeCoherence)} size="xs" variant="filled">
+                Coh {r.judgeCoherence}/5
+              </Badge>
+            </Tooltip>
+            <Tooltip label="Instruction following" withArrow>
+              <Badge color={scoreColor(r.judgeInstruction)} size="xs" variant="filled">
+                Ins {r.judgeInstruction}/5
+              </Badge>
+            </Tooltip>
+            <Badge color="gray" size="xs" variant="light">
+              {r.finalScore.toFixed(3)}
+            </Badge>
+          </Group>
+        </Group>
+        <Text size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+          {r.candidateOutput}
+        </Text>
+        {r.judgeReasoning && (
+          <div>
+            <Text size="xs" c="dimmed" fw={500} mb={2}>Judge reasoning</Text>
+            <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+              {r.judgeReasoning}
+            </Text>
+          </div>
+        )}
+      </Stack>
+    </Card>
+  );
+};
+
 const TestCasesPanel = ({
   testCases,
   editable,
+  inputEdits,
+  onInputChange,
   expectedOutputs,
   onExpectedOutputChange,
+  newCases,
+  onNewCaseChange,
+  onAddCase,
+  onRemoveNewCase,
   results,
   versionLabels,
 }: TestCasesPanelProps) => {
-  if (testCases.length === 0) {
-    return <Text c="dimmed" size="sm">No test cases.</Text>;
-  }
-
   const resultsByCase = new Map<string, BenchmarkResultDto[]>();
   for (const r of results) {
     if (r.status !== "completed") continue;
@@ -372,25 +469,24 @@ const TestCasesPanel = ({
     resultsByCase.set(r.testCaseId, list);
   }
 
-  const hasResults = results.some((r) => r.status === "completed");
+  const totalCount = testCases.length + newCases.length;
+
+  if (totalCount === 0 && !editable) {
+    return <Text c="dimmed" size="sm">No test cases.</Text>;
+  }
 
   return (
     <Stack gap="sm">
-      {editable && (
-        <Text size="sm" c="dimmed">
-          Optionally fill in expected outputs. The judge will use them as a reference
-          when scoring model responses.
-        </Text>
-      )}
       <Accordion variant="separated" multiple>
         {testCases.map((tc, i) => {
           const caseResults = resultsByCase.get(tc.id) ?? [];
+          const currentInput = inputEdits[tc.id] ?? tc.input;
           return (
             <Accordion.Item key={tc.id} value={tc.id}>
               <Accordion.Control>
                 <Group justify="space-between" wrap="nowrap" pr="sm">
                   <Text size="sm" fw={500} lineClamp={2} style={{ flex: 1 }}>
-                    {i + 1}. {tc.input}
+                    {i + 1}. {currentInput}
                   </Text>
                   {caseResults.length > 0 && (
                     <Badge variant="light" size="sm" color="blue">
@@ -401,13 +497,22 @@ const TestCasesPanel = ({
               </Accordion.Control>
               <Accordion.Panel>
                 <Stack gap="sm">
-                  {/* Input (full) */}
                   <div>
                     <Text size="xs" c="dimmed" fw={500} mb={2}>Input</Text>
-                    <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{tc.input}</Text>
+                    {editable ? (
+                      <Textarea
+                        size="xs"
+                        autosize
+                        minRows={2}
+                        maxRows={6}
+                        value={currentInput}
+                        onChange={(e) => onInputChange(tc.id, e.currentTarget.value)}
+                      />
+                    ) : (
+                      <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{tc.input}</Text>
+                    )}
                   </div>
 
-                  {/* Expected output */}
                   <div>
                     <Text size="xs" c="dimmed" fw={500} mb={2}>Expected output</Text>
                     {editable ? (
@@ -427,70 +532,77 @@ const TestCasesPanel = ({
                     )}
                   </div>
 
-                  {/* Candidate outputs */}
                   {caseResults.length > 0 && (
                     <Stack gap="xs">
                       <Text size="xs" c="dimmed" fw={500}>Candidate outputs</Text>
-                      {caseResults.map((r) => {
-                        const vLabel = versionLabels[r.promptVersionId] ?? r.promptVersionId.slice(-6);
-                        return (
-                          <Card key={r.id} withBorder p="sm">
-                            <Stack gap="xs">
-                              <Group justify="space-between" wrap="nowrap">
-                                <Group gap="xs">
-                                  <Badge variant="light" color="blue" size="sm">{vLabel}</Badge>
-                                  <Text size="xs" c="dimmed">{r.solverModel}</Text>
-                                </Group>
-                                <Group gap={4}>
-                                  <Tooltip label="Accuracy" withArrow>
-                                    <Badge color={scoreColor(r.judgeAccuracy)} size="xs" variant="filled">
-                                      Acc {r.judgeAccuracy}/5
-                                    </Badge>
-                                  </Tooltip>
-                                  <Tooltip label="Coherence" withArrow>
-                                    <Badge color={scoreColor(r.judgeCoherence)} size="xs" variant="filled">
-                                      Coh {r.judgeCoherence}/5
-                                    </Badge>
-                                  </Tooltip>
-                                  <Tooltip label="Instruction following" withArrow>
-                                    <Badge color={scoreColor(r.judgeInstruction)} size="xs" variant="filled">
-                                      Ins {r.judgeInstruction}/5
-                                    </Badge>
-                                  </Tooltip>
-                                  <Badge color="gray" size="xs" variant="light">
-                                    {r.finalScore.toFixed(3)}
-                                  </Badge>
-                                </Group>
-                              </Group>
-
-                              <Text size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
-                                {r.candidateOutput}
-                              </Text>
-
-                              {r.judgeReasoning && (
-                                <div>
-                                  <Text size="xs" c="dimmed" fw={500} mb={2}>Judge reasoning</Text>
-                                  <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-                                    {r.judgeReasoning}
-                                  </Text>
-                                </div>
-                              )}
-                            </Stack>
-                          </Card>
-                        );
-                      })}
+                      {caseResults.map((r) => (
+                        <CandidateCard key={r.id} r={r} versionLabels={versionLabels} />
+                      ))}
                     </Stack>
-                  )}
-
-                  {!editable && !hasResults && (
-                    <Text size="xs" c="dimmed">No results yet for this test case.</Text>
                   )}
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
           );
         })}
+
+        {newCases.map((nc, i) => (
+          <Accordion.Item key={nc.localId} value={nc.localId}>
+            <Accordion.Control>
+              <Group justify="space-between" wrap="nowrap" pr="sm">
+                <Text size="sm" fw={500} lineClamp={1} c={nc.input ? undefined : "dimmed"} style={{ flex: 1 }}>
+                  {testCases.length + i + 1}. {nc.input || "New test case..."}
+                </Text>
+                <Badge variant="light" size="sm" color="teal">new</Badge>
+              </Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack gap="sm">
+                <div>
+                  <Text size="xs" c="dimmed" fw={500} mb={2}>Input</Text>
+                  <Textarea
+                    size="xs"
+                    placeholder="Enter the user message for this test case"
+                    autosize
+                    minRows={2}
+                    maxRows={6}
+                    value={nc.input}
+                    onChange={(e) => onNewCaseChange(nc.localId, "input", e.currentTarget.value)}
+                  />
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed" fw={500} mb={2}>Expected output</Text>
+                  <Textarea
+                    size="xs"
+                    placeholder="Optional — leave blank to skip reference scoring"
+                    autosize
+                    minRows={1}
+                    maxRows={4}
+                    value={nc.expectedOutput}
+                    onChange={(e) => onNewCaseChange(nc.localId, "expectedOutput", e.currentTarget.value)}
+                  />
+                </div>
+                <Group justify="flex-end">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    onClick={() => onRemoveNewCase(nc.localId)}
+                  >
+                    Remove
+                  </Button>
+                </Group>
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        ))}
       </Accordion>
+
+      {editable && (
+        <Button variant="light" size="sm" onClick={onAddCase}>
+          + Add test case
+        </Button>
+      )}
     </Stack>
   );
 };

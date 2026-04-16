@@ -69,8 +69,8 @@ export class BenchmarkController {
   updateTestCases: RequestHandler = async (req: Request, res: Response) => {
     const ownerId = requireUserId(req);
     const id = requireParam(req, "id");
-    const { updates } = updateTestCasesSchema.parse(req.body);
-    await this.benchmarks.updateTestCases.execute({ benchmarkId: id, ownerId, updates });
+    const { updates, additions } = updateTestCasesSchema.parse(req.body);
+    await this.benchmarks.updateTestCases.execute({ benchmarkId: id, ownerId, updates, additions });
     res.status(204).end();
   };
 

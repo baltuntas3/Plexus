@@ -56,8 +56,13 @@ export interface ChatBraidRequest {
   currentMermaid?: string;
 }
 
-export interface ChatBraidResponse {
-  mermaidCode: string;
-  qualityScore: GraphQualityScoreDto;
-  usage: { totalUsd: number };
-}
+export type ChatBraidResponse =
+  | { type: "question"; question: string }
+  | {
+      type: "diagram";
+      mermaidCode: string;
+      // Non-null when initial generation created a new version; null on refinement.
+      newVersion: string | null;
+      qualityScore: GraphQualityScoreDto;
+      usage: { totalUsd: number };
+    };

@@ -15,9 +15,19 @@ export const updateTestCasesSchema = z.object({
   updates: z.array(
     z.object({
       id: z.string().min(1),
+      input: z.string().min(1).optional(),
       expectedOutput: z.string().nullable(),
     }),
   ),
+  additions: z
+    .array(
+      z.object({
+        input: z.string().min(1),
+        expectedOutput: z.string().nullable(),
+      }),
+    )
+    .optional()
+    .default([]),
 });
 export type UpdateTestCasesDto = z.infer<typeof updateTestCasesSchema>;
 

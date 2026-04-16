@@ -179,8 +179,14 @@ export class PromptController {
       version,
       ownerId,
     });
+    if (result.type === "question") {
+      res.json({ type: "question", question: result.question });
+      return;
+    }
     res.json({
+      type: "diagram",
       mermaidCode: result.mermaidCode,
+      newVersion: result.newVersionName,
       qualityScore: toGraphQualityScoreDto(result.qualityScore),
       usage: { totalUsd: result.cost.totalUsd },
     });

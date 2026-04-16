@@ -69,14 +69,20 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
 
   async updateTestCases(
     id: string,
-    updates: Array<{ id: string; expectedOutput: string | null }>,
+    updates: Array<{ id: string; input?: string; expectedOutput: string | null }>,
+    additions: Array<{ id: string; input: string; expectedOutput: string | null }>,
   ): Promise<void> {
     const bm = this.store.get(id);
     if (!bm) return;
     const testCases = bm.testCases.map((tc) => {
       const u = updates.find((x) => x.id === tc.id);
-      return u ? { ...tc, expectedOutput: u.expectedOutput } : tc;
+      if (!u) return tc;
+      return {
+        ...tc,
+        input: u.input ?? tc.input,
+        expectedOutput: u.expectedOutput,
+      };
     });
-    this.store.set(id, { ...bm, testCases });
+    this.store.set(id, { ...bm, testCases: [...testCases, ...additions] });
   }
 }

@@ -22,7 +22,7 @@ import {
 } from "../atoms/prompts.atoms.js";
 import {
   clearDraftAtom,
-  draftAtomFamily,
+  getDraftAtom,
   initDraftAtom,
   snapshotDraftAtom,
   updateDraftCurrentAtom,
@@ -45,7 +45,7 @@ const EditorView = ({ promptId }: EditorViewProps) => {
   const snapshotDraft = useSetAtom(snapshotDraftAtom);
   const clearDraft = useSetAtom(clearDraftAtom);
 
-  const draftAtom = useMemo(() => draftAtomFamily(promptId), [promptId]);
+  const draftAtom = useMemo(() => getDraftAtom(promptId), [promptId]);
   const draft = useAtomValue(draftAtom);
 
   const [initializing, setInitializing] = useState(true);

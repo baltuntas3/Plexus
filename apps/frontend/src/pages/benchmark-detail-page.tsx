@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import {
+  Accordion,
+  Alert,
   Badge,
   Button,
   Card,
@@ -7,11 +9,13 @@ import {
   Group,
   Loader,
   Progress,
+  RingProgress,
   Stack,
   Table,
   Tabs,
   Text,
   Textarea,
+  ThemeIcon,
   Title,
   Tooltip,
 } from "@mantine/core";
@@ -30,6 +34,7 @@ import {
 } from "recharts";
 import type {
   BenchmarkDetailDto,
+  BenchmarkJudgeAnalysisDto,
   BenchmarkProgressDto,
   BenchmarkResultDto,
   BenchmarkStatus,
@@ -37,6 +42,7 @@ import type {
 } from "@plexus/shared-types";
 import {
   fetchBenchmarkDetailAtom,
+  fetchBenchmarkJudgeAnalysisAtom,
   startBenchmarkAtom,
   updateTestCasesAtom,
 } from "../atoms/benchmarks.atoms.js";
@@ -62,12 +68,16 @@ export const BenchmarkDetailPage = () => {
   const fetchDetail = useSetAtom(fetchBenchmarkDetailAtom);
   const startBenchmark = useSetAtom(startBenchmarkAtom);
   const updateTestCases = useSetAtom(updateTestCasesAtom);
+  const fetchJudgeAnalysis = useSetAtom(fetchBenchmarkJudgeAnalysisAtom);
 
   const [benchmark, setBenchmark] = useState<BenchmarkDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   // Local edits to expected outputs while in draft mode.
   const [expectedOutputs, setExpectedOutputs] = useState<Record<string, string>>({});
+  const [judgeAnalysis, setJudgeAnalysis] = useState<BenchmarkJudgeAnalysisDto | null>(null);
+  const [judgeAnalysisLoading, setJudgeAnalysisLoading] = useState(false);
+  const [judgeAnalysisError, setJudgeAnalysisError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -137,6 +147,28 @@ export const BenchmarkDetailPage = () => {
 
     return () => controller.abort();
   }, [id, tokens, benchmark, fetchDetail]);
+
+  const handleLoadJudgeAnalysis = async () => {
+    if (!id) return;
+    setJudgeAnalysisLoading(true);
+    setJudgeAnalysisError(null);
+    try {
+      const result = await fetchJudgeAnalysis(id);
+      setJudgeAnalysis(result);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Failed to load analysis";
+      setJudgeAnalysisError(message);
+    } finally {
+      setJudgeAnalysisLoading(false);
+    }
+  };
+
+  // Auto-load judge analysis once the benchmark completes.
+  useEffect(() => {
+    if (!id || benchmark?.status !== "completed" || judgeAnalysis || judgeAnalysisLoading) return;
+    void handleLoadJudgeAnalysis();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [benchmark?.status, id]);
 
   const handleStart = async () => {
     if (!id || !benchmark) return;
@@ -243,6 +275,12 @@ export const BenchmarkDetailPage = () => {
           >
             PPD / Golden Quadrant
           </Tabs.Tab>
+          <Tabs.Tab
+            value="judge-analysis"
+            disabled={benchmark.status !== "completed" || benchmark.results.length === 0}
+          >
+            AI Analysis
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="test-cases" pt="md">
@@ -253,6 +291,8 @@ export const BenchmarkDetailPage = () => {
             onExpectedOutputChange={(id, value) =>
               setExpectedOutputs((prev) => ({ ...prev, [id]: value }))
             }
+            results={benchmark.results}
+            versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
           />
         </Tabs.Panel>
 
@@ -283,6 +323,16 @@ export const BenchmarkDetailPage = () => {
             />
           )}
         </Tabs.Panel>
+
+        <Tabs.Panel value="judge-analysis" pt="md">
+          <JudgeAnalysisPanel
+            analysis={judgeAnalysis}
+            loading={judgeAnalysisLoading}
+            error={judgeAnalysisError}
+            versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
+            onLoad={handleLoadJudgeAnalysis}
+          />
+        </Tabs.Panel>
       </Tabs>
     </Stack>
   );
@@ -295,66 +345,153 @@ interface TestCasesPanelProps {
   editable: boolean;
   expectedOutputs: Record<string, string>;
   onExpectedOutputChange: (id: string, value: string) => void;
+  results: BenchmarkResultDto[];
+  versionLabels: Record<string, string>;
 }
+
+const SCORE_COLOR: Record<number, string> = { 5: "teal", 4: "green", 3: "yellow", 2: "orange", 1: "red" };
+const scoreColor = (v: number) => SCORE_COLOR[Math.round(v)] ?? "gray";
 
 const TestCasesPanel = ({
   testCases,
   editable,
   expectedOutputs,
   onExpectedOutputChange,
+  results,
+  versionLabels,
 }: TestCasesPanelProps) => {
   if (testCases.length === 0) {
     return <Text c="dimmed" size="sm">No test cases.</Text>;
   }
+
+  const resultsByCase = new Map<string, BenchmarkResultDto[]>();
+  for (const r of results) {
+    if (r.status !== "completed") continue;
+    const list = resultsByCase.get(r.testCaseId) ?? [];
+    list.push(r);
+    resultsByCase.set(r.testCaseId, list);
+  }
+
+  const hasResults = results.some((r) => r.status === "completed");
+
   return (
-    <Card withBorder>
-      <Stack gap="xs">
-        {editable && (
-          <Text size="sm" c="dimmed">
-            Optionally fill in expected outputs. The judge will use them as a reference
-            when scoring model responses.
-          </Text>
-        )}
-        <Table striped highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th style={{ width: "40%" }}>Input</Table.Th>
-              <Table.Th>Expected Output</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {testCases.map((tc, i) => (
-              <Table.Tr key={tc.id}>
-                <Table.Td>
-                  <Tooltip label={tc.input} multiline maw={400} withArrow>
-                    <Text size="sm" lineClamp={2}>
-                      {i + 1}. {tc.input}
-                    </Text>
-                  </Tooltip>
-                </Table.Td>
-                <Table.Td>
-                  {editable ? (
-                    <Textarea
-                      size="xs"
-                      placeholder="Optional — leave blank to skip reference scoring"
-                      autosize
-                      minRows={1}
-                      maxRows={4}
-                      value={expectedOutputs[tc.id] ?? ""}
-                      onChange={(e) => onExpectedOutputChange(tc.id, e.currentTarget.value)}
-                    />
-                  ) : (
-                    <Text size="sm" c={tc.expectedOutput ? undefined : "dimmed"}>
-                      {tc.expectedOutput ?? "—"}
-                    </Text>
+    <Stack gap="sm">
+      {editable && (
+        <Text size="sm" c="dimmed">
+          Optionally fill in expected outputs. The judge will use them as a reference
+          when scoring model responses.
+        </Text>
+      )}
+      <Accordion variant="separated" multiple>
+        {testCases.map((tc, i) => {
+          const caseResults = resultsByCase.get(tc.id) ?? [];
+          return (
+            <Accordion.Item key={tc.id} value={tc.id}>
+              <Accordion.Control>
+                <Group justify="space-between" wrap="nowrap" pr="sm">
+                  <Text size="sm" fw={500} lineClamp={2} style={{ flex: 1 }}>
+                    {i + 1}. {tc.input}
+                  </Text>
+                  {caseResults.length > 0 && (
+                    <Badge variant="light" size="sm" color="blue">
+                      {caseResults.length} result{caseResults.length > 1 ? "s" : ""}
+                    </Badge>
                   )}
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Stack>
-    </Card>
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap="sm">
+                  {/* Input (full) */}
+                  <div>
+                    <Text size="xs" c="dimmed" fw={500} mb={2}>Input</Text>
+                    <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>{tc.input}</Text>
+                  </div>
+
+                  {/* Expected output */}
+                  <div>
+                    <Text size="xs" c="dimmed" fw={500} mb={2}>Expected output</Text>
+                    {editable ? (
+                      <Textarea
+                        size="xs"
+                        placeholder="Optional — leave blank to skip reference scoring"
+                        autosize
+                        minRows={1}
+                        maxRows={4}
+                        value={expectedOutputs[tc.id] ?? ""}
+                        onChange={(e) => onExpectedOutputChange(tc.id, e.currentTarget.value)}
+                      />
+                    ) : (
+                      <Text size="sm" c={tc.expectedOutput ? undefined : "dimmed"}>
+                        {tc.expectedOutput ?? "—"}
+                      </Text>
+                    )}
+                  </div>
+
+                  {/* Candidate outputs */}
+                  {caseResults.length > 0 && (
+                    <Stack gap="xs">
+                      <Text size="xs" c="dimmed" fw={500}>Candidate outputs</Text>
+                      {caseResults.map((r) => {
+                        const vLabel = versionLabels[r.promptVersionId] ?? r.promptVersionId.slice(-6);
+                        return (
+                          <Card key={r.id} withBorder p="sm">
+                            <Stack gap="xs">
+                              <Group justify="space-between" wrap="nowrap">
+                                <Group gap="xs">
+                                  <Badge variant="light" color="blue" size="sm">{vLabel}</Badge>
+                                  <Text size="xs" c="dimmed">{r.solverModel}</Text>
+                                </Group>
+                                <Group gap={4}>
+                                  <Tooltip label="Accuracy" withArrow>
+                                    <Badge color={scoreColor(r.judgeAccuracy)} size="xs" variant="filled">
+                                      Acc {r.judgeAccuracy}/5
+                                    </Badge>
+                                  </Tooltip>
+                                  <Tooltip label="Coherence" withArrow>
+                                    <Badge color={scoreColor(r.judgeCoherence)} size="xs" variant="filled">
+                                      Coh {r.judgeCoherence}/5
+                                    </Badge>
+                                  </Tooltip>
+                                  <Tooltip label="Instruction following" withArrow>
+                                    <Badge color={scoreColor(r.judgeInstruction)} size="xs" variant="filled">
+                                      Ins {r.judgeInstruction}/5
+                                    </Badge>
+                                  </Tooltip>
+                                  <Badge color="gray" size="xs" variant="light">
+                                    {r.finalScore.toFixed(3)}
+                                  </Badge>
+                                </Group>
+                              </Group>
+
+                              <Text size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                                {r.candidateOutput}
+                              </Text>
+
+                              {r.judgeReasoning && (
+                                <div>
+                                  <Text size="xs" c="dimmed" fw={500} mb={2}>Judge reasoning</Text>
+                                  <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                                    {r.judgeReasoning}
+                                  </Text>
+                                </div>
+                              )}
+                            </Stack>
+                          </Card>
+                        );
+                      })}
+                    </Stack>
+                  )}
+
+                  {!editable && !hasResults && (
+                    <Text size="xs" c="dimmed">No results yet for this test case.</Text>
+                  )}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          );
+        })}
+      </Accordion>
+    </Stack>
   );
 };
 
@@ -505,5 +642,194 @@ const ResultsTable = ({
         </Table>
       </Stack>
     </Card>
+  );
+};
+
+// --- Judge Analysis Panel ---
+
+interface JudgeAnalysisPanelProps {
+  analysis: BenchmarkJudgeAnalysisDto | null;
+  loading: boolean;
+  error: string | null;
+  versionLabels: Record<string, string>;
+  onLoad: () => void;
+}
+
+const ringScoreColor = (value: number, max: number): string => {
+  const ratio = value / max;
+  if (ratio >= 0.8) return "teal";
+  if (ratio >= 0.6) return "yellow";
+  return "red";
+};
+
+const JudgeAnalysisPanel = ({
+  analysis,
+  loading,
+  error,
+  versionLabels,
+  onLoad,
+}: JudgeAnalysisPanelProps) => {
+  if (!analysis && !loading && !error) {
+    return (
+      <Stack align="center" py="xl" gap="sm">
+        <Text c="dimmed" size="sm">
+          Run AI analysis to get category-level insights and a version recommendation.
+        </Text>
+        <Button onClick={onLoad}>Run AI Analysis</Button>
+      </Stack>
+    );
+  }
+
+  if (loading) {
+    return (
+      <Center py="xl">
+        <Stack align="center" gap="xs">
+          <Loader />
+          <Text size="sm" c="dimmed">Analyzing results...</Text>
+        </Stack>
+      </Center>
+    );
+  }
+
+  if (error) {
+    return (
+      <Stack gap="sm">
+        <Alert color="red" title="Analysis failed">{error}</Alert>
+        <Button variant="light" onClick={onLoad}>Retry</Button>
+      </Stack>
+    );
+  }
+
+  if (!analysis) return null;
+
+  return (
+    <Stack gap="md">
+      {analysis.recommendedKey && (
+        <Card withBorder style={{ borderColor: "var(--mantine-color-teal-6)" }}>
+          <Group gap="sm">
+            <ThemeIcon color="teal" size="lg" radius="xl">
+              <Text size="sm" fw={700}>✓</Text>
+            </ThemeIcon>
+            <Stack gap={2}>
+              <Text fw={600} size="sm">Recommended version</Text>
+              <Text size="sm">{analysis.recommendedKey}</Text>
+              {analysis.recommendedReasoning && (
+                <Text size="xs" c="dimmed">{analysis.recommendedReasoning}</Text>
+              )}
+            </Stack>
+          </Group>
+        </Card>
+      )}
+
+      <Card withBorder>
+        <Stack gap="xs">
+          <Text fw={600}>Category breakdown</Text>
+          <Text size="xs" c="dimmed">
+            Accuracy, Coherence, Instruction scored 1–5 · Consistency = score stability across test cases
+          </Text>
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Version</Table.Th>
+                <Table.Th>Solver</Table.Th>
+                <Table.Th>Accuracy</Table.Th>
+                <Table.Th>Coherence</Table.Th>
+                <Table.Th>Instruction</Table.Th>
+                <Table.Th>Consistency</Table.Th>
+                <Table.Th>Latency</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {analysis.categoryStats.map((s) => {
+                const [versionId, solverModel] = s.candidateKey.split("::");
+                const vLabel = versionId
+                  ? (versionLabels[versionId] ?? versionId.slice(-6))
+                  : s.candidateKey;
+                const isRecommended = s.candidateKey === analysis.recommendedKey;
+                return (
+                  <Table.Tr
+                    key={s.candidateKey}
+                    style={
+                      isRecommended
+                        ? { background: "var(--mantine-color-teal-light)" }
+                        : undefined
+                    }
+                  >
+                    <Table.Td>
+                      <Group gap="xs">
+                        <Badge variant="light" color="blue" size="sm">{vLabel}</Badge>
+                        {isRecommended && <Badge color="teal" size="xs">recommended</Badge>}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td><Text size="sm">{solverModel ?? "—"}</Text></Table.Td>
+                    <Table.Td>
+                      <Group gap={4}>
+                        <RingProgress
+                          size={28}
+                          thickness={3}
+                          roundCaps
+                          sections={[{ value: (s.meanAccuracy / 5) * 100, color: ringScoreColor(s.meanAccuracy, 5) }]}
+                        />
+                        <Text size="sm">{s.meanAccuracy.toFixed(2)}</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={4}>
+                        <RingProgress
+                          size={28}
+                          thickness={3}
+                          roundCaps
+                          sections={[{ value: (s.meanCoherence / 5) * 100, color: ringScoreColor(s.meanCoherence, 5) }]}
+                        />
+                        <Text size="sm">{s.meanCoherence.toFixed(2)}</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={4}>
+                        <RingProgress
+                          size={28}
+                          thickness={3}
+                          roundCaps
+                          sections={[{ value: (s.meanInstruction / 5) * 100, color: ringScoreColor(s.meanInstruction, 5) }]}
+                        />
+                        <Text size="sm">{s.meanInstruction.toFixed(2)}</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={4}>
+                        <RingProgress
+                          size={28}
+                          thickness={3}
+                          roundCaps
+                          sections={[{ value: s.consistencyScore * 100, color: ringScoreColor(s.consistencyScore, 1) }]}
+                        />
+                        <Text size="sm">{(s.consistencyScore * 100).toFixed(1)}%</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">{Math.round(s.meanLatencyMs)} ms</Text>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        </Stack>
+      </Card>
+
+      <Card withBorder>
+        <Stack gap="xs">
+          <Group justify="space-between">
+            <Text fw={600}>Commentary</Text>
+            <Button size="xs" variant="subtle" onClick={onLoad} loading={loading}>
+              Re-run
+            </Button>
+          </Group>
+          <Text size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>
+            {analysis.commentary}
+          </Text>
+        </Stack>
+      </Card>
+    </Stack>
   );
 };

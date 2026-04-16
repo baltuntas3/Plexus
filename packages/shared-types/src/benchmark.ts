@@ -82,6 +82,25 @@ export interface BenchmarkDetailDto extends BenchmarkDto {
   testCases: BenchmarkTestCaseDto[];
 }
 
+// Judge-driven category analysis types.
+
+export interface CandidateCategoryStatsDto {
+  candidateKey: string;
+  meanAccuracy: number;
+  meanCoherence: number;
+  meanInstruction: number;
+  consistencyScore: number;
+  meanLatencyMs: number;
+  completedCount: number;
+}
+
+export interface BenchmarkJudgeAnalysisDto {
+  categoryStats: CandidateCategoryStatsDto[];
+  commentary: string;
+  recommendedKey: string | null;
+  recommendedReasoning: string;
+}
+
 // SSE progress event payload.
 export interface BenchmarkProgressEvent {
   benchmarkId: string;

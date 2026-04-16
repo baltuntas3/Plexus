@@ -21,6 +21,7 @@ export const createBenchmarkRouter = (
   router.patch("/:id/test-cases", asyncHandler(controller.updateTestCases));
   router.post("/:id/start", asyncHandler(controller.start));
   router.get("/:id/analysis", asyncHandler(controller.analysis));
+  router.get("/:id/judge-analysis", asyncHandler(controller.judgeAnalysis));
   router.get("/:id/stream", asyncHandler(controller.stream));
 
   return router;

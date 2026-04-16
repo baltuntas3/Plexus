@@ -10,6 +10,7 @@ import {
   toBenchmarkAnalysisDto,
   toBenchmarkDetailDto,
   toBenchmarkDto,
+  toBenchmarkJudgeAnalysisDto,
 } from "../mappers/benchmark-mappers.js";
 
 const requireUserId = (req: Request): string => {
@@ -81,6 +82,16 @@ export class BenchmarkController {
       ownerId,
     });
     res.json({ analysis: toBenchmarkAnalysisDto(analysis) });
+  };
+
+  judgeAnalysis: RequestHandler = async (req: Request, res: Response) => {
+    const ownerId = requireUserId(req);
+    const id = requireParam(req, "id");
+    const analysis = await this.benchmarks.getBenchmarkJudgeAnalysis.execute({
+      benchmarkId: id,
+      ownerId,
+    });
+    res.json({ analysis: toBenchmarkJudgeAnalysisDto(analysis) });
   };
 
   // SSE progress stream. Sends an initial snapshot, forwards queue progress

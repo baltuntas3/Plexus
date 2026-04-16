@@ -3,6 +3,7 @@ import type {
   BenchmarkAnalysisDto,
   BenchmarkDetailDto,
   BenchmarkDto,
+  BenchmarkJudgeAnalysisDto,
   CreateBenchmarkRequest,
   Paginated,
   UpdateTestCasesRequest,
@@ -79,6 +80,19 @@ export const fetchBenchmarkAnalysisAtom = atom(
     if (!tokens) throw new Error("Not authenticated");
     const result = await apiRequest<{ analysis: BenchmarkAnalysisDto }>(
       `/benchmarks/${benchmarkId}/analysis`,
+      { token: tokens.accessToken },
+    );
+    return result.analysis;
+  },
+);
+
+export const fetchBenchmarkJudgeAnalysisAtom = atom(
+  null,
+  async (get, _set, benchmarkId: string): Promise<BenchmarkJudgeAnalysisDto> => {
+    const tokens = get(tokensAtom);
+    if (!tokens) throw new Error("Not authenticated");
+    const result = await apiRequest<{ analysis: BenchmarkJudgeAnalysisDto }>(
+      `/benchmarks/${benchmarkId}/judge-analysis`,
       { token: tokens.accessToken },
     );
     return result.analysis;

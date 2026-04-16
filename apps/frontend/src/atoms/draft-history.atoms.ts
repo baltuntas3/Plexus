@@ -1,5 +1,6 @@
 import { atom } from "jotai";
-import { atomFamily, atomWithStorage } from "jotai/utils";
+import { atomWithStorage } from "jotai/utils";
+import type { WritableAtom } from "jotai";
 
 export interface DraftSnapshot {
   id: string;
@@ -15,14 +16,23 @@ export interface PromptDraft {
 
 export const HISTORY_LIMIT = 20;
 
-export const draftAtomFamily = atomFamily((promptId: string) =>
-  atomWithStorage<PromptDraft | null>(`plexus.draft:${promptId}`, null),
-);
+// Manual atom map — replaces the deprecated atomFamily from jotai/utils.
+// Each promptId gets its own persisted atom created on first access.
+type DraftAtom = WritableAtom<PromptDraft | null, [PromptDraft | null], void>;
+const draftAtoms = new Map<string, DraftAtom>();
+
+export const getDraftAtom = (promptId: string): DraftAtom => {
+  const existing = draftAtoms.get(promptId);
+  if (existing) return existing;
+  const a = atomWithStorage<PromptDraft | null>(`plexus.draft:${promptId}`, null);
+  draftAtoms.set(promptId, a);
+  return a;
+};
 
 export const initDraftAtom = atom(
   null,
   (get, set, params: { promptId: string; baseContent: string }) => {
-    const draftAtom = draftAtomFamily(params.promptId);
+    const draftAtom = getDraftAtom(params.promptId);
     const existing = get(draftAtom);
     if (existing) return;
     set(draftAtom, {
@@ -36,7 +46,7 @@ export const initDraftAtom = atom(
 export const updateDraftCurrentAtom = atom(
   null,
   (get, set, params: { promptId: string; content: string }) => {
-    const draftAtom = draftAtomFamily(params.promptId);
+    const draftAtom = getDraftAtom(params.promptId);
     const draft = get(draftAtom);
     if (!draft) return;
     set(draftAtom, { ...draft, current: params.content });
@@ -44,7 +54,7 @@ export const updateDraftCurrentAtom = atom(
 );
 
 export const snapshotDraftAtom = atom(null, (get, set, promptId: string) => {
-  const draftAtom = draftAtomFamily(promptId);
+  const draftAtom = getDraftAtom(promptId);
   const draft = get(draftAtom);
   if (!draft) return;
   const last = draft.history[draft.history.length - 1];
@@ -62,7 +72,7 @@ export const snapshotDraftAtom = atom(null, (get, set, promptId: string) => {
 export const revertDraftAtom = atom(
   null,
   (get, set, params: { promptId: string; snapshotId: string }) => {
-    const draftAtom = draftAtomFamily(params.promptId);
+    const draftAtom = getDraftAtom(params.promptId);
     const draft = get(draftAtom);
     if (!draft) return;
     const snapshot = draft.history.find((s) => s.id === params.snapshotId);
@@ -72,7 +82,7 @@ export const revertDraftAtom = atom(
 );
 
 export const clearDraftAtom = atom(null, (_get, set, promptId: string) => {
-  const draftAtom = draftAtomFamily(promptId);
+  const draftAtom = getDraftAtom(promptId);
   set(draftAtom, null);
-  draftAtomFamily.remove(promptId);
+  draftAtoms.delete(promptId);
 });

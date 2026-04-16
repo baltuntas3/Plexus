@@ -77,4 +77,10 @@ export class InMemoryPromptVersionRepository implements IPromptVersionRepository
       updatedAt: new Date(),
     });
   }
+
+  async updateBraidGraph(id: string, braidGraph: string): Promise<void> {
+    const version = this.versions.get(id);
+    if (!version) return;
+    this.versions.set(id, { ...version, braidGraph, updatedAt: new Date() });
+  }
 }

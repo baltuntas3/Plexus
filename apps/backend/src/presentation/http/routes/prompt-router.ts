@@ -24,6 +24,8 @@ export const createPromptRouter = (
   router.get("/:id/versions/:version", asyncHandler(controller.getVersion));
   router.post("/:id/versions/:version/promote", asyncHandler(controller.promoteVersion));
   router.post("/:id/versions/:version/generate-braid", asyncHandler(controller.generateBraid));
+  router.patch("/:id/versions/:version/braid", asyncHandler(controller.updateBraid));
+  router.post("/:id/versions/:version/braid/chat", asyncHandler(controller.chatBraid));
   router.post("/:id/versions/:version/lint", asyncHandler(controller.lintVersion));
 
   return router;

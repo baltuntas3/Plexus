@@ -9,8 +9,11 @@ import { GetVersionUseCase } from "../application/use-cases/prompts/get-version.
 import { PromoteVersionUseCase } from "../application/use-cases/prompts/promote-version.js";
 import { GenerateBraidUseCase } from "../application/use-cases/prompts/generate-braid.js";
 import { LintVersionUseCase } from "../application/use-cases/prompts/lint-version.js";
+import { UpdateBraidGraphUseCase } from "../application/use-cases/prompts/update-braid-graph.js";
+import { ChatBraidUseCase } from "../application/use-cases/prompts/chat-braid.js";
 import type { BraidGenerator } from "../application/services/braid/braid-generator.js";
 import type { GraphLinter } from "../application/services/braid/lint/graph-linter.js";
+import type { IAIProviderFactory } from "../application/services/ai-provider.js";
 
 export interface PromptComposition {
   createPrompt: CreatePromptUseCase;
@@ -22,10 +25,13 @@ export interface PromptComposition {
   promoteVersion: PromoteVersionUseCase;
   generateBraid: GenerateBraidUseCase;
   lintVersion: LintVersionUseCase;
+  updateBraidGraph: UpdateBraidGraphUseCase;
+  chatBraid: ChatBraidUseCase;
 }
 
 export const createPromptComposition = (
   generator: BraidGenerator,
+  providers: IAIProviderFactory,
   linter: GraphLinter,
 ): PromptComposition => {
   const prompts = new MongoPromptRepository();
@@ -41,5 +47,7 @@ export const createPromptComposition = (
     promoteVersion: new PromoteVersionUseCase(prompts, versions),
     generateBraid: new GenerateBraidUseCase(prompts, versions, generator, linter),
     lintVersion: new LintVersionUseCase(prompts, versions, linter),
+    updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter),
+    chatBraid: new ChatBraidUseCase(prompts, versions, providers, linter),
   };
 };

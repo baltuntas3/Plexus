@@ -15,7 +15,7 @@ const bootstrap = async (): Promise<void> => {
   const auth = createAuthComposition();
   const ai = createAIComposition();
   const braid = createBraidComposition(ai.factory);
-  const prompts = createPromptComposition(braid.generator, braid.linter);
+  const prompts = createPromptComposition(braid.generator, ai.factory, braid.linter);
   const queue = new InProcessJobQueue({
     concurrency: 2,
     onError: (jobId, jobName, err) => {

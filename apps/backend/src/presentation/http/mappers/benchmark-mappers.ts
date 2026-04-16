@@ -2,12 +2,14 @@ import type {
   BenchmarkAnalysisDto,
   BenchmarkDetailDto,
   BenchmarkDto,
+  BenchmarkJudgeAnalysisDto,
   BenchmarkResultDto,
 } from "@plexus/shared-types";
 import type { Benchmark } from "../../../domain/entities/benchmark.js";
 import type { BenchmarkResult } from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkAnalysis } from "../../../application/services/benchmark/benchmark-analyzer.js";
 import { candidateKey } from "../../../application/services/benchmark/benchmark-analyzer.js";
+import type { BenchmarkJudgeAnalysis } from "../../../application/services/benchmark/benchmark-judge-analyzer.js";
 
 export const toBenchmarkDto = (bm: Benchmark): BenchmarkDto => ({
   id: bm.id,
@@ -74,6 +76,23 @@ export const toBenchmarkAnalysisDto = (analysis: BenchmarkAnalysis): BenchmarkAn
     isMoreEfficient: r.isMoreEfficient,
   })),
   recommendedKey: analysis.recommendedKey,
+});
+
+export const toBenchmarkJudgeAnalysisDto = (
+  analysis: BenchmarkJudgeAnalysis,
+): BenchmarkJudgeAnalysisDto => ({
+  categoryStats: analysis.categoryStats.map((s) => ({
+    candidateKey: s.candidateKey,
+    meanAccuracy: s.meanAccuracy,
+    meanCoherence: s.meanCoherence,
+    meanInstruction: s.meanInstruction,
+    consistencyScore: s.consistencyScore,
+    meanLatencyMs: s.meanLatencyMs,
+    completedCount: s.completedCount,
+  })),
+  commentary: analysis.commentary,
+  recommendedKey: analysis.recommendedKey,
+  recommendedReasoning: analysis.recommendedReasoning,
 });
 
 export const toBenchmarkDetailDto = (

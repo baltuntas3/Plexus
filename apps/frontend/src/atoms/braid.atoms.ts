@@ -1,14 +1,12 @@
 import { atom } from "jotai";
 import type {
-  BraidGraphDto,
-  BraidTokenUsageDto,
-  GenerateBraidRequest,
-  GenerateBraidResponse,
+  ChatBraidRequest,
+  ChatBraidResponse,
   GraphQualityScoreDto,
   LintVersionResponse,
   ModelInfoDto,
   ModelListResponse,
-  PromptVersionDto,
+  UpdateBraidResponse,
 } from "@plexus/shared-types";
 import { apiRequest } from "../lib/api-client.js";
 import { tokensAtom } from "./auth.atoms.js";
@@ -20,34 +18,6 @@ export const modelsAtom = atom(async (get) => {
   const res = await apiRequest<ModelListResponse>("/models", { token: tokens.accessToken });
   return res.items;
 });
-
-export interface GenerateBraidParams {
-  promptId: string;
-  version: string;
-  input: GenerateBraidRequest;
-}
-
-export interface GenerateBraidOutcome {
-  version: PromptVersionDto;
-  graph: BraidGraphDto;
-  cached: boolean;
-  usage: BraidTokenUsageDto;
-  qualityScore: GraphQualityScoreDto;
-}
-
-export const generateBraidAtom = atom(
-  null,
-  async (get, set, params: GenerateBraidParams): Promise<GenerateBraidOutcome> => {
-    const tokens = get(tokensAtom);
-    if (!tokens) throw new Error("Not authenticated");
-    const result = await apiRequest<GenerateBraidResponse>(
-      `/prompts/${params.promptId}/versions/${params.version}/generate-braid`,
-      { method: "POST", body: params.input, token: tokens.accessToken },
-    );
-    set(promptDetailRefreshAtom, (n) => n + 1);
-    return result as GenerateBraidOutcome;
-  },
-);
 
 export interface LintParams {
   promptId: string;
@@ -64,5 +34,46 @@ export const lintVersionAtom = atom(
       { method: "POST", token: tokens.accessToken },
     );
     return result.qualityScore;
+  },
+);
+
+export interface UpdateBraidParams {
+  promptId: string;
+  version: string;
+  mermaidCode: string;
+}
+
+export const updateBraidAtom = atom(
+  null,
+  async (get, set, params: UpdateBraidParams): Promise<GraphQualityScoreDto> => {
+    const tokens = get(tokensAtom);
+    if (!tokens) throw new Error("Not authenticated");
+    const result = await apiRequest<UpdateBraidResponse>(
+      `/prompts/${params.promptId}/versions/${params.version}/braid`,
+      { method: "PATCH", body: { mermaidCode: params.mermaidCode }, token: tokens.accessToken },
+    );
+    set(promptDetailRefreshAtom, (n) => n + 1);
+    return result.qualityScore;
+  },
+);
+
+export interface ChatBraidParams {
+  promptId: string;
+  version: string;
+  body: ChatBraidRequest;
+}
+
+export const chatBraidAtom = atom(
+  null,
+  async (get, _set, params: ChatBraidParams): Promise<ChatBraidResponse> => {
+    const tokens = get(tokensAtom);
+    if (!tokens) throw new Error("Not authenticated");
+    // Single API call — response already contains mermaidCode + qualityScore.
+    // The caller updates local state directly via handleChatResult, so no
+    // promptDetailRefreshAtom increment is needed here.
+    return apiRequest<ChatBraidResponse>(
+      `/prompts/${params.promptId}/versions/${params.version}/braid/chat`,
+      { method: "POST", body: params.body, token: tokens.accessToken },
+    );
   },
 );

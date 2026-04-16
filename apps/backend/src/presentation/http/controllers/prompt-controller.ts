@@ -6,7 +6,7 @@ import {
   listVersionsQuerySchema,
   promoteVersionInputSchema,
 } from "../../../application/dto/prompt-dto.js";
-import { generateBraidInputSchema } from "../../../application/dto/braid-dto.js";
+import { chatBraidInputSchema, generateBraidInputSchema, updateBraidInputSchema } from "../../../application/dto/braid-dto.js";
 import { UnauthorizedError, ValidationError } from "../../../domain/errors/domain-error.js";
 import type { PromptComposition } from "../../../composition/prompt-composition.js";
 import {
@@ -152,6 +152,38 @@ export class PromptController {
       ownerId,
     });
     res.json({ qualityScore: toGraphQualityScoreDto(score) });
+  };
+
+  updateBraid: RequestHandler = async (req: Request, res: Response) => {
+    const ownerId = requireUserId(req);
+    const id = requireParam(req, "id");
+    const version = requireParam(req, "version");
+    const input = updateBraidInputSchema.parse(req.body);
+    const result = await this.prompts.updateBraidGraph.execute({
+      ...input,
+      promptId: id,
+      version,
+      ownerId,
+    });
+    res.json({ qualityScore: toGraphQualityScoreDto(result.qualityScore) });
+  };
+
+  chatBraid: RequestHandler = async (req: Request, res: Response) => {
+    const ownerId = requireUserId(req);
+    const id = requireParam(req, "id");
+    const version = requireParam(req, "version");
+    const input = chatBraidInputSchema.parse(req.body);
+    const result = await this.prompts.chatBraid.execute({
+      ...input,
+      promptId: id,
+      version,
+      ownerId,
+    });
+    res.json({
+      mermaidCode: result.mermaidCode,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+      usage: { totalUsd: result.cost.totalUsd },
+    });
   };
 
 }

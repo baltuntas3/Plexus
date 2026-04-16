@@ -27,4 +27,5 @@ export interface IPromptVersionRepository {
   findCurrentByStatus(promptId: string, status: VersionStatus): Promise<PromptVersion | null>;
   updateStatus(id: string, status: VersionStatus): Promise<void>;
   setBraidGraph(id: string, braidGraph: string, generatorModel: string): Promise<void>;
+  updateBraidGraph(id: string, braidGraph: string): Promise<void>;
 }

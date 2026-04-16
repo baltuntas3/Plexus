@@ -41,3 +41,23 @@ export interface GenerateBraidResponse {
   usage: BraidTokenUsageDto;
   qualityScore: GraphQualityScoreDto;
 }
+
+export interface UpdateBraidRequest {
+  mermaidCode: string;
+}
+
+export interface UpdateBraidResponse {
+  qualityScore: GraphQualityScoreDto;
+}
+
+export interface ChatBraidRequest {
+  userMessage: string;
+  generatorModel: string;
+  currentMermaid?: string;
+}
+
+export interface ChatBraidResponse {
+  mermaidCode: string;
+  qualityScore: GraphQualityScoreDto;
+  usage: { totalUsd: number };
+}

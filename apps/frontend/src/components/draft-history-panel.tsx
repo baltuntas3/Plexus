@@ -11,7 +11,7 @@ import {
 import { useAtomValue, useSetAtom } from "jotai";
 import { useMemo } from "react";
 import {
-  draftAtomFamily,
+  getDraftAtom,
   HISTORY_LIMIT,
   revertDraftAtom,
   type DraftSnapshot,
@@ -29,7 +29,7 @@ interface SnapshotEntry {
 }
 
 export const DraftHistoryPanel = ({ promptId }: DraftHistoryPanelProps) => {
-  const draftAtom = useMemo(() => draftAtomFamily(promptId), [promptId]);
+  const draftAtom = useMemo(() => getDraftAtom(promptId), [promptId]);
   const draft = useAtomValue(draftAtom);
   const revert = useSetAtom(revertDraftAtom);
 
@@ -44,7 +44,7 @@ export const DraftHistoryPanel = ({ promptId }: DraftHistoryPanelProps) => {
     );
   }
 
-  const entries: SnapshotEntry[] = draft.history.map((snapshot, idx) => ({
+  const entries: SnapshotEntry[] = draft.history.map((snapshot: DraftSnapshot, idx: number) => ({
     snapshot,
     previousContent: idx === 0 ? draft.baseContent : (draft.history[idx - 1]?.content ?? ""),
     index: idx,

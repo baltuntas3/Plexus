@@ -83,4 +83,8 @@ export class MongoPromptVersionRepository implements IPromptVersionRepository {
   async setBraidGraph(id: string, braidGraph: string, generatorModel: string): Promise<void> {
     await PromptVersionModel.updateOne({ _id: id }, { braidGraph, generatorModel });
   }
+
+  async updateBraidGraph(id: string, braidGraph: string): Promise<void> {
+    await PromptVersionModel.updateOne({ _id: id }, { braidGraph });
+  }
 }

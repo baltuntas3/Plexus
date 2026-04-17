@@ -88,6 +88,7 @@ export const toBenchmarkJudgeAnalysisDto = (
     meanInstruction: s.meanInstruction,
     consistencyScore: s.consistencyScore,
     meanLatencyMs: s.meanLatencyMs,
+    meanCostUsd: s.meanCostUsd,
     completedCount: s.completedCount,
   })),
   commentary: analysis.commentary,

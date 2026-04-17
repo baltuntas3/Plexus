@@ -92,6 +92,7 @@ export interface CandidateCategoryStatsDto {
   meanInstruction: number;
   consistencyScore: number;
   meanLatencyMs: number;
+  meanCostUsd: number;
   completedCount: number;
 }
 

@@ -849,6 +849,7 @@ const JudgeAnalysisPanel = ({
                 <Table.Th>Instruction</Table.Th>
                 <Table.Th>Consistency</Table.Th>
                 <Table.Th>Latency</Table.Th>
+                <Table.Th>Cost/test</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -920,6 +921,9 @@ const JudgeAnalysisPanel = ({
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">{Math.round(s.meanLatencyMs)} ms</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">${s.meanCostUsd.toFixed(4)}</Text>
                     </Table.Td>
                   </Table.Tr>
                 );

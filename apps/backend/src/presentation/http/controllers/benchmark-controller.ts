@@ -10,7 +10,6 @@ import {
   toBenchmarkAnalysisDto,
   toBenchmarkDetailDto,
   toBenchmarkDto,
-  toBenchmarkJudgeAnalysisDto,
 } from "../mappers/benchmark-mappers.js";
 
 const requireUserId = (req: Request): string => {
@@ -84,16 +83,6 @@ export class BenchmarkController {
     res.json({ analysis: toBenchmarkAnalysisDto(analysis) });
   };
 
-  judgeAnalysis: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
-    const id = requireParam(req, "id");
-    const analysis = await this.benchmarks.getBenchmarkJudgeAnalysis.execute({
-      benchmarkId: id,
-      ownerId,
-    });
-    res.json({ analysis: toBenchmarkJudgeAnalysisDto(analysis) });
-  };
-
   // SSE progress stream. Sends an initial snapshot, forwards queue progress
   // events until the benchmark reaches a terminal status, then closes the
   // connection. Auth is enforced at router level.
@@ -137,9 +126,6 @@ export class BenchmarkController {
       });
     }
 
-    // Poll the benchmark repo on a slow tick so we catch the terminal
-    // transition (status + final progress) without relying on the queue
-    // emitting a dedicated "completed" event.
     const interval = setInterval(async () => {
       try {
         const latest = await this.benchmarks.getBenchmark.execute({

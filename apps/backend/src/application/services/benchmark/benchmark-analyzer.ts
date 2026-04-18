@@ -1,127 +1,236 @@
-import type { BenchmarkResult } from "../../../domain/entities/benchmark-result.js";
-import { PPD } from "../../../domain/value-objects/ppd.js";
-
-// Aggregates raw BenchmarkResult rows into the (promptVersion × solver × mode)
-// candidates that drive the PPD dashboard. A "candidate" is the unit a user
-// would actually deploy: a specific prompt version interpreted in one mode,
-// served by one solver model. The runner records one row per (cell × test
-// case); this collapses across test cases to mean accuracy + total cost.
+// Single unified analyzer for a benchmark run.
 //
-// The Pareto frontier highlights candidates that no other candidate strictly
-// dominates on both axes (higher accuracy AND lower cost). The "golden
-// quadrant" recommendation is the highest-PPD candidate that also clears a
-// minimum accuracy floor — pure PPD can otherwise reward a cheap-but-bad row.
+// Every candidate is (promptVersionId × solverModel). For each candidate the
+// analyzer computes: rubric means across all graded rows, a consistency score
+// from across-row variance, mean latency + cost, total cost, and a bootstrap
+// 95% confidence interval on `meanFinalScore` so two candidates can be
+// compared as "significantly different vs. within noise".
+//
+// The analyzer then produces three ranked views:
+//
+//   1. Pareto frontier on (maximize meanFinalScore, minimize totalCostUsd) —
+//      non-dominated candidates are highlighted in the UI.
+//   2. PPD vs. a Pareto-eligible baseline (most expensive among candidates
+//      clearing an 80% score floor), matching the paper's framing.
+//   3. Composite ranking: quality (80%, geometric mean of normalised rubric
+//      dimensions + consistency) plus efficiency (20%, min-max normalised
+//      latency + cost). The composite is the recommended-selection rule,
+//      because Pareto alone cannot break ties along the frontier and PPD
+//      alone ignores consistency.
+//
+// Recommendation is the highest-composite candidate that also passes the
+// score floor — so a cheap-but-terrible row never wins. Failed rows are
+// included in quality aggregates as zero-utility samples, and any observed
+// latency/cost from failed executions is preserved so provider/judge errors do
+// not masquerade as "fast and free". Commentary is an LLM pass that narrates
+// the comparison; it never overrides the deterministic recommendation.
 
-export interface BenchmarkCandidate {
+import type {
+  BenchmarkResult,
+} from "../../../domain/entities/benchmark-result.js";
+import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
+import { PPD } from "../../../domain/value-objects/ppd.js";
+import type { IAIProviderFactory } from "../ai-provider.js";
+
+const BOOTSTRAP_SAMPLES = 1000;
+const BOOTSTRAP_SEED = 0x9e3779b9;
+const SCORE_FLOOR_FRACTION = 0.8;
+// A candidate whose share of failed cells exceeds this rate is not eligible
+// to be the recommendation — reliability is a precondition for "best", not a
+// knob to trade against a high mean score.
+const MAX_FAILURE_RATE_FOR_RECOMMENDATION = 0.1;
+
+// finalScore is in [0,1]; stddev 0.25 is the practical ceiling for real LLM
+// benchmark runs (scores alternating near 0 and 1), so anything above it
+// clamps to 0% consistency.
+const CONSISTENCY_STDDEV_CEILING = 0.25;
+
+export interface CandidateStats {
+  candidateKey: string;
   promptVersionId: string;
   solverModel: string;
-  // Mean over completed test cases for this candidate.
+  meanAccuracy: number;
+  meanCoherence: number;
+  meanInstruction: number;
   meanFinalScore: number;
-  // Sum of solver + judge cost over the same completed cases.
+  ci95Low: number;
+  ci95High: number;
+  stderr: number;
+  consistencyScore: number;
+  meanLatencyMs: number;
+  meanCostUsd: number;
   totalCostUsd: number;
   completedCount: number;
   failedCount: number;
+  failureRate: number;
 }
 
 export interface PPDRow {
-  candidate: BenchmarkCandidate;
+  candidateKey: string;
   ppd: number;
   isMoreEfficient: boolean;
 }
 
+export interface CompositeRanking {
+  candidateKey: string;
+  compositeScore: number;
+}
+
+export type CategoryKey = NonNullable<BenchmarkTestCase["category"]> | "manual" | "uncategorized";
+
+export interface CategoryBreakdownRow {
+  candidateKey: string;
+  promptVersionId: string;
+  solverModel: string;
+  category: CategoryKey;
+  meanFinalScore: number;
+  meanAccuracy: number;
+  meanCoherence: number;
+  meanInstruction: number;
+  meanLatencyMs: number;
+  meanCostUsd: number;
+  completedCount: number;
+  failedCount: number;
+  failureRate: number;
+}
+
 export interface BenchmarkAnalysis {
-  candidates: BenchmarkCandidate[];
+  candidates: CandidateStats[];
+  categoryBreakdown: CategoryBreakdownRow[];
   paretoFrontierKeys: string[];
   baselineKey: string | null;
   ppd: PPDRow[];
+  ranking: CompositeRanking[];
   recommendedKey: string | null;
+  recommendedReasoning: string;
+  recommendationDecision: RecommendationDecision;
+  commentary: string;
 }
 
-export interface AnalyzerOptions {
-  // Minimum mean final score the recommended candidate must clear. Defaults to
-  // 80% of the best observed score so a 1-cent garbage row does not "win".
-  minScoreFraction?: number;
+export interface RecommendationDecision {
+  mode: "top_composite" | "paired_cost_tie_break";
+  topCompositeKey: string | null;
+  selectedKey: string | null;
+  comparedAgainstKey: string | null;
+  pairedDiffCiLow: number | null;
+  pairedDiffCiHigh: number | null;
 }
 
 export const candidateKey = (c: Pick<
-  BenchmarkCandidate,
+  CandidateStats,
   "promptVersionId" | "solverModel"
 >): string => `${c.promptVersionId}::${c.solverModel}`;
 
-export const aggregateResults = (results: BenchmarkResult[]): BenchmarkCandidate[] => {
-  type Acc = {
-    candidate: BenchmarkCandidate;
-    sumFinalScore: number;
+export const aggregateResults = (results: readonly BenchmarkResult[]): CandidateStats[] => {
+  type Bucket = {
+    promptVersionId: string;
+    solverModel: string;
+    finalScores: number[];
+    accuracies: number[];
+    coherences: number[];
+    instructions: number[];
+    latencies: number[];
+    costs: number[];
+    totalCost: number;
+    completedCount: number;
+    failedCount: number;
   };
-  const buckets = new Map<string, Acc>();
+  const buckets = new Map<string, Bucket>();
 
   for (const r of results) {
     const key = candidateKey(r);
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = {
-        candidate: {
-          promptVersionId: r.promptVersionId,
-          solverModel: r.solverModel,
-          meanFinalScore: 0,
-          totalCostUsd: 0,
-          completedCount: 0,
-          failedCount: 0,
-        },
-        sumFinalScore: 0,
+        promptVersionId: r.promptVersionId,
+        solverModel: r.solverModel,
+        finalScores: [],
+        accuracies: [],
+        coherences: [],
+        instructions: [],
+        latencies: [],
+        costs: [],
+        totalCost: 0,
+        completedCount: 0,
+        failedCount: 0,
       };
       buckets.set(key, bucket);
     }
 
     if (r.status === "failed") {
-      bucket.candidate.failedCount += 1;
+      bucket.failedCount += 1;
+      bucket.finalScores.push(0);
+      if (r.latencyMs > 0) bucket.latencies.push(r.latencyMs);
+      if (r.totalCostUsd > 0) {
+        bucket.costs.push(r.totalCostUsd);
+        bucket.totalCost += r.totalCostUsd;
+      }
       continue;
     }
 
-    bucket.sumFinalScore += r.finalScore;
-    bucket.candidate.totalCostUsd += r.totalCostUsd;
-    bucket.candidate.completedCount += 1;
+    bucket.finalScores.push(r.finalScore);
+    bucket.accuracies.push(r.judgeAccuracy);
+    bucket.coherences.push(r.judgeCoherence);
+    bucket.instructions.push(r.judgeInstruction);
+    bucket.latencies.push(r.latencyMs);
+    bucket.costs.push(r.totalCostUsd);
+    bucket.totalCost += r.totalCostUsd;
+    bucket.completedCount += 1;
   }
 
-  const out: BenchmarkCandidate[] = [];
-  for (const bucket of buckets.values()) {
-    bucket.candidate.meanFinalScore =
-      bucket.candidate.completedCount === 0
-        ? 0
-        : bucket.sumFinalScore / bucket.candidate.completedCount;
-    out.push(bucket.candidate);
+  const rng = mulberry32(BOOTSTRAP_SEED);
+  const out: CandidateStats[] = [];
+  for (const [key, bucket] of buckets) {
+    const sampleCount = bucket.finalScores.length;
+    const completedCount = bucket.completedCount;
+    const m = mean(bucket.finalScores);
+    const sd = stddev(bucket.finalScores);
+    const ci = bootstrapCI(bucket.finalScores, rng);
+    const totalRows = completedCount + bucket.failedCount;
+    out.push({
+      candidateKey: key,
+      promptVersionId: bucket.promptVersionId,
+      solverModel: bucket.solverModel,
+      meanAccuracy: mean(bucket.accuracies),
+      meanCoherence: mean(bucket.coherences),
+      meanInstruction: mean(bucket.instructions),
+      meanFinalScore: m,
+      ci95Low: ci.low,
+      ci95High: ci.high,
+      stderr: sampleCount === 0 ? 0 : sd / Math.sqrt(sampleCount),
+      consistencyScore: consistencyFromStddev(sd),
+      meanLatencyMs: mean(bucket.latencies),
+      meanCostUsd: mean(bucket.costs),
+      totalCostUsd: bucket.totalCost,
+      completedCount,
+      failedCount: bucket.failedCount,
+      failureRate: totalRows === 0 ? 0 : bucket.failedCount / totalRows,
+    });
   }
   return out;
 };
 
 // Pareto frontier on (maximize meanFinalScore, minimize totalCostUsd).
-// Candidates with zero completed cells are excluded from the frontier (they
-// represent a fully-failed row and have no meaningful score).
 export const computeParetoFrontier = (
-  candidates: BenchmarkCandidate[],
-): BenchmarkCandidate[] => {
+  candidates: readonly CandidateStats[],
+): CandidateStats[] => {
   const eligible = candidates.filter((c) => c.completedCount > 0);
-  return eligible.filter((candidate) => {
+  return eligible.filter((c) => {
     return !eligible.some(
       (other) =>
-        other !== candidate &&
-        other.meanFinalScore >= candidate.meanFinalScore &&
-        other.totalCostUsd <= candidate.totalCostUsd &&
-        (other.meanFinalScore > candidate.meanFinalScore ||
-          other.totalCostUsd < candidate.totalCostUsd),
+        other !== c &&
+        other.meanFinalScore >= c.meanFinalScore &&
+        other.totalCostUsd <= c.totalCostUsd &&
+        (other.meanFinalScore > c.meanFinalScore ||
+          other.totalCostUsd < c.totalCostUsd),
     );
   });
 };
 
-// Baseline = the most expensive candidate among those clearing the score
-// floor. The paper's framing is "is the new BRAID setup cheaper than what we
-// already trust?"; the trusted setup is usually the strongest, priciest
-// classical option. If nothing is eligible, fall back to the row with the
-// highest mean score regardless of cost.
 const pickBaseline = (
-  candidates: BenchmarkCandidate[],
+  candidates: readonly CandidateStats[],
   scoreFloor: number,
-): BenchmarkCandidate | null => {
+): CandidateStats | null => {
   const eligible = candidates.filter(
     (c) => c.completedCount > 0 && c.meanFinalScore >= scoreFloor,
   );
@@ -134,62 +243,521 @@ const pickBaseline = (
   return eligible.sort((a, b) => b.totalCostUsd - a.totalCostUsd)[0] ?? null;
 };
 
-export const analyzeBenchmark = (
-  results: BenchmarkResult[],
+const computePPD = (
+  candidates: readonly CandidateStats[],
+  baseline: CandidateStats,
+): PPDRow[] =>
+  candidates
+    .filter((c) => c.completedCount > 0)
+    .map((c) => {
+      const score = PPD.compute(
+        { accuracy: c.meanFinalScore, costUsd: c.totalCostUsd },
+        { accuracy: baseline.meanFinalScore, costUsd: baseline.totalCostUsd },
+      );
+      return {
+        candidateKey: c.candidateKey,
+        ppd: score.value,
+        isMoreEfficient: score.isMoreEfficient,
+      };
+    });
+
+// Composite score: weighted combination of quality (geometric mean — penalises
+// any dimension sitting at zero) and efficiency (additive — allows the worst
+// latency/cost candidate to still contribute to quality-driven ranking).
+//
+// Weights (sum = 1.0):
+//   accuracy      25%
+//   coherence     20%
+//   instruction   20%
+//   consistency   15%
+//   latency       10%
+//   cost          10%
+const computeCompositeRanking = (
+  candidates: readonly CandidateStats[],
+): CompositeRanking[] => {
+  const eligible = candidates.filter((c) => c.completedCount > 0);
+  if (eligible.length === 0) return [];
+
+  const latencies = eligible.map((c) => c.meanLatencyMs);
+  const costs = eligible.map((c) => c.meanCostUsd);
+  const minMaxNorm = (values: number[], value: number): number => {
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    if (max === min) return 1;
+    return (max - value) / (max - min);
+  };
+
+  return eligible
+    .map((c) => {
+      const acc = (c.meanAccuracy - 1) / 4;
+      const coh = (c.meanCoherence - 1) / 4;
+      const ins = (c.meanInstruction - 1) / 4;
+      const con = c.consistencyScore;
+      const quality =
+        Math.pow(acc, 25 / 80) *
+        Math.pow(coh, 20 / 80) *
+        Math.pow(ins, 20 / 80) *
+        Math.pow(con, 15 / 80);
+      const efficiency =
+        0.10 * minMaxNorm(latencies, c.meanLatencyMs) +
+        0.10 * minMaxNorm(costs, c.meanCostUsd);
+      const compositeScore = 0.80 * quality + efficiency;
+      return { candidateKey: c.candidateKey, compositeScore };
+    })
+    .sort((a, b) => b.compositeScore - a.compositeScore);
+};
+
+export interface AnalyzerOptions {
+  minScoreFraction?: number;
+  testCasesById?: Record<
+    string,
+    Pick<BenchmarkTestCase, "category" | "source">
+  >;
+}
+
+const categoryKeyForTestCase = (
+  testCase: Pick<BenchmarkTestCase, "category" | "source"> | undefined,
+): CategoryKey => {
+  if (!testCase) return "uncategorized";
+  if (testCase.category) return testCase.category;
+  return testCase.source === "manual" ? "manual" : "uncategorized";
+};
+
+const aggregateCategoryBreakdown = (
+  results: readonly BenchmarkResult[],
+  testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>,
+): CategoryBreakdownRow[] => {
+  type Bucket = {
+    promptVersionId: string;
+    solverModel: string;
+    category: CategoryKey;
+    finalScores: number[];
+    accuracies: number[];
+    coherences: number[];
+    instructions: number[];
+    latencies: number[];
+    costs: number[];
+    completedCount: number;
+    failedCount: number;
+  };
+  const buckets = new Map<string, Bucket>();
+
+  for (const r of results) {
+    const candidate = candidateKey(r);
+    const category = categoryKeyForTestCase(testCasesById[r.testCaseId]);
+    const key = `${candidate}::${category}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = {
+        promptVersionId: r.promptVersionId,
+        solverModel: r.solverModel,
+        category,
+        finalScores: [],
+        accuracies: [],
+        coherences: [],
+        instructions: [],
+        latencies: [],
+        costs: [],
+        completedCount: 0,
+        failedCount: 0,
+      };
+      buckets.set(key, bucket);
+    }
+
+    if (r.status === "failed") {
+      bucket.failedCount += 1;
+      bucket.finalScores.push(0);
+      if (r.latencyMs > 0) bucket.latencies.push(r.latencyMs);
+      if (r.totalCostUsd > 0) bucket.costs.push(r.totalCostUsd);
+      continue;
+    }
+
+    bucket.finalScores.push(r.finalScore);
+    bucket.accuracies.push(r.judgeAccuracy);
+    bucket.coherences.push(r.judgeCoherence);
+    bucket.instructions.push(r.judgeInstruction);
+    bucket.latencies.push(r.latencyMs);
+    bucket.costs.push(r.totalCostUsd);
+    bucket.completedCount += 1;
+  }
+
+  return [...buckets.entries()]
+    .map(([key, bucket]) => {
+      const completedCount = bucket.completedCount;
+      const totalRows = completedCount + bucket.failedCount;
+      return {
+        candidateKey: key.slice(0, key.lastIndexOf("::")),
+        promptVersionId: bucket.promptVersionId,
+        solverModel: bucket.solverModel,
+        category: bucket.category,
+        meanFinalScore: mean(bucket.finalScores),
+        meanAccuracy: mean(bucket.accuracies),
+        meanCoherence: mean(bucket.coherences),
+        meanInstruction: mean(bucket.instructions),
+        meanLatencyMs: mean(bucket.latencies),
+        meanCostUsd: mean(bucket.costs),
+        completedCount,
+        failedCount: bucket.failedCount,
+        failureRate: totalRows === 0 ? 0 : bucket.failedCount / totalRows,
+      };
+    })
+    .sort((a, b) => {
+      if (a.category === b.category) {
+        return a.candidateKey.localeCompare(b.candidateKey);
+      }
+      return String(a.category).localeCompare(String(b.category));
+    });
+};
+
+export const computeAnalysis = (
+  results: readonly BenchmarkResult[],
   options: AnalyzerOptions = {},
-): BenchmarkAnalysis => {
+): Omit<BenchmarkAnalysis, "commentary"> => {
   const candidates = aggregateResults(results);
-  const paretoFrontier = computeParetoFrontier(candidates);
-  const paretoFrontierKeys = paretoFrontier.map(candidateKey);
+  const categoryBreakdown = aggregateCategoryBreakdown(
+    results,
+    options.testCasesById ?? {},
+  );
+  const paretoFrontierKeys = computeParetoFrontier(candidates).map((c) => c.candidateKey);
 
   const completed = candidates.filter((c) => c.completedCount > 0);
   if (completed.length === 0) {
     return {
       candidates,
+      categoryBreakdown,
       paretoFrontierKeys,
       baselineKey: null,
       ppd: [],
+      ranking: [],
       recommendedKey: null,
+      recommendedReasoning: "",
+      recommendationDecision: {
+        mode: "top_composite",
+        topCompositeKey: null,
+        selectedKey: null,
+        comparedAgainstKey: null,
+        pairedDiffCiLow: null,
+        pairedDiffCiHigh: null,
+      },
     };
   }
 
   const bestScore = Math.max(...completed.map((c) => c.meanFinalScore));
-  const minScoreFraction = options.minScoreFraction ?? 0.8;
-  const scoreFloor = bestScore * minScoreFraction;
+  const fraction = options.minScoreFraction ?? SCORE_FLOOR_FRACTION;
+  const scoreFloor = bestScore * fraction;
 
   const baseline = pickBaseline(candidates, scoreFloor);
-  if (!baseline || baseline.totalCostUsd <= 0 || baseline.meanFinalScore <= 0) {
-    return {
-      candidates,
-      paretoFrontierKeys,
-      baselineKey: baseline ? candidateKey(baseline) : null,
-      ppd: [],
-      recommendedKey: null,
-    };
-  }
+  const baselineKey = baseline ? baseline.candidateKey : null;
 
-  const baselineKey = candidateKey(baseline);
-  const ppd: PPDRow[] = completed.map((candidate) => {
-    const score = PPD.compute(
-      { accuracy: candidate.meanFinalScore, costUsd: candidate.totalCostUsd },
-      { accuracy: baseline.meanFinalScore, costUsd: baseline.totalCostUsd },
-    );
-    return {
-      candidate,
-      ppd: score.value,
-      isMoreEfficient: score.isMoreEfficient,
-    };
-  });
+  const ranking = computeCompositeRanking(candidates);
+  // Recommendation order: (1) clear score floor, (2) failure rate below
+  // threshold, (3) highest composite, (4) tie-break on CI overlap by cheaper
+  // mean cost. The failure gate makes reliability a precondition rather than
+  // just another weighted term; CI-overlap tie-break prevents picking a
+  // marginally-higher-composite candidate when the difference is within
+  // sampling noise.
+  const eligibleKeys = new Set(
+    completed
+      .filter(
+        (c) =>
+          c.meanFinalScore >= scoreFloor &&
+          c.failureRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION,
+      )
+      .map((c) => c.candidateKey),
+  );
+  const eligibleRanking = ranking.filter((r) => eligibleKeys.has(r.candidateKey));
+  const recommended = pickWithPairedSignificanceTieBreak(
+    eligibleRanking,
+    completed,
+    results,
+  );
+  const recommendedKey = recommended?.rank.candidateKey ?? null;
+  const recommendedStats = recommendedKey
+    ? completed.find((c) => c.candidateKey === recommendedKey) ?? null
+    : null;
 
-  const recommended = ppd
-    .filter((row) => row.candidate.meanFinalScore >= scoreFloor)
-    .sort((a, b) => b.ppd - a.ppd)[0];
+  const ppd =
+    baseline && baseline.totalCostUsd > 0 && baseline.meanFinalScore > 0
+      ? computePPD(candidates, baseline)
+      : [];
 
   return {
     candidates,
+    categoryBreakdown,
     paretoFrontierKeys,
     baselineKey,
     ppd,
-    recommendedKey: recommended ? candidateKey(recommended.candidate) : null,
+    ranking,
+    recommendedKey,
+    recommendedReasoning: recommendedStats
+      ? buildRecommendationReasoning(recommendedStats, recommended?.rank.compositeScore ?? 0)
+      : "",
+    recommendationDecision: recommended
+      ? {
+          mode: recommended.mode,
+          topCompositeKey: recommended.topCompositeKey,
+          selectedKey: recommended.rank.candidateKey,
+          comparedAgainstKey: recommended.comparedAgainstKey,
+          pairedDiffCiLow: recommended.pairedDiffCi?.low ?? null,
+          pairedDiffCiHigh: recommended.pairedDiffCi?.high ?? null,
+        }
+      : {
+          mode: "top_composite",
+          topCompositeKey: eligibleRanking[0]?.candidateKey ?? null,
+          selectedKey: null,
+          comparedAgainstKey: null,
+          pairedDiffCiLow: null,
+          pairedDiffCiHigh: null,
+        },
   };
+};
+
+const resultSampleKey = (
+  r: Pick<BenchmarkResult, "testCaseId" | "runIndex">,
+): string => `${r.testCaseId}::${r.runIndex}`;
+
+const pairedDifferenceCI = (
+  leftRows: readonly BenchmarkResult[],
+  rightRows: readonly BenchmarkResult[],
+): { low: number; high: number } | null => {
+  const left = new Map(leftRows.map((r) => [resultSampleKey(r), r] as const));
+  const right = new Map(rightRows.map((r) => [resultSampleKey(r), r] as const));
+  const sharedKeys = [...left.keys()].filter((key) => right.has(key)).sort();
+  if (sharedKeys.length < 2) return null;
+
+  const diffs = sharedKeys.map((key) => {
+    const l = left.get(key);
+    const r = right.get(key);
+    return (l?.status === "failed" ? 0 : l?.finalScore ?? 0) -
+      (r?.status === "failed" ? 0 : r?.finalScore ?? 0);
+  });
+  const rng = mulberry32(hashString(sharedKeys.join("|")));
+  return bootstrapCI(diffs, rng);
+};
+
+// Pick the top-composite candidate; if a runner-up is not statistically
+// separable from the top under paired bootstrap of per-cell score
+// differences, prefer the cheaper candidate among those tied setups.
+export const pickWithPairedSignificanceTieBreak = (
+  ranking: readonly CompositeRanking[],
+  completed: readonly CandidateStats[],
+  results: readonly BenchmarkResult[],
+): {
+  rank: CompositeRanking;
+  mode: "top_composite" | "paired_cost_tie_break";
+  topCompositeKey: string;
+  comparedAgainstKey: string | null;
+  pairedDiffCi: { low: number; high: number } | null;
+} | null => {
+  if (ranking.length === 0) return null;
+  const byKey = new Map(completed.map((c) => [c.candidateKey, c] as const));
+  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
+  for (const row of results) {
+    const key = candidateKey(row);
+    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
+  }
+  const top = ranking[0];
+  if (!top) return null;
+  const topStats = byKey.get(top.candidateKey);
+  if (!topStats) {
+    return {
+      rank: top,
+      mode: "top_composite",
+      topCompositeKey: top.candidateKey,
+      comparedAgainstKey: null,
+      pairedDiffCi: null,
+    };
+  }
+
+  let best: { rank: CompositeRanking; stats: CandidateStats } = {
+    rank: top,
+    stats: topStats,
+  };
+  let decision: {
+    mode: "top_composite" | "paired_cost_tie_break";
+    comparedAgainstKey: string | null;
+    pairedDiffCi: { low: number; high: number } | null;
+  } = {
+    mode: "top_composite",
+    comparedAgainstKey: null,
+    pairedDiffCi: null,
+  };
+  for (const other of ranking.slice(1)) {
+    const otherStats = byKey.get(other.candidateKey);
+    if (!otherStats) continue;
+    const diffCi = pairedDifferenceCI(
+      rowsByCandidate.get(top.candidateKey) ?? [],
+      rowsByCandidate.get(other.candidateKey) ?? [],
+    );
+    const notSeparable = diffCi
+      ? diffCi.low <= 0 && diffCi.high >= 0
+      : otherStats.ci95Low <= topStats.ci95High &&
+        otherStats.ci95High >= topStats.ci95Low;
+    if (!notSeparable) continue;
+    if (otherStats.meanCostUsd < best.stats.meanCostUsd) {
+      best = { rank: other, stats: otherStats };
+      decision = {
+        mode: "paired_cost_tie_break",
+        comparedAgainstKey: top.candidateKey,
+        pairedDiffCi: diffCi,
+      };
+    }
+  }
+  return {
+    rank: best.rank,
+    mode: decision.mode,
+    topCompositeKey: top.candidateKey,
+    comparedAgainstKey: decision.comparedAgainstKey,
+    pairedDiffCi: decision.pairedDiffCi,
+  };
+};
+
+const buildRecommendationReasoning = (s: CandidateStats, composite: number): string =>
+  `Composite score ${(composite * 100).toFixed(1)}% — ` +
+  `Accuracy ${s.meanAccuracy.toFixed(2)}, ` +
+  `Coherence ${s.meanCoherence.toFixed(2)}, ` +
+  `Instruction ${s.meanInstruction.toFixed(2)}, ` +
+  `Consistency ${(s.consistencyScore * 100).toFixed(1)}%, ` +
+  `CI95 [${s.ci95Low.toFixed(3)}, ${s.ci95High.toFixed(3)}], ` +
+  `Failure rate ${(s.failureRate * 100).toFixed(1)}%, ` +
+  `Latency ${Math.round(s.meanLatencyMs)} ms, ` +
+  `Cost $${s.meanCostUsd.toFixed(4)}/test.`;
+
+export class BenchmarkAnalyzer {
+  constructor(private readonly providers: IAIProviderFactory) {}
+
+  async analyze(
+    results: readonly BenchmarkResult[],
+    testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>,
+    versionLabels: Record<string, string>,
+    commentaryModel: string,
+  ): Promise<BenchmarkAnalysis> {
+    const core = computeAnalysis(results, { testCasesById });
+    if (core.candidates.every((c) => c.completedCount === 0)) {
+      return { ...core, commentary: "No completed results to analyze." };
+    }
+    const commentary = await this.generateCommentary(
+      core.candidates,
+      versionLabels,
+      commentaryModel,
+    );
+    return { ...core, commentary };
+  }
+
+  private async generateCommentary(
+    candidates: readonly CandidateStats[],
+    versionLabels: Record<string, string>,
+    commentaryModel: string,
+  ): Promise<string> {
+    const candidateLines = candidates
+      .filter((c) => c.completedCount > 0)
+      .map((c) => {
+        const vLabel = versionLabels[c.promptVersionId] ?? c.promptVersionId.slice(-6);
+        return [
+          `Candidate: ${vLabel} × ${c.solverModel}`,
+          `  Final score (mean):  ${c.meanFinalScore.toFixed(3)} (95% CI [${c.ci95Low.toFixed(3)}, ${c.ci95High.toFixed(3)}])`,
+          `  Accuracy (1-5):      ${c.meanAccuracy.toFixed(2)}`,
+          `  Coherence (1-5):     ${c.meanCoherence.toFixed(2)}`,
+          `  Instruction (1-5):   ${c.meanInstruction.toFixed(2)}`,
+          `  Consistency:         ${(c.consistencyScore * 100).toFixed(1)}%`,
+          `  Avg latency:         ${Math.round(c.meanLatencyMs)} ms`,
+          `  Avg cost/test:       $${c.meanCostUsd.toFixed(4)}`,
+          `  Completed rows:      ${c.completedCount}`,
+          `  Failure rate:        ${(c.failureRate * 100).toFixed(1)}%`,
+        ].join("\n");
+      })
+      .join("\n\n");
+
+    const prompt = `You are analyzing LLM benchmark results across prompt versions and solver models.
+
+Per-candidate statistics:
+
+${candidateLines}
+
+Rubric dimensions:
+- Accuracy: Does the response correctly answer the question? (1=very wrong, 5=perfect)
+- Coherence: Is the response logically structured and easy to follow? (1=incoherent, 5=excellent)
+- Instruction: Does the response follow the prompt instructions? (1=ignores instructions, 5=follows perfectly)
+- Consistency (%): Stability of scores across runs — 100% means the candidate scored identically on every run.
+- 95% CI: Bootstrap confidence interval on mean final score; two candidates whose CIs overlap are not statistically separable from this sample.
+- Avg latency: Mean response time per row.
+- Avg cost/test: Mean total LLM cost (candidate + ensemble of judges) per row in USD.
+
+Write a detailed analysis paragraph (3-5 sentences) comparing each candidate across all dimensions. Call out where CIs overlap vs. where one candidate is clearly ahead. Do not include a recommendation — just the analysis.
+
+Return only the paragraph text, no JSON, no headings.`;
+
+    const provider = this.providers.forModel(commentaryModel);
+    const response = await provider.generate({
+      model: commentaryModel,
+      temperature: 0,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return response.text.trim();
+  }
+}
+
+// Helpers.
+
+const mean = (values: readonly number[]): number =>
+  values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
+
+const stddev = (values: readonly number[]): number => {
+  if (values.length < 2) return 0;
+  const m = mean(values);
+  const variance = values.reduce((s, v) => s + (v - m) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+};
+
+const consistencyFromStddev = (sd: number): number =>
+  Math.max(0, Math.min(1, 1 - sd / CONSISTENCY_STDDEV_CEILING));
+
+const bootstrapCI = (
+  values: readonly number[],
+  rng: () => number,
+): { low: number; high: number } => {
+  if (values.length === 0) return { low: 0, high: 0 };
+  if (values.length === 1) {
+    const only = values[0] ?? 0;
+    return { low: only, high: only };
+  }
+  const samples: number[] = new Array(BOOTSTRAP_SAMPLES);
+  for (let i = 0; i < BOOTSTRAP_SAMPLES; i += 1) {
+    let sum = 0;
+    for (let j = 0; j < values.length; j += 1) {
+      const idx = Math.floor(rng() * values.length);
+      sum += values[idx] ?? 0;
+    }
+    samples[i] = sum / values.length;
+  }
+  samples.sort((a, b) => a - b);
+  const lowIdx = Math.floor(0.025 * BOOTSTRAP_SAMPLES);
+  const highIdx = Math.ceil(0.975 * BOOTSTRAP_SAMPLES) - 1;
+  return {
+    low: samples[lowIdx] ?? 0,
+    high: samples[Math.min(highIdx, BOOTSTRAP_SAMPLES - 1)] ?? 0,
+  };
+};
+
+// Deterministic 32-bit RNG so two calls with the same inputs produce the same
+// confidence interval — important because analyze() is read-only and should
+// not return a different CI on each refresh.
+const mulberry32 = (seed: number): (() => number) => {
+  let a = seed >>> 0;
+  return (): number => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const hashString = (value: string): number => {
+  let h = BOOTSTRAP_SEED >>> 0;
+  for (let i = 0; i < value.length; i += 1) {
+    h = (h ^ value.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
 };

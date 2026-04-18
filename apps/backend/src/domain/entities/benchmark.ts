@@ -1,7 +1,18 @@
 // Benchmark = "evaluate these prompt versions against each other using
-// LLM-generated test inputs, scored by this judge model". Test inputs are
-// produced at run time by a generator model that reads the prompt content and
-// produces `testCount` varied, realistic user messages.
+// LLM-generated test inputs, scored by an ensemble of judge models". Test
+// inputs are produced at run time by a generator model that reads the prompt
+// content and produces `testCount` varied, realistic user messages.
+//
+// Each (testCase × promptVersion × solverModel) cell is executed `repetitions`
+// times so variance across runs can be estimated. Each run is graded by EVERY
+// judge in `judgeModels` and scores are averaged across judges to reduce
+// single-judge bias.
+//
+// `seed` is the deterministic seed for both test-case generation and solver
+// sampling. It is generated at benchmark creation (unless provided explicitly)
+// so reruns of the same benchmark produce the same candidate outputs —
+// variance across the k repetitions is still present because each run uses
+// `seed ⊕ hash(cell, runIndex)`.
 //
 // Each PromptVersion uses its own prompt for evaluation: if the version has a
 // braidGraph, that graph is the prompt; otherwise the classicalPrompt is used.
@@ -15,10 +26,31 @@ export interface BenchmarkProgress {
   total: number;
 }
 
+// Test-case categories mirror the labels the generator LLM is asked to produce.
+// "manual" is reserved for cases the user adds by hand and for which the
+// generator never assigned a category.
+export const TEST_CASE_CATEGORIES = [
+  "typical",
+  "complex",
+  "ambiguous",
+  "adversarial",
+  "edge_case",
+  "contradictory",
+  "stress",
+] as const;
+export type TestCaseCategory = (typeof TEST_CASE_CATEGORIES)[number];
+
+export type TestCaseSource = "generated" | "manual";
+export type TestGenerationMode = "shared-core" | "diff-seeking";
+
 export interface BenchmarkTestCase {
   id: string;
   input: string;
   expectedOutput: string | null;
+  // Null when the source is "manual" and the user has not labelled the case,
+  // or for historical rows written before categorisation existed.
+  category: TestCaseCategory | null;
+  source: TestCaseSource;
 }
 
 export interface Benchmark {
@@ -27,9 +59,16 @@ export interface Benchmark {
   ownerId: string;
   promptVersionIds: string[];
   solverModels: string[];
-  judgeModel: string;
+  judgeModels: string[];
   generatorModel: string;
+  testGenerationMode: TestGenerationMode;
+  // Model used for the natural-language analysis commentary. Independent of
+  // judge models so the narrative layer is not tied to grading. Falls back to
+  // the first judge model when null.
+  analysisModel: string | null;
   testCount: number;
+  repetitions: number;
+  seed: number;
   concurrency: number;
   status: BenchmarkStatus;
   progress: BenchmarkProgress;

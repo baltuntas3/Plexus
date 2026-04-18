@@ -1,13 +1,24 @@
 import { z } from "zod";
+import { TEST_CASE_CATEGORIES } from "../../domain/entities/benchmark.js";
 
+const uniqueStringArray = (field: string, min = 1) =>
+  z
+    .array(z.string().min(1))
+    .min(min)
+    .refine((arr) => new Set(arr).size === arr.length, {
+      message: `${field} must be unique`,
+    });
+
+// The public create-benchmark surface exposes only the four choices the
+// caller actually needs to make. Judge ensemble, generator, test-generation
+// mode, analysis model, repetitions, concurrency and seed are derived inside
+// the use case so the simplest call still produces a fair, reproducible
+// benchmark.
 export const createBenchmarkSchema = z.object({
   name: z.string().min(1).max(120),
-  promptVersionIds: z.array(z.string().min(1)).min(1),
-  solverModels: z.array(z.string().min(1)).min(1),
-  judgeModel: z.string().min(1),
-  generatorModel: z.string().min(1),
+  promptVersionIds: uniqueStringArray("promptVersionIds"),
+  solverModels: uniqueStringArray("solverModels"),
   testCount: z.coerce.number().int().min(1).max(100),
-  concurrency: z.coerce.number().int().min(1).max(16).optional().default(2),
 });
 export type CreateBenchmarkDto = z.infer<typeof createBenchmarkSchema>;
 
@@ -17,6 +28,7 @@ export const updateTestCasesSchema = z.object({
       id: z.string().min(1),
       input: z.string().min(1).optional(),
       expectedOutput: z.string().nullable(),
+      category: z.enum(TEST_CASE_CATEGORIES).nullable().optional(),
     }),
   ),
   additions: z
@@ -24,6 +36,7 @@ export const updateTestCasesSchema = z.object({
       z.object({
         input: z.string().min(1),
         expectedOutput: z.string().nullable(),
+        category: z.enum(TEST_CASE_CATEGORIES).nullable().optional(),
       }),
     )
     .optional()

@@ -7,12 +7,28 @@ const buildDraftBenchmark = async (benchmarks: InMemoryBenchmarkRepository) =>
     ownerId: "u1",
     promptVersionIds: ["v1"],
     solverModels: ["gpt-4o-mini"],
-    judgeModel: "gpt-4o-mini",
+    judgeModels: ["gpt-4o-mini"],
     generatorModel: "gpt-4o-mini",
+    testGenerationMode: "shared-core",
+    analysisModel: null,
     testCount: 2,
+    repetitions: 1,
+    seed: 42,
     testCases: [
-      { id: "tc1", input: "q1?", expectedOutput: null },
-      { id: "tc2", input: "q2?", expectedOutput: null },
+      {
+        id: "tc1",
+        input: "q1?",
+        expectedOutput: null,
+        category: null,
+        source: "generated" as const,
+      },
+      {
+        id: "tc2",
+        input: "q2?",
+        expectedOutput: null,
+        category: null,
+        source: "generated" as const,
+      },
     ],
     concurrency: 2,
   });
@@ -36,6 +52,23 @@ describe("UpdateTestCasesUseCase", () => {
     const updated = await benchmarks.findById(bm.id);
     expect(updated?.testCases[0]?.expectedOutput).toBe("answer one");
     expect(updated?.testCases[1]?.expectedOutput).toBeNull();
+  });
+
+  it("persists manual categories for added test cases", async () => {
+    const benchmarks = new InMemoryBenchmarkRepository();
+    const useCase = new UpdateTestCasesUseCase(benchmarks);
+    const bm = await buildDraftBenchmark(benchmarks);
+
+    await useCase.execute({
+      benchmarkId: bm.id,
+      ownerId: "u1",
+      updates: [],
+      additions: [{ input: "manual?", expectedOutput: null, category: "adversarial" }],
+    });
+
+    const updated = await benchmarks.findById(bm.id);
+    expect(updated?.testCases.at(-1)?.category).toBe("adversarial");
+    expect(updated?.testCases.at(-1)?.source).toBe("manual");
   });
 
   it("rejects updates when the benchmark is not in draft status", async () => {

@@ -1,8 +1,13 @@
 import { z } from "zod";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
-import type { IAIProviderFactory } from "../ai-provider.js";
-import type { IJudge, JudgeInput, JudgeResult } from "./judge.js";
+import { AIProviderError, type IAIProviderFactory } from "../ai-provider.js";
+import {
+  JudgeExecutionError,
+  type IJudge,
+  type JudgeInput,
+  type JudgeResult,
+} from "./judge.js";
 import { buildJudgeMessages } from "./judge-prompt.js";
 import { computeVerbosityPenalty } from "./verbosity-penalty.js";
 
@@ -28,31 +33,52 @@ export class LLMJudge implements IJudge {
 
   async grade(input: JudgeInput): Promise<JudgeResult> {
     const provider = this.providers.forModel(this.config.judgeModel);
-    const response = await provider.generate({
-      model: this.config.judgeModel,
-      messages: buildJudgeMessages(input),
-      temperature: this.config.temperature ?? 0,
-    });
+    let response;
+    try {
+      response = await provider.generate({
+        model: this.config.judgeModel,
+        messages: buildJudgeMessages(input),
+        temperature: this.config.temperature ?? 0,
+      });
+    } catch (err) {
+      if (err instanceof AIProviderError) {
+        throw new JudgeExecutionError(err.message, {
+          usage: err.partial?.usage,
+          model: err.partial?.model ?? this.config.judgeModel,
+        }, { cause: err });
+      }
+      throw err;
+    }
 
-    const parsed = parseRubric(response.text);
-    const verbosityPenalty = computeVerbosityPenalty(input.candidate, input.reference);
-    const score = JudgeScore.fromRubric(
-      {
-        accuracy: parsed.accuracy,
-        coherence: parsed.coherence,
-        instruction: parsed.instruction,
-      },
-      verbosityPenalty,
-      parsed.reasoning,
-    );
-    return {
-      score,
-      usage: {
-        inputTokens: response.usage.inputTokens,
-        outputTokens: response.usage.outputTokens,
-      },
-      model: response.model,
-    };
+    try {
+      const parsed = parseRubric(response.text);
+      const verbosityPenalty = computeVerbosityPenalty(input.candidate, input.reference);
+      const score = JudgeScore.fromRubric(
+        {
+          accuracy: parsed.accuracy,
+          coherence: parsed.coherence,
+          instruction: parsed.instruction,
+        },
+        verbosityPenalty,
+        parsed.reasoning,
+      );
+      return {
+        score,
+        usage: {
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+        },
+        model: response.model,
+      };
+    } catch (err) {
+      if (err instanceof Error) {
+        throw new JudgeExecutionError(err.message, {
+          usage: response.usage,
+          model: response.model,
+        }, { cause: err });
+      }
+      throw err;
+    }
   }
 }
 

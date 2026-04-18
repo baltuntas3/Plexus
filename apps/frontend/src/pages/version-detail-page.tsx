@@ -1,12 +1,15 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActionIcon,
   Badge,
   Button,
   Center,
+  Checkbox,
   Grid,
   Group,
   Loader,
+  MultiSelect,
+  NumberInput,
   Paper,
   ScrollArea,
   Select,
@@ -20,15 +23,17 @@ import { useSetAtom, useAtomValue } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import { notifications } from "@mantine/notifications";
-import type { GraphQualityScoreDto, PromptVersionDto, VersionStatus } from "@plexus/shared-types";
+import type { GraphQualityScoreDto, PromptDto, PromptVersionDto, VersionStatus } from "@plexus/shared-types";
 import {
   createVersionAtom,
   fetchPromptDetailAtom,
   promptDetailRefreshAtom,
 } from "../atoms/prompts.atoms.js";
+import { createBenchmarkAtom } from "../atoms/benchmarks.atoms.js";
 import { chatBraidAtom, lintVersionAtom, modelsAtom, updateBraidAtom } from "../atoms/braid.atoms.js";
 import { BraidView } from "../components/braid-view.js";
 import { LintPanel } from "../components/lint-panel.js";
+import { DEFAULT_TEST_COUNT } from "../lib/evaluate-presets.js";
 import { ApiError } from "../lib/api-client.js";
 
 const statusColor: Record<VersionStatus, string> = {
@@ -221,6 +226,200 @@ const ChatPanel = ({ promptId, version, currentMermaid, onResult }: ChatPanelPro
   );
 };
 
+interface EvaluatePanelProps {
+  currentVersion: PromptVersionDto;
+  versions: PromptVersionDto[];
+  promptName: string;
+  productionVersionName: string | null;
+}
+
+const SolverMultiSelect = ({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+}) => {
+  const models = useAtomValue(modelsAtom);
+  return (
+    <MultiSelect
+      label="Solver models"
+      description="Models that will answer each test case. Picked head-to-head."
+      placeholder="Pick one or more models"
+      value={value}
+      onChange={onChange}
+      data={models.map((m) => ({
+        value: m.id,
+        label: `${m.displayName} ($${m.inputPricePerMillion}/$${m.outputPricePerMillion}/1M)`,
+      }))}
+      searchable
+      clearable
+    />
+  );
+};
+
+const EvaluatePanel = ({
+  currentVersion,
+  versions,
+  promptName,
+  productionVersionName,
+}: EvaluatePanelProps) => {
+  const createBenchmark = useSetAtom(createBenchmarkAtom);
+  const navigate = useNavigate();
+
+  const defaultVersionIds = useMemo(() => {
+    const ids = new Set<string>([currentVersion.id]);
+    if (productionVersionName) {
+      const production = versions.find((v) => v.version === productionVersionName);
+      if (production && production.id !== currentVersion.id) {
+        ids.add(production.id);
+      }
+    }
+    return Array.from(ids);
+  }, [currentVersion.id, productionVersionName, versions]);
+
+  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(defaultVersionIds);
+  const [solverModels, setSolverModels] = useState<string[]>([]);
+  const [testCount, setTestCount] = useState<number>(DEFAULT_TEST_COUNT);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setSelectedVersionIds(defaultVersionIds);
+  }, [defaultVersionIds]);
+
+  const toggleVersion = (id: string, checked: boolean) => {
+    setSelectedVersionIds((prev) => {
+      if (checked) return prev.includes(id) ? prev : [...prev, id];
+      return prev.filter((x) => x !== id);
+    });
+  };
+
+  const handleStart = async () => {
+    if (selectedVersionIds.length === 0) {
+      notifications.show({
+        color: "yellow",
+        title: "Version required",
+        message: "Pick at least one version to benchmark",
+      });
+      return;
+    }
+    if (solverModels.length === 0) {
+      notifications.show({
+        color: "yellow",
+        title: "Model required",
+        message: "Pick at least one solver model",
+      });
+      return;
+    }
+    if (!Number.isFinite(testCount) || testCount < 1 || testCount > 100) {
+      notifications.show({
+        color: "yellow",
+        title: "Invalid test count",
+        message: "Test case count must be between 1 and 100",
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const benchmark = await createBenchmark({
+        name: `${promptName} · ${solverModels.join(", ")} · ${testCount} cases`,
+        promptVersionIds: selectedVersionIds,
+        solverModels,
+        testCount,
+      });
+      notifications.show({
+        color: "green",
+        title: "Evaluation ready",
+        message: `${benchmark.testCases.length} test cases generated for ${selectedVersionIds.length} version(s)`,
+      });
+      navigate(`/benchmarks/${benchmark.id}`, {
+        state: {
+          returnTo: `/prompts/${currentVersion.promptId}/versions/${currentVersion.version}`,
+        },
+      });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Failed to create evaluation";
+      notifications.show({ color: "red", title: "Error", message });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Stack gap="md">
+      <Paper withBorder p="lg">
+        <Stack gap="md">
+          <div>
+            <Title order={4}>Evaluate Versions</Title>
+            <Text size="sm" c="dimmed">
+              Pick which versions to compare, which models to evaluate as solvers, and how many
+              test cases to generate. Judges, generator, generation mode, analysis model,
+              repetitions and seed are chosen server-side to keep the comparison fair.
+            </Text>
+          </div>
+
+          <Stack gap={4}>
+            <Text size="sm" fw={500}>
+              Versions
+            </Text>
+            <Text size="xs" c="dimmed">
+              Select one or more versions of this prompt to benchmark head-to-head.
+            </Text>
+            <Stack gap={4} mt={4}>
+              {versions.map((v) => {
+                const isProduction = v.version === productionVersionName;
+                const isCurrent = v.id === currentVersion.id;
+                return (
+                  <Checkbox
+                    key={v.id}
+                    size="sm"
+                    checked={selectedVersionIds.includes(v.id)}
+                    onChange={(e) => toggleVersion(v.id, e.currentTarget.checked)}
+                    label={
+                      <Group gap={6}>
+                        <Text size="sm">{v.version}</Text>
+                        {isCurrent && <Badge size="xs" color="blue">current</Badge>}
+                        {isProduction && <Badge size="xs" color="green">production</Badge>}
+                        <Badge size="xs" color="gray" variant="light">
+                          {v.braidGraph ? "BRAID" : "classical"}
+                        </Badge>
+                      </Group>
+                    }
+                  />
+                );
+              })}
+            </Stack>
+          </Stack>
+
+          <Suspense fallback={<Loader size="xs" />}>
+            <SolverMultiSelect value={solverModels} onChange={setSolverModels} />
+          </Suspense>
+
+          <NumberInput
+            label="Test Case Count"
+            description="The generator creates this many shared evaluation cases before you review/edit them."
+            min={1}
+            max={100}
+            value={testCount}
+            onChange={(value) => setTestCount(typeof value === "number" ? value : DEFAULT_TEST_COUNT)}
+          />
+
+          <Group justify="flex-end">
+            <Button
+              onClick={() => void handleStart()}
+              loading={submitting}
+              disabled={selectedVersionIds.length === 0 || solverModels.length === 0}
+            >
+              Generate Evaluation Cases
+            </Button>
+          </Group>
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+};
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export const VersionDetailPage = () => {
@@ -233,6 +432,7 @@ export const VersionDetailPage = () => {
   const refresh = useAtomValue(promptDetailRefreshAtom);
   const [current, setCurrent] = useState<PromptVersionDto | null>(null);
   const [allVersions, setAllVersions] = useState<PromptVersionDto[]>([]);
+  const [prompt, setPrompt] = useState<PromptDto | null>(null);
   const [compareTo, setCompareTo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [qualityScore, setQualityScore] = useState<GraphQualityScoreDto | null>(null);
@@ -273,6 +473,7 @@ export const VersionDetailPage = () => {
       .then((d) => {
         if (cancelled) return;
         setAllVersions(d.versions);
+        setPrompt(d.prompt);
         const found = d.versions.find((v) => v.version === version) ?? null;
         setCurrent(found);
         setDraftContent(found?.classicalPrompt ?? "");
@@ -369,6 +570,7 @@ export const VersionDetailPage = () => {
   }
 
   const displayMermaid = editingBraid ? braidDraft : (liveMermaid ?? current.braidGraph ?? "");
+  const hasBraid = Boolean(liveMermaid ?? current.braidGraph);
   const compareVersion = allVersions.find((v) => v.version === compareTo) ?? null;
 
   return (
@@ -384,75 +586,78 @@ export const VersionDetailPage = () => {
         </Button>
       </Group>
 
-      <Tabs defaultValue={(liveMermaid ?? current.braidGraph) ? "braid" : "classical"}>
+      <Tabs defaultValue={hasBraid ? "braid" : "classical"}>
         <Tabs.List>
-          <Tabs.Tab value="classical">Classical Prompt</Tabs.Tab>
+          {!hasBraid && <Tabs.Tab value="classical">Classical Prompt</Tabs.Tab>}
           <Tabs.Tab value="braid">BRAID Graph</Tabs.Tab>
+          <Tabs.Tab value="evaluate">Evaluate</Tabs.Tab>
         </Tabs.List>
 
         {/* ── Classical tab ─────────────────────────────────────────────── */}
-        <Tabs.Panel value="classical" pt="md">
-          <Group mb="sm" justify="space-between">
-            <Select
-              label="Compare with"
-              placeholder="Select version"
-              value={compareTo}
-              onChange={setCompareTo}
-              clearable
-              disabled={editing}
-              data={allVersions
-                .filter((v) => v.version !== current.version)
-                .map((v) => ({ value: v.version, label: v.version }))}
-              w={200}
-            />
-            {!editing && (
-              <Button variant="light" onClick={() => setEditing(true)}>
-                Edit
-              </Button>
-            )}
-            {editing && (
-              <Group>
-                <Button variant="subtle" onClick={handleCancelEdit}>
-                  Cancel
-                </Button>
-                <Button
-                  loading={saving}
-                  onClick={handleSaveAsNewVersion}
-                  disabled={draftContent === current.classicalPrompt}
-                >
-                  Save as new version
-                </Button>
-              </Group>
-            )}
-          </Group>
-          <Paper withBorder p={0} style={{ overflow: "hidden" }}>
-            {compareVersion && !editing ? (
-              <DiffEditor
-                height="60vh"
-                original={compareVersion.classicalPrompt}
-                modified={current.classicalPrompt}
-                language="markdown"
-                theme="vs-dark"
-                options={{ readOnly: true, minimap: { enabled: false }, renderSideBySide: true }}
+        {!hasBraid && (
+          <Tabs.Panel value="classical" pt="md">
+            <Group mb="sm" justify="space-between">
+              <Select
+                label="Compare with"
+                placeholder="Select version"
+                value={compareTo}
+                onChange={setCompareTo}
+                clearable
+                disabled={editing}
+                data={allVersions
+                  .filter((v) => v.version !== current.version)
+                  .map((v) => ({ value: v.version, label: v.version }))}
+                w={200}
               />
-            ) : (
-              <Editor
-                key={editing ? "edit-mode" : "view-mode"}
-                height="60vh"
-                defaultLanguage="markdown"
-                value={editing ? draftContent : current.classicalPrompt}
-                onChange={editing ? (v) => setDraftContent(v ?? "") : undefined}
-                theme="vs-dark"
-                options={{
-                  readOnly: !editing,
-                  minimap: { enabled: false },
-                  wordWrap: "on",
-                  fontSize: 14,
-                }}
-              />
-            )}
-          </Paper>
-        </Tabs.Panel>
+              {!editing && (
+                <Button variant="light" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+              )}
+              {editing && (
+                <Group>
+                  <Button variant="subtle" onClick={handleCancelEdit}>
+                    Cancel
+                  </Button>
+                  <Button
+                    loading={saving}
+                    onClick={handleSaveAsNewVersion}
+                    disabled={draftContent === current.classicalPrompt}
+                  >
+                    Save as new version
+                  </Button>
+                </Group>
+              )}
+            </Group>
+            <Paper withBorder p={0} style={{ overflow: "hidden" }}>
+              {compareVersion && !editing ? (
+                <DiffEditor
+                  height="60vh"
+                  original={compareVersion.classicalPrompt}
+                  modified={current.classicalPrompt}
+                  language="markdown"
+                  theme="vs-dark"
+                  options={{ readOnly: true, minimap: { enabled: false }, renderSideBySide: true }}
+                />
+              ) : (
+                <Editor
+                  key={editing ? "edit-mode" : "view-mode"}
+                  height="60vh"
+                  defaultLanguage="markdown"
+                  value={editing ? draftContent : current.classicalPrompt}
+                  onChange={editing ? (v) => setDraftContent(v ?? "") : undefined}
+                  theme="vs-dark"
+                  options={{
+                    readOnly: !editing,
+                    minimap: { enabled: false },
+                    wordWrap: "on",
+                    fontSize: 14,
+                  }}
+                />
+              )}
+            </Paper>
+          </Tabs.Panel>
+        )}
 
         {/* ── BRAID tab ─────────────────────────────────────────────────── */}
         <Tabs.Panel value="braid" pt="md">
@@ -560,6 +765,15 @@ export const VersionDetailPage = () => {
               </Stack>
             </Grid.Col>
           </Grid>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="evaluate" pt="md">
+          <EvaluatePanel
+            currentVersion={current}
+            versions={allVersions}
+            promptName={prompt?.name ?? "Prompt"}
+            productionVersionName={prompt?.productionVersion ?? null}
+          />
         </Tabs.Panel>
       </Tabs>
     </Stack>

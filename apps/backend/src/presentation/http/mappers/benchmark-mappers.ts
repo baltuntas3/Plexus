@@ -2,14 +2,11 @@ import type {
   BenchmarkAnalysisDto,
   BenchmarkDetailDto,
   BenchmarkDto,
-  BenchmarkJudgeAnalysisDto,
   BenchmarkResultDto,
 } from "@plexus/shared-types";
 import type { Benchmark } from "../../../domain/entities/benchmark.js";
 import type { BenchmarkResult } from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkAnalysis } from "../../../application/services/benchmark/benchmark-analyzer.js";
-import { candidateKey } from "../../../application/services/benchmark/benchmark-analyzer.js";
-import type { BenchmarkJudgeAnalysis } from "../../../application/services/benchmark/benchmark-judge-analyzer.js";
 
 export const toBenchmarkDto = (bm: Benchmark): BenchmarkDto => ({
   id: bm.id,
@@ -17,9 +14,13 @@ export const toBenchmarkDto = (bm: Benchmark): BenchmarkDto => ({
   ownerId: bm.ownerId,
   promptVersionIds: bm.promptVersionIds,
   solverModels: bm.solverModels,
-  judgeModel: bm.judgeModel,
+  judgeModels: bm.judgeModels,
   generatorModel: bm.generatorModel,
+  testGenerationMode: bm.testGenerationMode,
+  analysisModel: bm.analysisModel,
   testCount: bm.testCount,
+  repetitions: bm.repetitions,
+  seed: bm.seed,
   concurrency: bm.concurrency,
   status: bm.status,
   progress: bm.progress,
@@ -36,12 +37,13 @@ export const toBenchmarkResultDto = (r: BenchmarkResult): BenchmarkResultDto => 
   testCaseId: r.testCaseId,
   promptVersionId: r.promptVersionId,
   solverModel: r.solverModel,
+  runIndex: r.runIndex,
   input: r.input,
   candidateOutput: r.candidateOutput,
   judgeAccuracy: r.judgeAccuracy,
   judgeCoherence: r.judgeCoherence,
   judgeInstruction: r.judgeInstruction,
-  judgeReasoning: r.judgeReasoning,
+  judgeVotes: r.judgeVotes.map((v) => ({ ...v })),
   rawScore: r.rawScore,
   verbosityPenalty: r.verbosityPenalty,
   finalScore: r.finalScore,
@@ -58,42 +60,65 @@ export const toBenchmarkResultDto = (r: BenchmarkResult): BenchmarkResultDto => 
   createdAt: r.createdAt.toISOString(),
 });
 
-export const toBenchmarkAnalysisDto = (analysis: BenchmarkAnalysis): BenchmarkAnalysisDto => ({
+export const toBenchmarkAnalysisDto = (
+  analysis: BenchmarkAnalysis,
+): BenchmarkAnalysisDto => ({
   candidates: analysis.candidates.map((c) => ({
+    candidateKey: c.candidateKey,
     promptVersionId: c.promptVersionId,
     solverModel: c.solverModel,
+    meanAccuracy: c.meanAccuracy,
+    meanCoherence: c.meanCoherence,
+    meanInstruction: c.meanInstruction,
     meanFinalScore: c.meanFinalScore,
+    ci95Low: c.ci95Low,
+    ci95High: c.ci95High,
+    stderr: c.stderr,
+    consistencyScore: c.consistencyScore,
+    meanLatencyMs: c.meanLatencyMs,
+    meanCostUsd: c.meanCostUsd,
     totalCostUsd: c.totalCostUsd,
     completedCount: c.completedCount,
     failedCount: c.failedCount,
-    candidateKey: candidateKey(c),
+    failureRate: c.failureRate,
+  })),
+  categoryBreakdown: analysis.categoryBreakdown.map((row) => ({
+    candidateKey: row.candidateKey,
+    promptVersionId: row.promptVersionId,
+    solverModel: row.solverModel,
+    category: row.category,
+    meanFinalScore: row.meanFinalScore,
+    meanAccuracy: row.meanAccuracy,
+    meanCoherence: row.meanCoherence,
+    meanInstruction: row.meanInstruction,
+    meanLatencyMs: row.meanLatencyMs,
+    meanCostUsd: row.meanCostUsd,
+    completedCount: row.completedCount,
+    failedCount: row.failedCount,
+    failureRate: row.failureRate,
   })),
   paretoFrontierKeys: analysis.paretoFrontierKeys,
   baselineKey: analysis.baselineKey,
   ppd: analysis.ppd.map((r) => ({
-    candidateKey: candidateKey(r.candidate),
+    candidateKey: r.candidateKey,
     ppd: r.ppd,
     isMoreEfficient: r.isMoreEfficient,
   })),
-  recommendedKey: analysis.recommendedKey,
-});
-
-export const toBenchmarkJudgeAnalysisDto = (
-  analysis: BenchmarkJudgeAnalysis,
-): BenchmarkJudgeAnalysisDto => ({
-  categoryStats: analysis.categoryStats.map((s) => ({
-    candidateKey: s.candidateKey,
-    meanAccuracy: s.meanAccuracy,
-    meanCoherence: s.meanCoherence,
-    meanInstruction: s.meanInstruction,
-    consistencyScore: s.consistencyScore,
-    meanLatencyMs: s.meanLatencyMs,
-    meanCostUsd: s.meanCostUsd,
-    completedCount: s.completedCount,
+  ranking: analysis.ranking.map((r) => ({
+    candidateKey: r.candidateKey,
+    compositeScore: r.compositeScore,
   })),
-  commentary: analysis.commentary,
   recommendedKey: analysis.recommendedKey,
   recommendedReasoning: analysis.recommendedReasoning,
+  recommendationDecision: {
+    mode: analysis.recommendationDecision.mode,
+    topCompositeKey: analysis.recommendationDecision.topCompositeKey,
+    selectedKey: analysis.recommendationDecision.selectedKey,
+    comparedAgainstKey: analysis.recommendationDecision.comparedAgainstKey,
+    pairedDiffCiLow: analysis.recommendationDecision.pairedDiffCiLow,
+    pairedDiffCiHigh: analysis.recommendationDecision.pairedDiffCiHigh,
+  },
+  commentary: analysis.commentary,
 });
 
 export const toBenchmarkDetailDto = (
@@ -106,5 +131,7 @@ export const toBenchmarkDetailDto = (
     id: tc.id,
     input: tc.input,
     expectedOutput: tc.expectedOutput,
+    category: tc.category,
+    source: tc.source,
   })),
 });

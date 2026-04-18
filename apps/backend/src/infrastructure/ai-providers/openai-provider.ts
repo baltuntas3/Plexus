@@ -14,6 +14,7 @@ export class OpenAIProvider implements IAIProvider {
       messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
       temperature: request.temperature,
       max_tokens: request.maxTokens,
+      ...(request.seed !== undefined ? { seed: request.seed } : {}),
     });
 
     const choice = completion.choices[0];

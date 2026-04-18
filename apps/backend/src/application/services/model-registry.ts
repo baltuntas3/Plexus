@@ -1,11 +1,21 @@
-import { NotFoundError } from "../../domain/errors/domain-error.js";
+import { NotFoundError, ValidationError } from "../../domain/errors/domain-error.js";
 import { TokenCost } from "../../domain/value-objects/token-cost.js";
 
 export type ProviderName = "openai" | "anthropic" | "groq";
 
+// `family` groups models by the organisation that trained them rather than by
+// the provider hosting the endpoint. Judge selection uses this to avoid
+// in-family bias (e.g. a GPT judge grading a GPT candidate).
+export type ModelFamily =
+  | "openai-gpt"
+  | "openai-oss"
+  | "anthropic-claude"
+  | "meta-llama";
+
 export interface ModelInfo {
   id: string;
   provider: ProviderName;
+  family: ModelFamily;
   displayName: string;
   inputPricePerMillion: number;
   outputPricePerMillion: number;
@@ -15,8 +25,25 @@ export interface ModelInfo {
 // before relying on cost figures in production.
 const MODELS: ModelInfo[] = [
   {
+    id: "llama-3.1-8b-instant",
+    provider: "groq",
+    family: "meta-llama",
+    displayName: "Llama 3.1 8B Instant (Groq)",
+    inputPricePerMillion: 0.05,
+    outputPricePerMillion: 0.08,
+  },
+  {
+    id: "llama-3.3-70b-versatile",
+    provider: "groq",
+    family: "meta-llama",
+    displayName: "Llama 3.3 70B Versatile (Groq)",
+    inputPricePerMillion: 0.59,
+    outputPricePerMillion: 0.79,
+  },
+  {
     id: "gpt-4o",
     provider: "openai",
+    family: "openai-gpt",
     displayName: "GPT-4o",
     inputPricePerMillion: 2.5,
     outputPricePerMillion: 10.0,
@@ -24,6 +51,7 @@ const MODELS: ModelInfo[] = [
   {
     id: "gpt-4o-mini",
     provider: "openai",
+    family: "openai-gpt",
     displayName: "GPT-4o mini",
     inputPricePerMillion: 0.15,
     outputPricePerMillion: 0.6,
@@ -31,6 +59,7 @@ const MODELS: ModelInfo[] = [
   {
     id: "claude-opus-4-6",
     provider: "anthropic",
+    family: "anthropic-claude",
     displayName: "Claude Opus 4.6",
     inputPricePerMillion: 15.0,
     outputPricePerMillion: 75.0,
@@ -38,6 +67,7 @@ const MODELS: ModelInfo[] = [
   {
     id: "claude-sonnet-4-6",
     provider: "anthropic",
+    family: "anthropic-claude",
     displayName: "Claude Sonnet 4.6",
     inputPricePerMillion: 3.0,
     outputPricePerMillion: 15.0,
@@ -45,14 +75,15 @@ const MODELS: ModelInfo[] = [
   {
     id: "claude-haiku-4-5",
     provider: "anthropic",
+    family: "anthropic-claude",
     displayName: "Claude Haiku 4.5",
     inputPricePerMillion: 1.0,
     outputPricePerMillion: 5.0,
   },
-  // Groq — OpenAI-compatible endpoint, reasoning models for BRAID generation.
   {
     id: "openai/gpt-oss-120b",
     provider: "groq",
+    family: "openai-oss",
     displayName: "GPT-OSS 120B (Groq)",
     inputPricePerMillion: 0.15,
     outputPricePerMillion: 0.6,
@@ -60,6 +91,7 @@ const MODELS: ModelInfo[] = [
   {
     id: "openai/gpt-oss-20b",
     provider: "groq",
+    family: "openai-oss",
     displayName: "GPT-OSS 20B (Groq)",
     inputPricePerMillion: 0.075,
     outputPricePerMillion: 0.3,
@@ -83,6 +115,9 @@ export const ModelRegistry = {
   byProvider(provider: ProviderName): ModelInfo[] {
     return MODELS.filter((m) => m.provider === provider);
   },
+  byFamily(family: ModelFamily): ModelInfo[] {
+    return MODELS.filter((m) => m.family === family);
+  },
 };
 
 export const calculateCost = (
@@ -96,5 +131,84 @@ export const calculateCost = (
     outputTokens,
     info.inputPricePerMillion,
     info.outputPricePerMillion,
+  );
+};
+
+// Pick `count` judge models that are NOT in the same family as any solver and
+// maximise family diversity. Falls back to out-of-family models sharing a
+// family only when the diverse pool is exhausted, and finally to any model
+// outside the solver set. Throws when no judge can be selected without
+// overlapping the solver set.
+export const pickJudgeModels = (
+  solverModels: readonly string[],
+  count: number,
+): string[] => {
+  if (count < 1) throw ValidationError("Judge count must be at least 1");
+  const solverInfos = solverModels.map((id) => ModelRegistry.require(id));
+  const solverIds = new Set(solverInfos.map((m) => m.id));
+  const solverFamilies = new Set(solverInfos.map((m) => m.family));
+
+  const outsideFamily = MODELS.filter(
+    (m) => !solverIds.has(m.id) && !solverFamilies.has(m.family),
+  );
+  const insideFamily = MODELS.filter(
+    (m) => !solverIds.has(m.id) && solverFamilies.has(m.family),
+  );
+
+  const picked: ModelInfo[] = [];
+  const usedFamilies = new Set<ModelFamily>();
+  for (const candidate of outsideFamily) {
+    if (picked.length >= count) break;
+    if (usedFamilies.has(candidate.family)) continue;
+    picked.push(candidate);
+    usedFamilies.add(candidate.family);
+  }
+  if (picked.length < count) {
+    for (const candidate of outsideFamily) {
+      if (picked.length >= count) break;
+      if (picked.some((m) => m.id === candidate.id)) continue;
+      picked.push(candidate);
+    }
+  }
+  if (picked.length < count) {
+    for (const candidate of insideFamily) {
+      if (picked.length >= count) break;
+      picked.push(candidate);
+    }
+  }
+  if (picked.length === 0) {
+    throw ValidationError(
+      "No judge models available outside the solver set — add more models or reduce the solver list",
+    );
+  }
+  return picked.map((m) => m.id);
+};
+
+// Pick a generator model that is not in the solver set, preferring a family
+// outside the solver families so the generator cannot favour its own family's
+// response style.
+export const pickGeneratorModel = (
+  solverModels: readonly string[],
+  preferred: string,
+): string => {
+  const solverInfos = solverModels.map((id) => ModelRegistry.require(id));
+  const solverIds = new Set(solverInfos.map((m) => m.id));
+  const solverFamilies = new Set(solverInfos.map((m) => m.family));
+  const preferredInfo = ModelRegistry.lookup(preferred);
+  if (
+    preferredInfo &&
+    !solverIds.has(preferredInfo.id) &&
+    !solverFamilies.has(preferredInfo.family)
+  ) {
+    return preferredInfo.id;
+  }
+  const outsideFamily = MODELS.find(
+    (m) => !solverIds.has(m.id) && !solverFamilies.has(m.family),
+  );
+  if (outsideFamily) return outsideFamily.id;
+  const outsideSet = MODELS.find((m) => !solverIds.has(m.id));
+  if (outsideSet) return outsideSet.id;
+  throw ValidationError(
+    "No generator model available outside the solver set — add more models or reduce the solver list",
   );
 };

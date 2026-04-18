@@ -30,6 +30,7 @@ export class GroqProvider implements IAIProvider {
       messages: normalized.map((m) => ({ role: m.role, content: m.content })),
       temperature: request.temperature ?? DEFAULT_TEMPERATURE,
       max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
+      ...(request.seed !== undefined ? { seed: request.seed } : {}),
     };
 
     // Groq-only parameters (`include_reasoning`, `reasoning_format`) don't

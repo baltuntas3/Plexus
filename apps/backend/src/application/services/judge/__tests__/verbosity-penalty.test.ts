@@ -1,4 +1,7 @@
-import { computeVerbosityPenalty } from "../verbosity-penalty.js";
+import {
+  computeVerbosityPenalty,
+  computeVerbosityPenaltyAgainstBaseline,
+} from "../verbosity-penalty.js";
 
 describe("computeVerbosityPenalty", () => {
   it("is 0 when no reference is provided", () => {
@@ -21,5 +24,18 @@ describe("computeVerbosityPenalty", () => {
     const ref = "a".repeat(100);
     // 3x → halfway → 0.25
     expect(computeVerbosityPenalty("a".repeat(300), ref)).toBeCloseTo(0.25, 6);
+  });
+});
+
+describe("computeVerbosityPenaltyAgainstBaseline", () => {
+  it("returns 0 when baseline length is not positive", () => {
+    expect(computeVerbosityPenaltyAgainstBaseline(1000, 0)).toBe(0);
+  });
+
+  it("uses the same ramp as the reference-based variant", () => {
+    expect(computeVerbosityPenaltyAgainstBaseline(200, 100)).toBe(0);
+    expect(computeVerbosityPenaltyAgainstBaseline(300, 100)).toBeCloseTo(0.25, 6);
+    expect(computeVerbosityPenaltyAgainstBaseline(400, 100)).toBe(0.5);
+    expect(computeVerbosityPenaltyAgainstBaseline(10_000, 100)).toBe(0.5);
   });
 });

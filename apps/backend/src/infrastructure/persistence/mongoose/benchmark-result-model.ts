@@ -2,10 +2,26 @@ import { Schema, model } from "mongoose";
 
 const RESULT_STATUSES = ["completed", "failed"] as const;
 
-// One row per (benchmarkId × testCaseId × promptVersionId × solverModel).
-// The compound unique index is the idempotency contract that lets the runner
-// safely resume after a restart — an upsert on this key will update the
-// existing row rather than create a duplicate.
+// One row per (benchmarkId × testCaseId × promptVersionId × solverModel ×
+// runIndex). The compound unique index is the idempotency contract that lets
+// the runner safely resume after a restart — an upsert on this key will
+// update the existing row rather than create a duplicate. The runIndex is
+// part of the key so k-run repetitions are distinct rows that can be
+// aggregated for variance analysis.
+
+const judgeVoteSchema = new Schema(
+  {
+    model: { type: String, required: true },
+    accuracy: { type: Number, required: true },
+    coherence: { type: Number, required: true },
+    instruction: { type: Number, required: true },
+    reasoning: { type: String, required: true, default: "" },
+    inputTokens: { type: Number, required: true, default: 0 },
+    outputTokens: { type: Number, required: true, default: 0 },
+    costUsd: { type: Number, required: true, default: 0 },
+  },
+  { _id: false },
+);
 
 const benchmarkResultSchema = new Schema(
   {
@@ -22,6 +38,7 @@ const benchmarkResultSchema = new Schema(
       required: true,
     },
     solverModel: { type: String, required: true },
+    runIndex: { type: Number, required: true, default: 0, min: 0 },
 
     input: { type: String, required: true },
     candidateOutput: { type: String, required: true, default: "" },
@@ -29,7 +46,7 @@ const benchmarkResultSchema = new Schema(
     judgeAccuracy: { type: Number, required: true },
     judgeCoherence: { type: Number, required: true },
     judgeInstruction: { type: Number, required: true },
-    judgeReasoning: { type: String, required: true, default: "" },
+    judgeVotes: { type: [judgeVoteSchema], default: [] },
     rawScore: { type: Number, required: true },
     verbosityPenalty: { type: Number, required: true },
     finalScore: { type: Number, required: true },
@@ -50,7 +67,7 @@ const benchmarkResultSchema = new Schema(
 );
 
 benchmarkResultSchema.index(
-  { benchmarkId: 1, testCaseId: 1, promptVersionId: 1, solverModel: 1 },
+  { benchmarkId: 1, testCaseId: 1, promptVersionId: 1, solverModel: 1, runIndex: 1 },
   { unique: true },
 );
 

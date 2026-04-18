@@ -1,10 +1,7 @@
-import { useEffect, useState } from "react";
 import {
   Badge,
   Card,
-  Center,
   Group,
-  Loader,
   Stack,
   Table,
   Text,
@@ -12,7 +9,6 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { IconStar, IconTrendingUp } from "@tabler/icons-react";
-import { useSetAtom } from "jotai";
 import {
   CartesianGrid,
   Label,
@@ -24,37 +20,23 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { BenchmarkAnalysisDto, CandidateDto } from "@plexus/shared-types";
-import { fetchBenchmarkAnalysisAtom } from "../atoms/benchmarks.atoms.js";
+import type { BenchmarkAnalysisDto, CandidateStatsDto } from "@plexus/shared-types";
 
 interface Props {
-  benchmarkId: string;
+  analysis: BenchmarkAnalysisDto | null;
+  loading?: boolean;
   versionLabels: Record<string, string>;
 }
 
 const vLabel = (id: string, versionLabels: Record<string, string>): string =>
   versionLabels[id] ?? id.slice(-6);
 
-const candidateLabel = (c: CandidateDto, versionLabels: Record<string, string>): string =>
+const candidateLabel = (c: CandidateStatsDto, versionLabels: Record<string, string>): string =>
   `${vLabel(c.promptVersionId, versionLabels)} · ${c.solverModel}`;
 
-export const PPDDashboard = ({ benchmarkId, versionLabels }: Props) => {
-  const fetchAnalysis = useSetAtom(fetchBenchmarkAnalysisAtom);
-  const [analysis, setAnalysis] = useState<BenchmarkAnalysisDto | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetchAnalysis(benchmarkId)
-      .then((a) => { if (!cancelled) setAnalysis(a); })
-      .catch(() => undefined)
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [benchmarkId, fetchAnalysis]);
-
+export const PPDDashboard = ({ analysis, loading = false, versionLabels }: Props) => {
   if (loading) {
-    return <Center py="xl"><Loader size="sm" /></Center>;
+    return <Text c="dimmed" size="sm">Loading analysis...</Text>;
   }
   if (!analysis || analysis.candidates.length === 0) {
     return <Text c="dimmed" size="sm">No completed results to analyse yet.</Text>;
@@ -156,7 +138,7 @@ const VersionComparisonPanel = ({
         <Group gap="xs">
           <Text fw={600}>Version Comparison</Text>
           <Text size="xs" c="dimmed">
-            — best score and lowest cost across all solver × mode combos for each version
+            — best score and lowest cost across solver setups for each version
           </Text>
         </Group>
         <Table striped>
@@ -288,6 +270,18 @@ const RecommendationBanner = ({
                 </Badge>
               </Tooltip>
             )}
+            {analysis.recommendationDecision.mode === "paired_cost_tie_break" && (
+              <Tooltip
+                label={`Top composite and selected setup were statistically inseparable under paired bootstrap, so the cheaper setup was chosen.${analysis.recommendationDecision.pairedDiffCiLow !== null && analysis.recommendationDecision.pairedDiffCiHigh !== null ? ` Paired score-difference CI: [${analysis.recommendationDecision.pairedDiffCiLow.toFixed(3)}, ${analysis.recommendationDecision.pairedDiffCiHigh.toFixed(3)}].` : ""}`}
+                multiline
+                maw={360}
+                withArrow
+              >
+                <Badge color="blue" variant="light" style={{ cursor: "help" }}>
+                  paired tie-break
+                </Badge>
+              </Tooltip>
+            )}
           </Group>
           <Text size="sm" c="dimmed">
             {candidateLabel(candidate, versionLabels)} · score{" "}
@@ -323,7 +317,7 @@ const GoldenQuadrantChart = ({
   versionLabels,
 }: {
   analysis: BenchmarkAnalysisDto;
-  candidates: CandidateDto[];
+  candidates: CandidateStatsDto[];
   versionLabels: Record<string, string>;
 }) => {
   const points: ScatterPoint[] = candidates.map((c) => ({
@@ -445,7 +439,7 @@ const PPDTable = ({
   versionLabels,
 }: {
   analysis: BenchmarkAnalysisDto;
-  candidates: CandidateDto[];
+  candidates: CandidateStatsDto[];
   versionLabels: Record<string, string>;
 }) => {
   if (analysis.ppd.length === 0) return null;
@@ -490,6 +484,9 @@ const PPDTable = ({
             are relative to it.
           </Text>
         )}
+        <Text size="xs" c="dimmed">
+          Cost metrics include observed spend from failed rows when token usage was available, so flaky setups do not look artificially cheap.
+        </Text>
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -527,9 +524,9 @@ const PPDTable = ({
                     <Group gap="xs">
                       <Text size="sm">{candidate.solverModel}</Text>
                       {isRecommended && (
-                        <Tooltip label="Highest PPD above score floor">
+                        <Tooltip label="Recommended setup from the composite ranking and reliability gate">
                           <Badge color="green" variant="light" size="xs">
-                            best
+                            recommended
                           </Badge>
                         </Tooltip>
                       )}

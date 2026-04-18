@@ -3,6 +3,10 @@ import type {
   Benchmark,
   BenchmarkProgress,
   BenchmarkStatus,
+  BenchmarkTestCase,
+  TestGenerationMode,
+  TestCaseCategory,
+  TestCaseSource,
 } from "../../../domain/entities/benchmark.js";
 import type {
   BenchmarkListResult,
@@ -19,10 +23,20 @@ type BenchmarkDoc = HydratedDocument<{
   ownerId: Types.ObjectId;
   promptVersionIds: Types.ObjectId[];
   solverModels: string[];
-  judgeModel: string;
+  judgeModels: string[];
   generatorModel: string;
+  testGenerationMode: TestGenerationMode;
+  analysisModel: string | null;
   testCount: number;
-  testCases: Array<{ id: string; input: string; expectedOutput: string | null }>;
+  repetitions: number;
+  seed: number;
+  testCases: Array<{
+    id: string;
+    input: string;
+    expectedOutput: string | null;
+    category: TestCaseCategory | null;
+    source: TestCaseSource;
+  }>;
   concurrency: number;
   status: BenchmarkStatus;
   progress: BenchmarkProgress;
@@ -39,13 +53,19 @@ const toDomain = (doc: BenchmarkDoc): Benchmark => ({
   ownerId: String(doc.ownerId),
   promptVersionIds: doc.promptVersionIds.map((x) => String(x)),
   solverModels: doc.solverModels,
-  judgeModel: doc.judgeModel,
+  judgeModels: doc.judgeModels,
   generatorModel: doc.generatorModel,
+  testGenerationMode: doc.testGenerationMode ?? "shared-core",
+  analysisModel: doc.analysisModel ?? null,
   testCount: doc.testCount,
+  repetitions: doc.repetitions,
+  seed: doc.seed,
   testCases: (doc.testCases ?? []).map((tc) => ({
     id: tc.id,
     input: tc.input,
     expectedOutput: tc.expectedOutput,
+    category: tc.category ?? null,
+    source: tc.source ?? "generated",
   })),
   concurrency: doc.concurrency,
   status: doc.status,
@@ -64,9 +84,13 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
       ownerId: input.ownerId,
       promptVersionIds: input.promptVersionIds,
       solverModels: input.solverModels,
-      judgeModel: input.judgeModel,
+      judgeModels: input.judgeModels,
       generatorModel: input.generatorModel,
+      testGenerationMode: input.testGenerationMode,
+      analysisModel: input.analysisModel,
       testCount: input.testCount,
+      repetitions: input.repetitions,
+      seed: input.seed,
       testCases: input.testCases,
       concurrency: input.concurrency,
       status: "draft",
@@ -111,8 +135,19 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
 
   async updateTestCases(
     id: string,
-    updates: Array<{ id: string; input?: string; expectedOutput: string | null }>,
-    additions: Array<{ id: string; input: string; expectedOutput: string | null }>,
+    updates: Array<{
+      id: string;
+      input?: string;
+      expectedOutput: string | null;
+      category?: BenchmarkTestCase["category"];
+    }>,
+    additions: Array<{
+      id: string;
+      input: string;
+      expectedOutput: string | null;
+      category: BenchmarkTestCase["category"];
+      source: BenchmarkTestCase["source"];
+    }>,
   ): Promise<void> {
     const doc = await BenchmarkModel.findById(id);
     if (!doc) return;
@@ -122,6 +157,7 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
       if (!tc) continue;
       if (update.input !== undefined) tc.input = update.input;
       tc.expectedOutput = update.expectedOutput;
+      if (update.category !== undefined) tc.category = update.category;
     }
     for (const addition of additions) {
       bm.testCases.push(addition);

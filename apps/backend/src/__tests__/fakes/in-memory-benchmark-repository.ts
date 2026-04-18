@@ -20,9 +20,13 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
       ownerId: input.ownerId,
       promptVersionIds: input.promptVersionIds,
       solverModels: input.solverModels,
-      judgeModel: input.judgeModel,
+      judgeModels: input.judgeModels,
       generatorModel: input.generatorModel,
+      testGenerationMode: input.testGenerationMode,
+      analysisModel: input.analysisModel,
       testCount: input.testCount,
+      repetitions: input.repetitions,
+      seed: input.seed,
       testCases: input.testCases,
       concurrency: input.concurrency,
       status: "draft",
@@ -69,8 +73,19 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
 
   async updateTestCases(
     id: string,
-    updates: Array<{ id: string; input?: string; expectedOutput: string | null }>,
-    additions: Array<{ id: string; input: string; expectedOutput: string | null }>,
+    updates: Array<{
+      id: string;
+      input?: string;
+      expectedOutput: string | null;
+      category?: Benchmark["testCases"][number]["category"];
+    }>,
+    additions: Array<{
+      id: string;
+      input: string;
+      expectedOutput: string | null;
+      category: Benchmark["testCases"][number]["category"];
+      source: Benchmark["testCases"][number]["source"];
+    }>,
   ): Promise<void> {
     const bm = this.store.get(id);
     if (!bm) return;
@@ -81,6 +96,7 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
         ...tc,
         input: u.input ?? tc.input,
         expectedOutput: u.expectedOutput,
+        category: u.category !== undefined ? u.category : tc.category,
       };
     });
     this.store.set(id, { ...bm, testCases: [...testCases, ...additions] });

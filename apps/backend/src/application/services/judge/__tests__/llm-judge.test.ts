@@ -1,4 +1,5 @@
 import { LLMJudge } from "../llm-judge.js";
+import { JudgeExecutionError } from "../judge.js";
 import {
   FakeAIProvider,
   FakeAIProviderFactory,
@@ -97,9 +98,14 @@ describe("LLMJudge.grade", () => {
 
   it("rejects a malformed JSON response", async () => {
     const { judge } = buildJudge("not json at all");
-    await expect(
-      judge.grade({ input: "x", candidate: "y" }),
-    ).rejects.toThrow(/no JSON object/);
+    await expect(judge.grade({ input: "x", candidate: "y" })).rejects.toMatchObject({
+      name: "JudgeExecutionError",
+      message: expect.stringMatching(/no JSON object/),
+      partial: {
+        usage: { inputTokens: 50, outputTokens: 30 },
+        model: "gpt-4o-mini",
+      },
+    } satisfies Partial<JudgeExecutionError>);
   });
 
   it("forwards the configured judge model and a deterministic temperature", async () => {

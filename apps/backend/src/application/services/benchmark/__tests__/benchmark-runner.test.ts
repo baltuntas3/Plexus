@@ -5,6 +5,7 @@ import type {
   IAIProviderFactory,
 } from "../../ai-provider.js";
 import type { IJudge, JudgeResult } from "../../judge/judge.js";
+import { JudgeExecutionError } from "../../judge/judge.js";
 import type { JobContext } from "../../job-queue.js";
 import { JudgeScore } from "../../../../domain/value-objects/judge-score.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
@@ -71,8 +72,14 @@ const buildContext = (): {
 };
 
 const TEST_CASES = [
-  { id: "tc1", input: "q1?", expectedOutput: null },
-  { id: "tc2", input: "q2?", expectedOutput: "expected answer" },
+  { id: "tc1", input: "q1?", expectedOutput: null, category: null, source: "generated" as const },
+  {
+    id: "tc2",
+    input: "q2?",
+    expectedOutput: "expected answer",
+    category: null,
+    source: "generated" as const,
+  },
 ];
 
 const buildScaffold = async () => {
@@ -91,7 +98,9 @@ const buildScaffold = async () => {
 
 const queueBenchmark = async (
   benchmarks: InMemoryBenchmarkRepository,
-  overrides: Partial<Omit<Benchmark, "id" | "status" | "progress" | "jobId" | "error" | "createdAt" | "startedAt" | "completedAt">> = {},
+  overrides: Partial<
+    Omit<Benchmark, "id" | "status" | "progress" | "jobId" | "error" | "createdAt" | "startedAt" | "completedAt">
+  > = {},
   versionId = "1",
 ): Promise<Benchmark> =>
   benchmarks.create({
@@ -99,9 +108,13 @@ const queueBenchmark = async (
     ownerId: "u1",
     promptVersionIds: [versionId],
     solverModels: ["gpt-4o-mini"],
-    judgeModel: "gpt-4o-mini",
+    judgeModels: ["gpt-4o-mini"],
     generatorModel: "gpt-4o-mini",
+    testGenerationMode: "shared-core",
+    analysisModel: null,
     testCount: 2,
+    repetitions: 1,
+    seed: 42,
     testCases: TEST_CASES,
     concurrency: 2,
     ...overrides,
@@ -145,6 +158,138 @@ describe("BenchmarkRunner.run", () => {
     expect(events.at(-1)).toEqual({ completed: 2, total: 2 });
   });
 
+  it("repeats each cell k times with distinct seeds so variance can be measured", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "answer",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, { repetitions: 3, concurrency: 1 });
+    await runner.run(bm.id, buildContext().ctx);
+
+    const rows = await results.listByBenchmark(bm.id);
+    // 2 testCases × 1 version × 1 solver × 3 reps = 6 rows
+    expect(rows).toHaveLength(6);
+
+    // runIndex values 0..2 must all appear per testCase/version/solver.
+    const byCell = new Map<string, number[]>();
+    for (const r of rows) {
+      const k = `${r.testCaseId}::${r.promptVersionId}::${r.solverModel}`;
+      byCell.set(k, [...(byCell.get(k) ?? []), r.runIndex]);
+    }
+    for (const indices of byCell.values()) {
+      expect([...indices].sort()).toEqual([0, 1, 2]);
+    }
+
+    // Solver seeds are distinct across runs of the same cell.
+    const seeds = new Set(provider.calls.map((c) => c.seed));
+    expect(seeds.size).toBe(6);
+  });
+
+  it("applies a post-run verbosity penalty to completed rows without expected outputs", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const version2 = await versions.create({
+      promptId: "p1",
+      version: "v2",
+      classicalPrompt: "Answer with more detail when useful.",
+    });
+    const version3 = await versions.create({
+      promptId: "p1",
+      version: "v3",
+      classicalPrompt: "Keep answers compact.",
+    });
+    const provider = new RecordingProvider((req) => ({
+      text:
+        req.messages[1]?.content === "q1?" && req.messages[0]?.content === "Answer concisely."
+          ? "x".repeat(300)
+          : "short",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      testCases: [
+        { id: "tc1", input: "q1?", expectedOutput: null, category: null, source: "generated" },
+      ],
+      promptVersionIds: ["1", version2.id, version3.id],
+      concurrency: 1,
+    });
+
+    await runner.run(bm.id, buildContext().ctx);
+    const rows = await results.listByBenchmark(bm.id);
+    const verbose = rows.find(
+      (row) => row.testCaseId === "tc1" && row.promptVersionId === "1",
+    );
+    const concise = rows.find(
+      (row) => row.testCaseId === "tc1" && row.promptVersionId === version2.id,
+    );
+
+    expect(verbose?.verbosityPenalty).toBeGreaterThan(0);
+    expect(verbose?.finalScore).toBeLessThan(concise?.finalScore ?? 1);
+  });
+
+  it("grades every row with every judge in the ensemble and averages their scores", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "answer",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+
+    const judgeA = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 }, "gpt-4o-mini");
+    const judgeB = new StubJudge({ accuracy: 3, coherence: 3, instruction: 3 }, "gpt-4o");
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: (model) => (model === "gpt-4o-mini" ? judgeA : judgeB),
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      judgeModels: ["gpt-4o-mini", "gpt-4o"],
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+    });
+    await runner.run(bm.id, buildContext().ctx);
+
+    expect(judgeA.calls).toBe(1);
+    expect(judgeB.calls).toBe(1);
+
+    const rows = await results.listByBenchmark(bm.id);
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row.judgeVotes).toHaveLength(2);
+    expect(row.judgeAccuracy).toBeCloseTo(4, 6);
+    expect(row.judgeCoherence).toBeCloseTo(4, 6);
+    expect(row.judgeInstruction).toBeCloseTo(4, 6);
+  });
+
   it("passes expected output as reference to the judge when present", async () => {
     const { benchmarks, results, versions } = await buildScaffold();
     const gradeCalls: { reference?: string }[] = [];
@@ -171,14 +316,12 @@ describe("BenchmarkRunner.run", () => {
     const bm = await queueBenchmark(benchmarks);
     await runner.run(bm.id, buildContext().ctx);
 
-    // tc1 has no expected output → reference undefined
-    // tc2 has expected output → reference passed
     const refs = gradeCalls.map((c) => c.reference);
     expect(refs).toContain(undefined);
     expect(refs).toContain("expected answer");
   });
 
-  it("is restart-idempotent: a second run skips already-completed cells", async () => {
+  it("is restart-idempotent: a second run skips already-completed rows", async () => {
     const { benchmarks, results, versions } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
@@ -239,6 +382,103 @@ describe("BenchmarkRunner.run", () => {
     expect(final?.status).toBe("completed");
   });
 
+  it("preserves observed latency and solver cost when a row fails after candidate generation", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+
+    const provider = new RecordingProvider(() => ({
+      text: "candidate answer",
+      inputTokens: 12,
+      outputTokens: 8,
+    }));
+    const judge: IJudge = {
+      grade: async () => {
+        throw new Error("judge exploded");
+      },
+    };
+
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+      concurrency: 1,
+    });
+
+    await runner.run(bm.id, buildContext().ctx);
+    const [failed] = await results.listByBenchmark(bm.id);
+    expect(failed?.status).toBe("failed");
+    expect(failed?.candidateOutput).toBe("candidate answer");
+    expect(failed?.candidateInputTokens).toBe(12);
+    expect(failed?.candidateOutputTokens).toBe(8);
+    expect(failed?.candidateCostUsd).toBeGreaterThan(0);
+    expect(failed?.totalCostUsd).toBe(failed?.candidateCostUsd);
+    expect(failed?.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(failed?.error).toContain("judge exploded");
+  });
+
+  it("preserves partial judge token usage and cost when judge parsing fails after generation", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "candidate answer",
+      inputTokens: 10,
+      outputTokens: 5,
+    }));
+    const judge: IJudge = {
+      grade: async () => {
+        throw new JudgeExecutionError("judge returned malformed JSON", {
+          usage: { inputTokens: 30, outputTokens: 12 },
+          model: "gpt-4o-mini",
+        });
+      },
+    };
+
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+      concurrency: 1,
+    });
+
+    await runner.run(bm.id, buildContext().ctx);
+    const [failed] = await results.listByBenchmark(bm.id);
+    expect(failed?.status).toBe("failed");
+    expect(failed?.judgeInputTokens).toBe(30);
+    expect(failed?.judgeOutputTokens).toBe(12);
+    expect(failed?.judgeCostUsd).toBeGreaterThan(0);
+    expect(failed?.totalCostUsd).toBeCloseTo(
+      (failed?.candidateCostUsd ?? 0) + (failed?.judgeCostUsd ?? 0),
+      10,
+    );
+    expect(failed?.error).toContain("malformed JSON");
+  });
+
   it("uses braidGraph as system prompt when the version has one, classicalPrompt otherwise", async () => {
     const { benchmarks, results, versions } = await buildScaffold();
 
@@ -265,25 +505,117 @@ describe("BenchmarkRunner.run", () => {
     });
 
     const bm = await queueBenchmark(benchmarks, {
-      testCases: [{ id: "tc1", input: "q1?", expectedOutput: null }],
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
       promptVersionIds: ["1", versionWithBraid.id],
     });
 
     await runner.run(bm.id, buildContext().ctx);
 
     const rows = await results.listByBenchmark(bm.id);
-    // version 1 (no braid, classical) + version 2 (braid) = 2 cells
     expect(rows).toHaveLength(2);
 
     const braidCall = provider.calls.find((c) =>
-      (c.messages[0]?.content ?? "").includes("BRAID"),
+      (c.messages[0]?.content ?? "").includes("graph TD"),
     );
     expect(braidCall).toBeDefined();
+    expect(braidCall?.messages[0]?.content).toBe("graph TD\nA-->B");
 
     const classicalCall = provider.calls.find((c) =>
-      !(c.messages[0]?.content ?? "").includes("BRAID"),
+      (c.messages[0]?.content ?? "") === "Answer concisely.",
     );
     expect(classicalCall).toBeDefined();
+  });
+
+  it("keeps a row completed when at least one judge succeeds", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "candidate answer",
+      inputTokens: 3,
+      outputTokens: 2,
+    }));
+    const judgeA = new StubJudge({ accuracy: 5, coherence: 4, instruction: 4 });
+    const judgeB: IJudge = {
+      grade: async () => {
+        throw new JudgeExecutionError("judge-b malformed JSON", {
+          usage: { inputTokens: 11, outputTokens: 7 },
+          model: "gpt-4o-mini",
+        });
+      },
+    };
+
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: (model) => (model === "judge-a" ? judgeA : judgeB),
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      judgeModels: ["judge-a", "judge-b"],
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+    });
+
+    await runner.run(bm.id, buildContext().ctx);
+    const [row] = await results.listByBenchmark(bm.id);
+    expect(row?.status).toBe("completed");
+    expect(row?.judgeVotes).toHaveLength(1);
+    expect(row?.error).toContain("Partial judge failure");
+    expect(row?.judgeCostUsd).toBeGreaterThan(0);
+  });
+
+  it("does not apply a post-run verbosity penalty to reference-free rows", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+
+    let callIdx = 0;
+    const outputs = ["short", "a".repeat(2000)];
+    const provider = new RecordingProvider(() => {
+      const text = outputs[callIdx++] ?? "short";
+      return { text, inputTokens: 1, outputTokens: text.length };
+    });
+    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+      repetitions: 2,
+      concurrency: 1,
+    });
+    await runner.run(bm.id, buildContext().ctx);
+    const rows = await results.listByBenchmark(bm.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.verbosityPenalty === 0)).toBe(true);
+    expect(rows.every((r) => r.finalScore === r.rawScore)).toBe(true);
   });
 
   it("marks the benchmark failed when it has no test cases", async () => {

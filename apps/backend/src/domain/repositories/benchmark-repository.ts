@@ -10,9 +10,13 @@ export interface CreateBenchmarkInput {
   ownerId: string;
   promptVersionIds: string[];
   solverModels: string[];
-  judgeModel: string;
+  judgeModels: string[];
   generatorModel: string;
+  testGenerationMode: Benchmark["testGenerationMode"];
+  analysisModel: string | null;
   testCount: number;
+  repetitions: number;
+  seed: number;
   testCases: BenchmarkTestCase[];
   concurrency: number;
 }
@@ -44,7 +48,18 @@ export interface IBenchmarkRepository {
   updateProgress(id: string, progress: BenchmarkProgress): Promise<void>;
   updateTestCases(
     id: string,
-    updates: Array<{ id: string; input?: string; expectedOutput: string | null }>,
-    additions: Array<{ id: string; input: string; expectedOutput: string | null }>,
+    updates: Array<{
+      id: string;
+      input?: string;
+      expectedOutput: string | null;
+      category?: BenchmarkTestCase["category"];
+    }>,
+    additions: Array<{
+      id: string;
+      input: string;
+      expectedOutput: string | null;
+      category: BenchmarkTestCase["category"];
+      source: BenchmarkTestCase["source"];
+    }>,
   ): Promise<void>;
 }

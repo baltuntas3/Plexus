@@ -1,12 +1,11 @@
+import { BenchmarkAnalyzer } from "../application/services/benchmark/benchmark-analyzer.js";
 import { BenchmarkRunner } from "../application/services/benchmark/benchmark-runner.js";
 import { registerBenchmarkJob } from "../application/services/benchmark/benchmark-job.js";
-import { BenchmarkJudgeAnalyzer } from "../application/services/benchmark/benchmark-judge-analyzer.js";
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
 import type { IJobQueue } from "../application/services/job-queue.js";
 import { CreateBenchmarkUseCase } from "../application/use-cases/benchmarks/create-benchmark.js";
 import { GetBenchmarkUseCase } from "../application/use-cases/benchmarks/get-benchmark.js";
 import { GetBenchmarkAnalysisUseCase } from "../application/use-cases/benchmarks/get-benchmark-analysis.js";
-import { GetBenchmarkJudgeAnalysisUseCase } from "../application/use-cases/benchmarks/get-benchmark-judge-analysis.js";
 import { ListBenchmarksUseCase } from "../application/use-cases/benchmarks/list-benchmarks.js";
 import { StartBenchmarkUseCase } from "../application/use-cases/benchmarks/start-benchmark.js";
 import { UpdateTestCasesUseCase } from "../application/use-cases/benchmarks/update-test-cases.js";
@@ -20,7 +19,6 @@ export interface BenchmarkComposition {
   listBenchmarks: ListBenchmarksUseCase;
   getBenchmark: GetBenchmarkUseCase;
   getBenchmarkAnalysis: GetBenchmarkAnalysisUseCase;
-  getBenchmarkJudgeAnalysis: GetBenchmarkJudgeAnalysisUseCase;
   updateTestCases: UpdateTestCasesUseCase;
   queue: IJobQueue;
 }
@@ -41,15 +39,14 @@ export const createBenchmarkComposition = (
   });
   registerBenchmarkJob(queue, runner);
 
-  const judgeAnalyzer = new BenchmarkJudgeAnalyzer(aiFactory);
+  const analyzer = new BenchmarkAnalyzer(aiFactory);
 
   return {
     createBenchmark: new CreateBenchmarkUseCase(benchmarks, versions, aiFactory),
     startBenchmark: new StartBenchmarkUseCase(benchmarks, queue),
     listBenchmarks: new ListBenchmarksUseCase(benchmarks),
     getBenchmark: new GetBenchmarkUseCase(benchmarks, results),
-    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results),
-    getBenchmarkJudgeAnalysis: new GetBenchmarkJudgeAnalysisUseCase(benchmarks, results, judgeAnalyzer),
+    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results, analyzer),
     updateTestCases: new UpdateTestCasesUseCase(benchmarks),
     queue,
   };

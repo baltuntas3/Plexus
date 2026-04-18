@@ -3,9 +3,11 @@ import {
   benchmarkResultKey,
   type BenchmarkResult,
   type BenchmarkResultStatus,
+  type JudgeVote,
 } from "../../../domain/entities/benchmark-result.js";
 import type {
   IBenchmarkResultRepository,
+  UpdateScoresInput,
   UpsertBenchmarkResultInput,
 } from "../../../domain/repositories/benchmark-result-repository.js";
 import { BenchmarkResultModel } from "./benchmark-result-model.js";
@@ -16,12 +18,13 @@ type BenchmarkResultDoc = HydratedDocument<{
   testCaseId: string;
   promptVersionId: Types.ObjectId;
   solverModel: string;
+  runIndex: number;
   input: string;
   candidateOutput: string;
   judgeAccuracy: number;
   judgeCoherence: number;
   judgeInstruction: number;
-  judgeReasoning: string;
+  judgeVotes: JudgeVote[];
   rawScore: number;
   verbosityPenalty: number;
   finalScore: number;
@@ -44,12 +47,13 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   testCaseId: doc.testCaseId,
   promptVersionId: String(doc.promptVersionId),
   solverModel: doc.solverModel,
+  runIndex: doc.runIndex,
   input: doc.input,
   candidateOutput: doc.candidateOutput,
   judgeAccuracy: doc.judgeAccuracy,
   judgeCoherence: doc.judgeCoherence,
   judgeInstruction: doc.judgeInstruction,
-  judgeReasoning: doc.judgeReasoning,
+  judgeVotes: (doc.judgeVotes ?? []).map((v) => ({ ...v })),
   rawScore: doc.rawScore,
   verbosityPenalty: doc.verbosityPenalty,
   finalScore: doc.finalScore,
@@ -73,6 +77,7 @@ export class MongoBenchmarkResultRepository implements IBenchmarkResultRepositor
       testCaseId: input.testCaseId,
       promptVersionId: input.promptVersionId,
       solverModel: input.solverModel,
+      runIndex: input.runIndex,
     };
     const doc = await BenchmarkResultModel.findOneAndUpdate(filter, { $set: input }, {
       new: true,
@@ -90,16 +95,33 @@ export class MongoBenchmarkResultRepository implements IBenchmarkResultRepositor
   async findCompletedKeys(benchmarkId: string): Promise<Set<string>> {
     const docs = await BenchmarkResultModel.find(
       { benchmarkId, status: "completed" },
-      { testCaseId: 1, promptVersionId: 1, solverModel: 1 },
+      { testCaseId: 1, promptVersionId: 1, solverModel: 1, runIndex: 1 },
     ).lean();
     const out = new Set<string>();
     for (const d of docs as Array<{
       testCaseId: string;
       promptVersionId: Types.ObjectId | string;
       solverModel: string;
+      runIndex: number;
     }>) {
-      out.add(benchmarkResultKey(d.testCaseId, String(d.promptVersionId), d.solverModel));
+      out.add(
+        benchmarkResultKey(
+          d.testCaseId,
+          String(d.promptVersionId),
+          d.solverModel,
+          d.runIndex,
+        ),
+      );
     }
     return out;
+  }
+
+  async updateScores(input: UpdateScoresInput): Promise<void> {
+    await BenchmarkResultModel.findByIdAndUpdate(input.id, {
+      $set: {
+        verbosityPenalty: input.verbosityPenalty,
+        finalScore: input.finalScore,
+      },
+    });
   }
 }

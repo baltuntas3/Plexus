@@ -10,6 +10,9 @@ export interface GenerateRequest {
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
+  // Deterministic sampling seed. Providers that do not support seeds (e.g.
+  // Anthropic) are expected to ignore this field silently.
+  seed?: number;
 }
 
 export interface TokenUsage {
@@ -21,6 +24,20 @@ export interface GenerateResponse {
   text: string;
   usage: TokenUsage;
   model: string;
+}
+
+export class AIProviderError extends Error {
+  constructor(
+    message: string,
+    public readonly partial?: Partial<GenerateResponse>,
+    options?: { cause?: unknown },
+  ) {
+    super(message);
+    this.name = "AIProviderError";
+    if (options?.cause !== undefined) {
+      this.cause = options.cause;
+    }
+  }
 }
 
 export interface IAIProvider {

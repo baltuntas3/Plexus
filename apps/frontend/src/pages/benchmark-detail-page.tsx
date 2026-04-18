@@ -10,6 +10,7 @@ import {
   Loader,
   Progress,
   RingProgress,
+  Select,
   Stack,
   Table,
   Tabs,
@@ -22,7 +23,7 @@ import {
 import { PPDDashboard } from "../components/ppd-dashboard.js";
 import { notifications } from "@mantine/notifications";
 import { useAtomValue, useSetAtom } from "jotai";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -33,25 +34,33 @@ import {
   YAxis,
 } from "recharts";
 import type {
+  BenchmarkAnalysisDto,
   BenchmarkDetailDto,
-  BenchmarkJudgeAnalysisDto,
   BenchmarkProgressDto,
   BenchmarkResultDto,
   BenchmarkStatus,
   BenchmarkTestCaseDto,
+  TestCaseCategory,
 } from "@plexus/shared-types";
 import {
+  fetchBenchmarkAnalysisAtom,
   fetchBenchmarkDetailAtom,
-  fetchBenchmarkJudgeAnalysisAtom,
   startBenchmarkAtom,
   updateTestCasesAtom,
 } from "../atoms/benchmarks.atoms.js";
 import { tokensAtom } from "../atoms/auth.atoms.js";
 import { openSSE } from "../lib/sse-client.js";
 import { ApiError } from "../lib/api-client.js";
-
-const buildVersionLabels = (ids: string[]): Record<string, string> =>
-  Object.fromEntries(ids.map((id, i) => [id, `v${i + 1}`]));
+import {
+  aggregateBenchmarkResults,
+  buildDraftBenchmarkEdits,
+  buildResultsByCase,
+  buildTestCaseUpdatePayload,
+  buildVersionLabels,
+  CATEGORY_OPTIONS,
+  createEmptyNewCase,
+  type NewCaseDraft,
+} from "./benchmark-detail-page.helpers.js";
 
 const STATUS_COLOR: Record<BenchmarkStatus, string> = {
   draft: "yellow",
@@ -61,14 +70,16 @@ const STATUS_COLOR: Record<BenchmarkStatus, string> = {
   failed: "red",
 };
 
+
 export const BenchmarkDetailPage = () => {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const tokens = useAtomValue(tokensAtom);
   const fetchDetail = useSetAtom(fetchBenchmarkDetailAtom);
   const startBenchmark = useSetAtom(startBenchmarkAtom);
   const updateTestCases = useSetAtom(updateTestCasesAtom);
-  const fetchJudgeAnalysis = useSetAtom(fetchBenchmarkJudgeAnalysisAtom);
+  const fetchAnalysis = useSetAtom(fetchBenchmarkAnalysisAtom);
 
   const [benchmark, setBenchmark] = useState<BenchmarkDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,10 +87,18 @@ export const BenchmarkDetailPage = () => {
   // Local edits while in draft mode.
   const [inputEdits, setInputEdits] = useState<Record<string, string>>({});
   const [expectedOutputs, setExpectedOutputs] = useState<Record<string, string>>({});
-  const [newCases, setNewCases] = useState<Array<{ localId: string; input: string; expectedOutput: string }>>([]);
-  const [judgeAnalysis, setJudgeAnalysis] = useState<BenchmarkJudgeAnalysisDto | null>(null);
-  const [judgeAnalysisLoading, setJudgeAnalysisLoading] = useState(false);
-  const [judgeAnalysisError, setJudgeAnalysisError] = useState<string | null>(null);
+  const [categoryEdits, setCategoryEdits] = useState<Record<string, TestCaseCategory | null>>({});
+  const [newCases, setNewCases] = useState<NewCaseDraft[]>([]);
+  const [analysis, setAnalysis] = useState<BenchmarkAnalysisDto | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const returnTo =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "returnTo" in location.state &&
+    typeof location.state.returnTo === "string"
+      ? location.state.returnTo
+      : null;
 
   useEffect(() => {
     if (!id) return;
@@ -89,15 +108,10 @@ export const BenchmarkDetailPage = () => {
       .then((bm) => {
         if (!cancelled) {
           setBenchmark(bm);
-          // Seed local edits with any previously saved values.
-          const inputs: Record<string, string> = {};
-          const outputs: Record<string, string> = {};
-          for (const tc of bm.testCases) {
-            inputs[tc.id] = tc.input;
-            if (tc.expectedOutput) outputs[tc.id] = tc.expectedOutput;
-          }
-          setInputEdits(inputs);
-          setExpectedOutputs(outputs);
+          const edits = buildDraftBenchmarkEdits(bm.testCases);
+          setInputEdits(edits.inputEdits);
+          setExpectedOutputs(edits.expectedOutputs);
+          setCategoryEdits(edits.categoryEdits);
           setNewCases([]);
         }
       })
@@ -154,25 +168,25 @@ export const BenchmarkDetailPage = () => {
     return () => controller.abort();
   }, [id, tokens, benchmark, fetchDetail]);
 
-  const handleLoadJudgeAnalysis = async () => {
+  const handleLoadAnalysis = async () => {
     if (!id) return;
-    setJudgeAnalysisLoading(true);
-    setJudgeAnalysisError(null);
+    setAnalysisLoading(true);
+    setAnalysisError(null);
     try {
-      const result = await fetchJudgeAnalysis(id);
-      setJudgeAnalysis(result);
+      const result = await fetchAnalysis(id);
+      setAnalysis(result);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to load analysis";
-      setJudgeAnalysisError(message);
+      setAnalysisError(message);
     } finally {
-      setJudgeAnalysisLoading(false);
+      setAnalysisLoading(false);
     }
   };
 
-  // Auto-load judge analysis once the benchmark completes.
+  // Auto-load analysis once the benchmark completes.
   useEffect(() => {
-    if (!id || benchmark?.status !== "completed" || judgeAnalysis || judgeAnalysisLoading) return;
-    void handleLoadJudgeAnalysis();
+    if (!id || benchmark?.status !== "completed" || analysis || analysisLoading) return;
+    void handleLoadAnalysis();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [benchmark?.status, id]);
 
@@ -180,17 +194,12 @@ export const BenchmarkDetailPage = () => {
     if (!id || !benchmark) return;
     setStarting(true);
     try {
-      // Flush all local edits before starting.
-      const updates = benchmark.testCases.map((tc) => ({
-        id: tc.id,
-        input: inputEdits[tc.id] !== tc.input ? inputEdits[tc.id] : undefined,
-        expectedOutput: expectedOutputs[tc.id] ?? null,
-      }));
-      const additions = newCases.map((nc) => ({
-        input: nc.input,
-        expectedOutput: nc.expectedOutput || null,
-      }));
-      await updateTestCases({ benchmarkId: id, updates, additions });
+      const updatesPayload = buildTestCaseUpdatePayload(
+        benchmark,
+        { inputEdits, expectedOutputs, categoryEdits },
+        newCases,
+      );
+      await updateTestCases({ benchmarkId: id, ...updatesPayload });
       await startBenchmark(id);
       const bm = await fetchDetail(id);
       setBenchmark(bm);
@@ -215,6 +224,10 @@ export const BenchmarkDetailPage = () => {
     benchmark.progress.total === 0
       ? 0
       : (benchmark.progress.completed / benchmark.progress.total) * 100;
+  const versionLabels = buildVersionLabels(benchmark.promptVersionIds);
+  const comparedVersions = benchmark.promptVersionIds
+    .map((id) => versionLabels[id] ?? id.slice(-6))
+    .join(" vs ");
 
   return (
     <Stack>
@@ -227,12 +240,24 @@ export const BenchmarkDetailPage = () => {
             </Badge>
           </Group>
           <Text size="sm" c="dimmed">
-            Judge: {benchmark.judgeModel} · Generator: {benchmark.generatorModel} ·
-            Solvers: {benchmark.solverModels.join(", ")}
+            Compared versions: {comparedVersions} ·
+          </Text>
+          <Text size="sm" c="dimmed">
+            Judges: {benchmark.judgeModels.join(", ")} · Generator: {benchmark.generatorModel} ·
+            Solvers: {benchmark.solverModels.join(", ")} · Repetitions: {benchmark.repetitions}
           </Text>
         </Stack>
         <Group>
-          <Button variant="default" onClick={() => navigate("/benchmarks")}>
+          <Button
+            variant="default"
+            onClick={() => {
+              if (returnTo) {
+                navigate(returnTo);
+                return;
+              }
+              navigate(-1);
+            }}
+          >
             Back
           </Button>
           {benchmark.status === "draft" && (
@@ -306,6 +331,10 @@ export const BenchmarkDetailPage = () => {
             onExpectedOutputChange={(tcId, value) =>
               setExpectedOutputs((prev) => ({ ...prev, [tcId]: value }))
             }
+            categoryEdits={categoryEdits}
+            onCategoryChange={(tcId, value) =>
+              setCategoryEdits((prev) => ({ ...prev, [tcId]: value }))
+            }
             newCases={newCases}
             onNewCaseChange={(localId, field, value) =>
               setNewCases((prev) =>
@@ -313,16 +342,13 @@ export const BenchmarkDetailPage = () => {
               )
             }
             onAddCase={() =>
-              setNewCases((prev) => [
-                ...prev,
-                { localId: crypto.randomUUID(), input: "", expectedOutput: "" },
-              ])
+              setNewCases((prev) => [...prev, createEmptyNewCase()])
             }
             onRemoveNewCase={(localId) =>
               setNewCases((prev) => prev.filter((nc) => nc.localId !== localId))
             }
             results={benchmark.results}
-            versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
+            versionLabels={versionLabels}
           />
         </Tabs.Panel>
 
@@ -335,11 +361,11 @@ export const BenchmarkDetailPage = () => {
             <Stack>
               <ResultsChart
                 results={benchmark.results}
-                versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
+                versionLabels={versionLabels}
               />
               <ResultsTable
                 results={benchmark.results}
-                versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
+                versionLabels={versionLabels}
               />
             </Stack>
           )}
@@ -348,19 +374,20 @@ export const BenchmarkDetailPage = () => {
         <Tabs.Panel value="ppd" pt="md">
           {id && benchmark.status === "completed" && (
             <PPDDashboard
-              benchmarkId={id}
-              versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
+              analysis={analysis}
+              loading={analysisLoading}
+              versionLabels={versionLabels}
             />
           )}
         </Tabs.Panel>
 
         <Tabs.Panel value="judge-analysis" pt="md">
-          <JudgeAnalysisPanel
-            analysis={judgeAnalysis}
-            loading={judgeAnalysisLoading}
-            error={judgeAnalysisError}
-            versionLabels={buildVersionLabels(benchmark.promptVersionIds)}
-            onLoad={handleLoadJudgeAnalysis}
+          <AnalysisPanel
+            analysis={analysis}
+            loading={analysisLoading}
+            error={analysisError}
+            versionLabels={versionLabels}
+            onLoad={handleLoadAnalysis}
           />
         </Tabs.Panel>
       </Tabs>
@@ -370,12 +397,6 @@ export const BenchmarkDetailPage = () => {
 
 // --- Test Cases Panel ---
 
-interface NewCase {
-  localId: string;
-  input: string;
-  expectedOutput: string;
-}
-
 interface TestCasesPanelProps {
   testCases: BenchmarkTestCaseDto[];
   editable: boolean;
@@ -383,8 +404,14 @@ interface TestCasesPanelProps {
   onInputChange: (id: string, value: string) => void;
   expectedOutputs: Record<string, string>;
   onExpectedOutputChange: (id: string, value: string) => void;
-  newCases: NewCase[];
-  onNewCaseChange: (localId: string, field: "input" | "expectedOutput", value: string) => void;
+  categoryEdits: Record<string, TestCaseCategory | null>;
+  onCategoryChange: (id: string, value: TestCaseCategory | null) => void;
+  newCases: NewCaseDraft[];
+  onNewCaseChange: (
+    localId: string,
+    field: "input" | "expectedOutput" | "category",
+    value: string,
+  ) => void;
   onAddCase: () => void;
   onRemoveNewCase: (localId: string) => void;
   results: BenchmarkResultDto[];
@@ -409,38 +436,59 @@ const CandidateCard = ({
           <Group gap="xs">
             <Badge variant="light" color="blue" size="sm">{vLabel}</Badge>
             <Text size="xs" c="dimmed">{r.solverModel}</Text>
+            <Badge size="xs" variant="outline" color="gray">run {r.runIndex + 1}</Badge>
           </Group>
-          <Group gap={4}>
-            <Tooltip label="Accuracy" withArrow>
-              <Badge color={scoreColor(r.judgeAccuracy)} size="xs" variant="filled">
-                Acc {r.judgeAccuracy}/5
-              </Badge>
-            </Tooltip>
-            <Tooltip label="Coherence" withArrow>
-              <Badge color={scoreColor(r.judgeCoherence)} size="xs" variant="filled">
-                Coh {r.judgeCoherence}/5
-              </Badge>
-            </Tooltip>
-            <Tooltip label="Instruction following" withArrow>
-              <Badge color={scoreColor(r.judgeInstruction)} size="xs" variant="filled">
-                Ins {r.judgeInstruction}/5
-              </Badge>
-            </Tooltip>
-            <Badge color="gray" size="xs" variant="light">
-              {r.finalScore.toFixed(3)}
+          {r.status === "failed" ? (
+            <Badge color="red" size="xs" variant="filled">
+              failed
             </Badge>
-          </Group>
+          ) : (
+            <Group gap={4}>
+              <Tooltip label="Accuracy (ensemble mean)" withArrow>
+                <Badge color={scoreColor(r.judgeAccuracy)} size="xs" variant="filled">
+                  Acc {r.judgeAccuracy.toFixed(2)}/5
+                </Badge>
+              </Tooltip>
+              <Tooltip label="Coherence (ensemble mean)" withArrow>
+                <Badge color={scoreColor(r.judgeCoherence)} size="xs" variant="filled">
+                  Coh {r.judgeCoherence.toFixed(2)}/5
+                </Badge>
+              </Tooltip>
+              <Tooltip label="Instruction following (ensemble mean)" withArrow>
+                <Badge color={scoreColor(r.judgeInstruction)} size="xs" variant="filled">
+                  Ins {r.judgeInstruction.toFixed(2)}/5
+                </Badge>
+              </Tooltip>
+              <Badge color="gray" size="xs" variant="light">
+                {r.finalScore.toFixed(3)}
+              </Badge>
+            </Group>
+          )}
         </Group>
-        <Text size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
-          {r.candidateOutput}
-        </Text>
-        {r.judgeReasoning && (
-          <div>
-            <Text size="xs" c="dimmed" fw={500} mb={2}>Judge reasoning</Text>
-            <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-              {r.judgeReasoning}
-            </Text>
-          </div>
+        {r.status === "failed" ? (
+          <Text size="sm" c="red">
+            Failed: {r.error ?? "Unknown error"}
+          </Text>
+        ) : (
+          <Text size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+            {r.candidateOutput}
+          </Text>
+        )}
+        {r.status === "completed" && r.error && (
+          <Alert color="yellow" variant="light" title="Scored with partial judge coverage">
+            {r.error}
+          </Alert>
+        )}
+        {r.judgeVotes.length > 0 && (
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" fw={500}>Judge votes</Text>
+            {r.judgeVotes.map((v, i) => (
+              <Text key={`${v.model}-${i}`} size="xs" c="dimmed" style={{ lineHeight: 1.5 }}>
+                <strong>{v.model}</strong>: Acc {v.accuracy}/5 · Coh {v.coherence}/5 · Ins {v.instruction}/5
+                {v.reasoning ? ` — ${v.reasoning}` : ""}
+              </Text>
+            ))}
+          </Stack>
         )}
       </Stack>
     </Card>
@@ -454,6 +502,8 @@ const TestCasesPanel = ({
   onInputChange,
   expectedOutputs,
   onExpectedOutputChange,
+  categoryEdits,
+  onCategoryChange,
   newCases,
   onNewCaseChange,
   onAddCase,
@@ -461,13 +511,7 @@ const TestCasesPanel = ({
   results,
   versionLabels,
 }: TestCasesPanelProps) => {
-  const resultsByCase = new Map<string, BenchmarkResultDto[]>();
-  for (const r of results) {
-    if (r.status !== "completed") continue;
-    const list = resultsByCase.get(r.testCaseId) ?? [];
-    list.push(r);
-    resultsByCase.set(r.testCaseId, list);
-  }
+  const resultsByCase = buildResultsByCase(results);
 
   const totalCount = testCases.length + newCases.length;
 
@@ -488,11 +532,21 @@ const TestCasesPanel = ({
                   <Text size="sm" fw={500} lineClamp={2} style={{ flex: 1 }}>
                     {i + 1}. {currentInput}
                   </Text>
-                  {caseResults.length > 0 && (
-                    <Badge variant="light" size="sm" color="blue">
-                      {caseResults.length} result{caseResults.length > 1 ? "s" : ""}
-                    </Badge>
-                  )}
+                  <Group gap={4}>
+                    {tc.category && (
+                      <Badge variant="outline" size="xs" color="grape">
+                        {tc.category.replace("_", " ")}
+                      </Badge>
+                    )}
+                    {tc.source === "manual" && (
+                      <Badge variant="outline" size="xs" color="gray">manual</Badge>
+                    )}
+                    {caseResults.length > 0 && (
+                      <Badge variant="light" size="sm" color="blue">
+                        {caseResults.length} result{caseResults.length > 1 ? "s" : ""}
+                      </Badge>
+                    )}
+                  </Group>
                 </Group>
               </Accordion.Control>
               <Accordion.Panel>
@@ -532,9 +586,19 @@ const TestCasesPanel = ({
                     )}
                   </div>
 
+                  {editable && (
+                    <Select
+                      label="Category"
+                      size="xs"
+                      data={CATEGORY_OPTIONS}
+                      value={categoryEdits[tc.id] ?? ""}
+                      onChange={(value) => onCategoryChange(tc.id, (value as TestCaseCategory | "") || null)}
+                    />
+                  )}
+
                   {caseResults.length > 0 && (
                     <Stack gap="xs">
-                      <Text size="xs" c="dimmed" fw={500}>Candidate outputs</Text>
+                      <Text size="xs" c="dimmed" fw={500}>Runs</Text>
                       {caseResults.map((r) => (
                         <CandidateCard key={r.id} r={r} versionLabels={versionLabels} />
                       ))}
@@ -582,6 +646,13 @@ const TestCasesPanel = ({
                     onChange={(e) => onNewCaseChange(nc.localId, "expectedOutput", e.currentTarget.value)}
                   />
                 </div>
+                <Select
+                  label="Category"
+                  size="xs"
+                  data={CATEGORY_OPTIONS}
+                  value={nc.category}
+                  onChange={(value) => onNewCaseChange(nc.localId, "category", value ?? "")}
+                />
                 <Group justify="flex-end">
                   <Button
                     size="xs"
@@ -609,50 +680,6 @@ const TestCasesPanel = ({
 
 // --- Results ---
 
-interface AggregateRow {
-  key: string;
-  label: string;
-  versionId: string;
-  versionLabel: string;
-  solverModel: string;
-  finalScore: number;
-  costUsd: number;
-  count: number;
-}
-
-const aggregate = (
-  results: BenchmarkResultDto[],
-  versionLabels: Record<string, string>,
-): AggregateRow[] => {
-  const map = new Map<string, AggregateRow>();
-  for (const r of results) {
-    if (r.status !== "completed") continue;
-    const key = `${r.promptVersionId}::${r.solverModel}`;
-    const vLabel = versionLabels[r.promptVersionId] ?? r.promptVersionId.slice(-6);
-    const existing = map.get(key);
-    if (existing) {
-      existing.finalScore += r.finalScore;
-      existing.costUsd += r.totalCostUsd;
-      existing.count += 1;
-    } else {
-      map.set(key, {
-        key,
-        label: `${vLabel} · ${r.solverModel}`,
-        versionId: r.promptVersionId,
-        versionLabel: vLabel,
-        solverModel: r.solverModel,
-        finalScore: r.finalScore,
-        costUsd: r.totalCostUsd,
-        count: 1,
-      });
-    }
-  }
-  for (const row of map.values()) {
-    row.finalScore = row.count === 0 ? 0 : row.finalScore / row.count;
-  }
-  return [...map.values()].sort((a, b) => b.finalScore - a.finalScore);
-};
-
 const ResultsChart = ({
   results,
   versionLabels,
@@ -660,7 +687,7 @@ const ResultsChart = ({
   results: BenchmarkResultDto[];
   versionLabels: Record<string, string>;
 }) => {
-  const data = aggregate(results, versionLabels);
+  const data = aggregateBenchmarkResults(results, versionLabels);
   if (data.length === 0) return null;
   return (
     <Card withBorder>
@@ -692,7 +719,7 @@ const ResultsTable = ({
   results: BenchmarkResultDto[];
   versionLabels: Record<string, string>;
 }) => {
-  const rows = aggregate(results, versionLabels);
+  const rows = aggregateBenchmarkResults(results, versionLabels);
   return (
     <Card withBorder>
       <Stack gap="xs">
@@ -709,22 +736,11 @@ const ResultsTable = ({
               <Table.Th>Accuracy</Table.Th>
               <Table.Th>Total Cost</Table.Th>
               <Table.Th>Runs</Table.Th>
+              <Table.Th>Failures</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.map((row) => {
-              // Compute per-row accuracy from raw results for this group
-              const rawForRow = results.filter(
-                (r) =>
-                  r.status === "completed" &&
-                  r.promptVersionId === row.versionId &&
-                  r.solverModel === row.solverModel,
-              );
-              const avgAccuracy =
-                rawForRow.length === 0
-                  ? null
-                  : rawForRow.reduce((s, r) => s + r.judgeAccuracy, 0) / rawForRow.length;
-
               return (
                 <Table.Tr key={row.key}>
                   <Table.Td>
@@ -738,29 +754,37 @@ const ResultsTable = ({
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" c="dimmed">
-                      {avgAccuracy !== null ? `${avgAccuracy.toFixed(2)}/5` : "—"}
+                      {row.accuracyAllRuns.toFixed(2)}/5
                     </Text>
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm">${row.costUsd.toFixed(5)}</Text>
                   </Table.Td>
                   <Table.Td>
-                    <Text size="xs" c="dimmed">{row.count}</Text>
+                    <Text size="xs" c="dimmed">{row.totalRuns}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c={row.failedRuns > 0 ? "red" : "dimmed"}>
+                      {row.failedRuns} ({(row.failureRate * 100).toFixed(0)}%)
+                    </Text>
                   </Table.Td>
                 </Table.Tr>
               );
             })}
           </Table.Tbody>
         </Table>
+        <Text size="xs" c="dimmed">
+          Accuracy averages treat failed runs as 0 so this summary stays aligned with the score and failure columns.
+        </Text>
       </Stack>
     </Card>
   );
 };
 
-// --- Judge Analysis Panel ---
+// --- Analysis Panel ---
 
-interface JudgeAnalysisPanelProps {
-  analysis: BenchmarkJudgeAnalysisDto | null;
+interface AnalysisPanelProps {
+  analysis: BenchmarkAnalysisDto | null;
   loading: boolean;
   error: string | null;
   versionLabels: Record<string, string>;
@@ -774,20 +798,20 @@ const ringScoreColor = (value: number, max: number): string => {
   return "red";
 };
 
-const JudgeAnalysisPanel = ({
+const AnalysisPanel = ({
   analysis,
   loading,
   error,
   versionLabels,
   onLoad,
-}: JudgeAnalysisPanelProps) => {
+}: AnalysisPanelProps) => {
   if (!analysis && !loading && !error) {
     return (
       <Stack align="center" py="xl" gap="sm">
         <Text c="dimmed" size="sm">
-          Run AI analysis to get category-level insights and a version recommendation.
+          Run AI analysis to get per-candidate stats with confidence intervals and a recommendation.
         </Text>
-        <Button onClick={onLoad}>Run AI Analysis</Button>
+        <Button onClick={onLoad}>Run Analysis</Button>
       </Stack>
     );
   }
@@ -823,8 +847,21 @@ const JudgeAnalysisPanel = ({
               <Text size="sm" fw={700}>✓</Text>
             </ThemeIcon>
             <Stack gap={2}>
-              <Text fw={600} size="sm">Recommended version</Text>
+              <Text fw={600} size="sm">Recommended setup</Text>
               <Text size="sm">{analysis.recommendedKey}</Text>
+              {analysis.recommendationDecision.mode === "paired_cost_tie_break" && (
+                <Group gap="xs">
+                  <Badge color="blue" variant="light" size="xs">
+                    paired tie-break
+                  </Badge>
+                  {analysis.recommendationDecision.pairedDiffCiLow !== null &&
+                    analysis.recommendationDecision.pairedDiffCiHigh !== null && (
+                    <Text size="xs" c="dimmed">
+                      paired diff CI [{analysis.recommendationDecision.pairedDiffCiLow.toFixed(3)}, {analysis.recommendationDecision.pairedDiffCiHigh.toFixed(3)}]
+                    </Text>
+                  )}
+                </Group>
+              )}
               {analysis.recommendedReasoning && (
                 <Text size="xs" c="dimmed">{analysis.recommendedReasoning}</Text>
               )}
@@ -837,31 +874,35 @@ const JudgeAnalysisPanel = ({
         <Stack gap="xs">
           <Text fw={600}>Category breakdown</Text>
           <Text size="xs" c="dimmed">
-            Accuracy, Coherence, Instruction scored 1–5 · Consistency = score stability across test cases
+            Per-category quality and reliability across candidates. Categories come from generated labels or manual cases.
           </Text>
+          <Alert color="blue" variant="light">
+            Failed rows keep observed latency and any known solver/judge token spend, so cost and failure columns remain failure-aware.
+          </Alert>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
+                <Table.Th>Category</Table.Th>
                 <Table.Th>Version</Table.Th>
                 <Table.Th>Solver</Table.Th>
+                <Table.Th>Mean score</Table.Th>
                 <Table.Th>Accuracy</Table.Th>
                 <Table.Th>Coherence</Table.Th>
                 <Table.Th>Instruction</Table.Th>
-                <Table.Th>Consistency</Table.Th>
                 <Table.Th>Latency</Table.Th>
                 <Table.Th>Cost/test</Table.Th>
+                <Table.Th>Runs</Table.Th>
+                <Table.Th>Failures</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {analysis.categoryStats.map((s) => {
-                const [versionId, solverModel] = s.candidateKey.split("::");
-                const vLabel = versionId
-                  ? (versionLabels[versionId] ?? versionId.slice(-6))
-                  : s.candidateKey;
+              {analysis.categoryBreakdown.map((s) => {
+                const vLabel =
+                  versionLabels[s.promptVersionId] ?? s.promptVersionId.slice(-6);
                 const isRecommended = s.candidateKey === analysis.recommendedKey;
                 return (
                   <Table.Tr
-                    key={s.candidateKey}
+                    key={`${s.candidateKey}-${s.category}`}
                     style={
                       isRecommended
                         ? { background: "var(--mantine-color-teal-light)" }
@@ -869,12 +910,20 @@ const JudgeAnalysisPanel = ({
                     }
                   >
                     <Table.Td>
+                      <Badge variant="outline" size="sm" color="grape">
+                        {s.category.replace("_", " ")}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
                       <Group gap="xs">
                         <Badge variant="light" color="blue" size="sm">{vLabel}</Badge>
                         {isRecommended && <Badge color="teal" size="xs">recommended</Badge>}
                       </Group>
                     </Table.Td>
-                    <Table.Td><Text size="sm">{solverModel ?? "—"}</Text></Table.Td>
+                    <Table.Td><Text size="sm">{s.solverModel}</Text></Table.Td>
+                    <Table.Td>
+                      <Text size="sm" fw={500}>{s.meanFinalScore.toFixed(3)}</Text>
+                    </Table.Td>
                     <Table.Td>
                       <Group gap={4}>
                         <RingProgress
@@ -909,21 +958,18 @@ const JudgeAnalysisPanel = ({
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap={4}>
-                        <RingProgress
-                          size={28}
-                          thickness={3}
-                          roundCaps
-                          sections={[{ value: s.consistencyScore * 100, color: ringScoreColor(s.consistencyScore, 1) }]}
-                        />
-                        <Text size="sm">{(s.consistencyScore * 100).toFixed(1)}%</Text>
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
                       <Text size="sm" c="dimmed">{Math.round(s.meanLatencyMs)} ms</Text>
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">${s.meanCostUsd.toFixed(4)}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">{s.completedCount}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">
+                        {s.failedCount} ({(s.failureRate * 100).toFixed(0)}%)
+                      </Text>
                     </Table.Td>
                   </Table.Tr>
                 );

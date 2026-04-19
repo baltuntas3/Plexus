@@ -26,6 +26,7 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
       analysisModel: input.analysisModel,
       testCount: input.testCount,
       repetitions: input.repetitions,
+      solverTemperature: input.solverTemperature,
       seed: input.seed,
       testCases: input.testCases,
       concurrency: input.concurrency,

@@ -1,15 +1,11 @@
 // Verbosity penalty: multiplicative factor in [0, MAX_PENALTY] applied to the
-// raw rubric score. Answers up to FREE_RATIO× the baseline length are free;
-// beyond CAP_RATIO× they hit the cap. Linear ramp in between.
+// raw rubric score. Answers up to FREE_RATIOx the baseline length are free;
+// beyond CAP_RATIOx they hit the cap. Linear ramp in between.
 //
-// Two callers:
+// Caller:
 // - Per-row, reference-based: the judge applies the penalty immediately using
 //   the test case's expected output as the length baseline (preserves backward
-//   behaviour — the penalty is baked into `finalScore` during grading).
-// - Post-run, reference-free: the runner computes the median candidate length
-//   across all completed rows in a benchmark and applies the same ramp using
-//   that median as the baseline. This closes the asymmetry where reference-
-//   less test cases were never penalised for verbosity.
+//   behaviour - the penalty is baked into `finalScore` during grading).
 
 const FREE_RATIO = 2;
 const CAP_RATIO = 4;
@@ -19,8 +15,10 @@ export const computeVerbosityPenalty = (
   candidate: string,
   reference: string | undefined,
 ): number => {
-  if (!reference || reference.length === 0) return 0;
-  return rampedPenalty(candidate.length / reference.length);
+  const candidateLength = normaliseLength(candidate);
+  const referenceLength = normaliseLength(reference);
+  if (referenceLength <= 0) return 0;
+  return rampedPenalty(candidateLength / referenceLength);
 };
 
 export const computeVerbosityPenaltyAgainstBaseline = (
@@ -36,4 +34,19 @@ const rampedPenalty = (ratio: number): number => {
   if (ratio >= CAP_RATIO) return MAX_PENALTY;
   const t = (ratio - FREE_RATIO) / (CAP_RATIO - FREE_RATIO);
   return t * MAX_PENALTY;
+};
+
+const normaliseLength = (
+  text: string | undefined,
+): number => {
+  if (!text) return 0;
+  return estimateTokenCount(text);
+};
+
+// Lightweight tokenizer proxy for cases where provider token usage is not
+// available. Counting lexical chunks plus standalone symbols tracks "how much
+// content was produced" much better than raw character length across languages.
+const estimateTokenCount = (text: string): number => {
+  const matches = text.match(/[\p{L}\p{N}]+(?:['_-][\p{L}\p{N}]+)*|[^\s]/gu);
+  return matches?.length ?? 0;
 };

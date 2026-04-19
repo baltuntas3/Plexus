@@ -29,6 +29,7 @@ type BenchmarkDoc = HydratedDocument<{
   analysisModel: string | null;
   testCount: number;
   repetitions: number;
+  solverTemperature: number;
   seed: number;
   testCases: Array<{
     id: string;
@@ -59,6 +60,7 @@ const toDomain = (doc: BenchmarkDoc): Benchmark => ({
   analysisModel: doc.analysisModel ?? null,
   testCount: doc.testCount,
   repetitions: doc.repetitions,
+  solverTemperature: doc.solverTemperature,
   seed: doc.seed,
   testCases: (doc.testCases ?? []).map((tc) => ({
     id: tc.id,
@@ -90,6 +92,7 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
       analysisModel: input.analysisModel,
       testCount: input.testCount,
       repetitions: input.repetitions,
+      solverTemperature: input.solverTemperature,
       seed: input.seed,
       testCases: input.testCases,
       concurrency: input.concurrency,

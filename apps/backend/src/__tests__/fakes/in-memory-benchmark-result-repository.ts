@@ -31,11 +31,10 @@ export class InMemoryBenchmarkResultRepository implements IBenchmarkResultReposi
     return [...this.store.values()].filter((r) => r.benchmarkId === benchmarkId);
   }
 
-  async findCompletedKeys(benchmarkId: string): Promise<Set<string>> {
+  async findExistingKeys(benchmarkId: string): Promise<Set<string>> {
     const out = new Set<string>();
     for (const r of this.store.values()) {
       if (r.benchmarkId !== benchmarkId) continue;
-      if (r.status !== "completed") continue;
       out.add(benchmarkResultKey(r.testCaseId, r.promptVersionId, r.solverModel, r.runIndex));
     }
     return out;

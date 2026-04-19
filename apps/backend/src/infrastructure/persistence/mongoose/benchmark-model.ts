@@ -33,6 +33,7 @@ const benchmarkSchema = new Schema(
     analysisModel: { type: String, default: null },
     testCount: { type: Number, required: true, min: 1, max: 100 },
     repetitions: { type: Number, required: true, min: 1, max: 20, default: 3 },
+    solverTemperature: { type: Number, required: true, default: 0.7 },
     seed: { type: Number, required: true, default: 0 },
     testCases: {
       type: [

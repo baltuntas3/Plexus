@@ -73,7 +73,7 @@ describe("aggregateResults", () => {
     expect(c.completedCount).toBe(1);
     expect(c.failedCount).toBe(1);
     expect(c.meanFinalScore).toBeCloseTo(0.4, 6);
-    expect(c.meanAccuracy).toBeCloseTo(5, 6);
+    expect(c.meanAccuracy).toBeCloseTo(2.5, 6);
     expect(c.totalCostUsd).toBeCloseTo(0.03, 6);
     expect(c.meanLatencyMs).toBeCloseTo(75, 6);
   });
@@ -164,6 +164,18 @@ describe("computeParetoFrontier", () => {
     expect(frontier).toHaveLength(1);
     expect(frontier[0]?.promptVersionId).toBe("vA");
   });
+
+  it("excludes flaky candidates from Pareto view", () => {
+    const frontier = computeParetoFrontier(
+      aggregateResults([
+        row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.8, totalCostUsd: 0.5 }),
+        row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.82, totalCostUsd: 0.5 }),
+        row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 1, totalCostUsd: 0.1 }),
+        row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+      ]),
+    );
+    expect(frontier.map((candidate) => candidate.promptVersionId)).toEqual(["vSteady"]);
+  });
 });
 
 describe("computeAnalysis", () => {
@@ -229,6 +241,19 @@ describe("computeAnalysis", () => {
     ]);
   });
 
+  it("excludes unreliable candidates from the ranking", () => {
+    const analysis = computeAnalysis([
+      row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.8, totalCostUsd: 0.2 }),
+      row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.82, totalCostUsd: 0.2 }),
+      row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 0.99, totalCostUsd: 0.05 }),
+      row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+    ]);
+
+    expect(analysis.ranking.map((entry) => entry.candidateKey)).toEqual([
+      candidateKey({ promptVersionId: "vSteady", solverModel: "gpt-4o" }),
+    ]);
+  });
+
   it("disqualifies a candidate whose failure rate exceeds the reliability gate", () => {
     // vFlaky has a perfect score on the one row that completed but half its
     // runs failed outright — it must not be recommended even with a top
@@ -242,6 +267,8 @@ describe("computeAnalysis", () => {
     expect(analysis.recommendedKey).toContain("vSteady");
     const flaky = analysis.candidates.find((c) => c.promptVersionId === "vFlaky");
     expect(flaky?.failureRate).toBeCloseTo(0.5, 6);
+    expect(analysis.paretoFrontierKeys.some((key) => key.includes("vFlaky"))).toBe(false);
+    expect(analysis.ppd.some((row) => row.candidateKey.includes("vFlaky"))).toBe(false);
   });
 
   it("prefers the cheaper candidate when CIs overlap", () => {

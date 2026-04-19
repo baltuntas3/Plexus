@@ -175,13 +175,14 @@ export const aggregateResults = (
     }
 
     if (r.status === "failed") {
-      bucket.failedCount += 1;
       bucket.finalScores.push(0);
-      if (r.latencyMs > 0) bucket.latencies.push(r.latencyMs);
-      if (r.totalCostUsd > 0) {
-        bucket.costs.push(r.totalCostUsd);
-        bucket.totalCost += r.totalCostUsd;
-      }
+      bucket.accuracies.push(0);
+      bucket.coherences.push(0);
+      bucket.instructions.push(0);
+      bucket.latencies.push(r.latencyMs);
+      bucket.costs.push(r.totalCostUsd);
+      bucket.totalCost += r.totalCostUsd;
+      bucket.failedCount += 1;
       continue;
     }
 
@@ -231,7 +232,7 @@ export const aggregateResults = (
 export const computeParetoFrontier = (
   candidates: readonly CandidateStats[],
 ): CandidateStats[] => {
-  const eligible = candidates.filter((c) => c.completedCount > 0);
+  const eligible = candidates.filter(isReliableForComparativeViews);
   return eligible.filter((c) => {
     return !eligible.some(
       (other) =>
@@ -249,11 +250,11 @@ const pickBaseline = (
   scoreFloor: number,
 ): CandidateStats | null => {
   const eligible = candidates.filter(
-    (c) => c.completedCount > 0 && c.meanFinalScore >= scoreFloor,
+    (c) => isReliableForComparativeViews(c) && c.meanFinalScore >= scoreFloor,
   );
   if (eligible.length === 0) {
     const best = candidates
-      .filter((c) => c.completedCount > 0)
+      .filter(isReliableForComparativeViews)
       .sort((a, b) => b.meanFinalScore - a.meanFinalScore)[0];
     return best ?? null;
   }
@@ -265,7 +266,7 @@ const computePPD = (
   baseline: CandidateStats,
 ): PPDRow[] =>
   candidates
-    .filter((c) => c.completedCount > 0)
+    .filter(isReliableForComparativeViews)
     .map((c) => {
       const score = PPD.compute(
         { accuracy: c.meanFinalScore, costUsd: c.totalCostUsd },
@@ -286,7 +287,7 @@ const computePPD = (
 const computeCompositeRanking = (
   candidates: readonly CandidateStats[],
 ): CompositeRanking[] => {
-  const eligible = candidates.filter((c) => c.completedCount > 0);
+  const eligible = candidates.filter(isReliableForComparativeViews);
   if (eligible.length === 0) return [];
 
   // Compute min/max once per dimension (was O(n²) per candidate before).
@@ -295,10 +296,10 @@ const computeCompositeRanking = (
 
   return eligible
     .map((c) => {
-      const acc = (c.meanAccuracy - 1) / 4;
-      const coh = (c.meanCoherence - 1) / 4;
-      const ins = (c.meanInstruction - 1) / 4;
-      const con = c.consistencyScore;
+      const acc = normaliseRubricMean(c.meanAccuracy);
+      const coh = normaliseRubricMean(c.meanCoherence);
+      const ins = normaliseRubricMean(c.meanInstruction);
+      const con = Math.max(0.1, c.consistencyScore);
       const quality =
         Math.pow(acc, QUALITY_ACCURACY_FRACTION) *
         Math.pow(coh, QUALITY_COHERENCE_FRACTION) *
@@ -334,12 +335,24 @@ const rangeOf = <T>(items: readonly T[], pick: (item: T) => number): NumericRang
   return { min, max };
 };
 
-// Maps `value` into [0, 1] where the best (lowest) value in `range` scores 1.
-// When min === max every candidate ties, so they all score 1 (rather than NaN).
+// Maps `value` against `bestValue` robustly. The absolute lowest (best) value in range
+// scores 1; as `value` grows against `bestValue`, the score falls harmonically.
+// Using `bestValue / Math.max(bestValue, value)` is naturally bounded to [0,1]
+// and entirely prevents single extreme outliers from compressing the scores of everybody else.
 const normaliseDescending = (value: number, range: NumericRange): number => {
-  if (range.max === range.min) return 1;
-  return (range.max - value) / (range.max - range.min);
+  const bestValue = range.min;
+  if (value <= 0 || bestValue <= 0) return 1;
+  return bestValue / Math.max(bestValue, value);
 };
+
+const normaliseRubricMean = (value: number): number => {
+  const bounded = Math.max(0, Math.min(5, value));
+  return Math.max(0.1, 0.1 + ((bounded - 1) / 4) * 0.9);
+};
+
+const isReliableForComparativeViews = (candidate: CandidateStats): boolean =>
+  candidate.completedCount > 0 &&
+  candidate.failureRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION;
 
 export interface AnalyzerOptions {
   minScoreFraction?: number;
@@ -402,10 +415,13 @@ const aggregateCategoryBreakdown = (
     }
 
     if (r.status === "failed") {
-      bucket.failedCount += 1;
       bucket.finalScores.push(0);
-      if (r.latencyMs > 0) bucket.latencies.push(r.latencyMs);
-      if (r.totalCostUsd > 0) bucket.costs.push(r.totalCostUsd);
+      bucket.accuracies.push(0);
+      bucket.coherences.push(0);
+      bucket.instructions.push(0);
+      bucket.latencies.push(r.latencyMs);
+      bucket.costs.push(r.totalCostUsd);
+      bucket.failedCount += 1;
       continue;
     }
 

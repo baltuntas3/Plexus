@@ -61,7 +61,7 @@ export interface BenchmarkResult {
 }
 
 // Stable identifier for the (testCase, version, solver, runIndex) row. The
-// runner uses it to look up which rows are already complete on a resume.
+// runner uses it to look up which rows are already recorded on a resume.
 export const benchmarkResultKey = (
   testCaseId: string,
   promptVersionId: string,

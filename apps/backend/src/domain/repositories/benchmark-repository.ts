@@ -16,6 +16,7 @@ export interface CreateBenchmarkInput {
   analysisModel: string | null;
   testCount: number;
   repetitions: number;
+  solverTemperature: number;
   seed: number;
   testCases: BenchmarkTestCase[];
   concurrency: number;

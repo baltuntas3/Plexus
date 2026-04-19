@@ -92,9 +92,9 @@ export class MongoBenchmarkResultRepository implements IBenchmarkResultRepositor
     return docs.map((d) => toDomain(d as unknown as BenchmarkResultDoc));
   }
 
-  async findCompletedKeys(benchmarkId: string): Promise<Set<string>> {
+  async findExistingKeys(benchmarkId: string): Promise<Set<string>> {
     const docs = await BenchmarkResultModel.find(
-      { benchmarkId, status: "completed" },
+      { benchmarkId },
       { testCaseId: 1, promptVersionId: 1, solverModel: 1, runIndex: 1 },
     ).lean();
     const out = new Set<string>();

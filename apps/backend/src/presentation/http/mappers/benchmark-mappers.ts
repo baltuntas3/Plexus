@@ -20,6 +20,7 @@ export const toBenchmarkDto = (bm: Benchmark): BenchmarkDto => ({
   analysisModel: bm.analysisModel,
   testCount: bm.testCount,
   repetitions: bm.repetitions,
+  solverTemperature: bm.solverTemperature,
   seed: bm.seed,
   concurrency: bm.concurrency,
   status: bm.status,

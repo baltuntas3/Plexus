@@ -3,6 +3,7 @@ import type { JudgeScore } from "../../../domain/value-objects/judge-score.js";
 export interface JudgeInput {
   input: string;
   candidate: string;
+  seed?: number;
   reference?: string;
   // The system prompt under evaluation — required for the judge's
   // "instruction" axis to reflect prompt-level constraints rather than only

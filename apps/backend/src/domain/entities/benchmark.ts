@@ -68,6 +68,7 @@ export interface Benchmark {
   analysisModel: string | null;
   testCount: number;
   repetitions: number;
+  solverTemperature: number;
   seed: number;
   concurrency: number;
   status: BenchmarkStatus;

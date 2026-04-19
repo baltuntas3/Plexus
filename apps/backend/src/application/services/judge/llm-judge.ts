@@ -40,6 +40,7 @@ export class LLMJudge implements IJudge {
         model: this.config.judgeModel,
         messages,
         temperature: this.config.temperature ?? 0,
+        seed: input.seed,
       });
     } catch (err) {
       if (err instanceof AIProviderError) {
@@ -75,6 +76,7 @@ export class LLMJudge implements IJudge {
             },
           ],
           temperature: 0,
+          seed: input.seed,
         });
         totalInputTokens += retry.usage.inputTokens;
         totalOutputTokens += retry.usage.outputTokens;
@@ -91,7 +93,10 @@ export class LLMJudge implements IJudge {
     }
 
     try {
-      const verbosityPenalty = computeVerbosityPenalty(input.candidate, input.reference);
+      const verbosityPenalty = computeVerbosityPenalty(
+        input.candidate,
+        input.reference,
+      );
       const score = JudgeScore.fromRubric(
         {
           accuracy: parsed.accuracy,

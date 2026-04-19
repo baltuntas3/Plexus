@@ -34,6 +34,15 @@ const vLabel = (id: string, versionLabels: Record<string, string>): string =>
 const candidateLabel = (c: CandidateStatsDto, versionLabels: Record<string, string>): string =>
   `${vLabel(c.promptVersionId, versionLabels)} · ${c.solverModel}`;
 
+const RELIABILITY_FAILURE_RATE_LIMIT = 0.1;
+
+const reliableCandidates = (
+  candidates: readonly CandidateStatsDto[],
+): CandidateStatsDto[] =>
+  candidates.filter(
+    (c) => c.completedCount > 0 && c.failureRate <= RELIABILITY_FAILURE_RATE_LIMIT,
+  );
+
 export const PPDDashboard = ({ analysis, loading = false, versionLabels }: Props) => {
   if (loading) {
     return <Text c="dimmed" size="sm">Loading analysis...</Text>;
@@ -46,6 +55,9 @@ export const PPDDashboard = ({ analysis, loading = false, versionLabels }: Props
   if (completedCandidates.length === 0) {
     return <Text c="dimmed" size="sm">All cells failed — no data for analysis.</Text>;
   }
+  const visibleCandidates = reliableCandidates(completedCandidates);
+  const chartCandidates =
+    visibleCandidates.length > 0 ? visibleCandidates : completedCandidates;
 
   return (
     <Stack>
@@ -53,12 +65,12 @@ export const PPDDashboard = ({ analysis, loading = false, versionLabels }: Props
       <RecommendationBanner analysis={analysis} versionLabels={versionLabels} />
       <GoldenQuadrantChart
         analysis={analysis}
-        candidates={completedCandidates}
+        candidates={chartCandidates}
         versionLabels={versionLabels}
       />
       <PPDTable
         analysis={analysis}
-        candidates={completedCandidates}
+        candidates={chartCandidates}
         versionLabels={versionLabels}
       />
     </Stack>
@@ -89,9 +101,13 @@ const VersionComparisonPanel = ({
   if (versionIds.length < 2) return null;
 
   const summaries: VersionSummary[] = versionIds.flatMap((vId) => {
-    const vCandidates = analysis.candidates.filter(
+    const completed = analysis.candidates.filter(
       (c) => c.promptVersionId === vId && c.completedCount > 0,
     );
+    const vCandidates = (() => {
+      const reliable = reliableCandidates(completed);
+      return reliable.length > 0 ? reliable : completed;
+    })();
     if (vCandidates.length === 0) return [];
 
     const bestScore = vCandidates.reduce((a, b) =>

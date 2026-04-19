@@ -27,6 +27,7 @@ export const createBenchmarkSchema = z.object({
   seed: z.coerce.number().int().min(0).max(0x7fffffff).optional(),
   judgeCount: z.coerce.number().int().min(1).max(5).optional(),
   repetitions: z.coerce.number().int().min(1).max(10).optional(),
+  solverTemperature: z.coerce.number().min(0).max(2).optional(),
   concurrency: z.coerce.number().int().min(1).max(16).optional(),
   testGenerationMode: z.enum(["shared-core", "diff-seeking"]).optional(),
   generatorModel: z.string().min(1).optional(),

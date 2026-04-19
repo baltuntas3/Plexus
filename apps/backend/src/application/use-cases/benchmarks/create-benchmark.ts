@@ -27,11 +27,12 @@ import type { IAIProviderFactory } from "../../services/ai-provider.js";
 const DEFAULT_GENERATOR_MODEL = "openai/gpt-oss-120b";
 const DEFAULT_JUDGE_COUNT = 3;
 const DEFAULT_REPETITIONS = 3;
+const DEFAULT_SOLVER_TEMPERATURE = 0.7;
 const DEFAULT_CONCURRENCY = 4;
 
-export interface CreateBenchmarkCommand extends CreateBenchmarkDto {
+export type CreateBenchmarkCommand = CreateBenchmarkDto & {
   ownerId: string;
-}
+};
 
 export interface CreateBenchmarkResult {
   benchmark: Benchmark;
@@ -61,9 +62,7 @@ export class CreateBenchmarkUseCase {
       command.generatorModel ?? DEFAULT_GENERATOR_MODEL,
     );
     const analysisModel = judgeModels[0] ?? null;
-    const testGenerationMode =
-      command.testGenerationMode ??
-      (resolvedVersions.length > 1 ? "diff-seeking" : "shared-core");
+    const testGenerationMode = command.testGenerationMode ?? "shared-core";
     const seed = command.seed ?? generateSeed();
 
     const spec = buildEvaluationSpecFromVersions(
@@ -90,6 +89,7 @@ export class CreateBenchmarkUseCase {
       analysisModel,
       testCount: command.testCount,
       repetitions: command.repetitions ?? DEFAULT_REPETITIONS,
+      solverTemperature: command.solverTemperature ?? DEFAULT_SOLVER_TEMPERATURE,
       seed,
       testCases: generated.map((tc) => ({
         id: tc.id,

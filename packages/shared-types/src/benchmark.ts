@@ -24,6 +24,7 @@ export interface BenchmarkDto {
   analysisModel: string | null;
   testCount: number;
   repetitions: number;
+  solverTemperature: number;
   seed: number;
   concurrency: number;
   status: BenchmarkStatus;
@@ -85,6 +86,7 @@ export interface CreateBenchmarkRequest {
   name: string;
   promptVersionIds: string[];
   solverModels: string[];
+  solverTemperature?: number;
   testCount: number;
 }
 

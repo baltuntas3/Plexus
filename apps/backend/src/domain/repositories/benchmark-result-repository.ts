@@ -2,13 +2,14 @@ import type { BenchmarkResult } from "../entities/benchmark-result.js";
 
 // Result rows are written via upsert keyed on
 // (benchmarkId, testCaseId, promptVersionId, solverModel, runIndex) so a
-// runner restart is naturally idempotent: re-running an already-completed row
-// is a no-op, and `findCompletedKeys` lets the runner skip them up front.
+// runner restart is naturally idempotent: re-running an already-recorded row
+// is a no-op, and `findExistingKeys` lets the runner skip them up front.
 //
 // `updateScores` is used by the post-run verbosity pass to rewrite
-// verbosityPenalty + finalScore on rows that had no expected output — the
-// penalty there is computed relative to the benchmark's median candidate
-// length, which is only known once all rows are written.
+// verbosityPenalty + finalScore on completed rows that had no expected output.
+// The fallback penalty is computed once all rows are written, against the
+// per-test-case median candidate length, so reference-free rows do not remain
+// permanently unpenalised for verbosity.
 
 export type UpsertBenchmarkResultInput = Omit<BenchmarkResult, "id" | "createdAt">;
 
@@ -21,6 +22,6 @@ export interface UpdateScoresInput {
 export interface IBenchmarkResultRepository {
   upsert(input: UpsertBenchmarkResultInput): Promise<BenchmarkResult>;
   listByBenchmark(benchmarkId: string): Promise<BenchmarkResult[]>;
-  findCompletedKeys(benchmarkId: string): Promise<Set<string>>;
+  findExistingKeys(benchmarkId: string): Promise<Set<string>>;
   updateScores(input: UpdateScoresInput): Promise<void>;
 }

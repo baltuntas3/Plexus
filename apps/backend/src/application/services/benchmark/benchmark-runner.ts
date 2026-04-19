@@ -43,16 +43,16 @@ import type { GenerateResponse } from "../ai-provider.js";
 // empty matrix, missing judge models) abort the whole benchmark.
 //
 // Rows with an `expectedOutput` receive a reference-based verbosity penalty
-// inside the judge. Reference-free completed rows are rewritten in a post-run
-// pass using a per-test-case median completed candidate length as the
-// baseline so unrelated tasks do not distort one another's verbosity target.
+// inside the judge. Reference-free rows receive a post-run fallback penalty
+// against the per-test-case median candidate length, so unusually verbose
+// candidates are not silently rewarded when no gold reference exists.
 //
 // The system prompt for each cell is determined by the PromptVersion: if it
 // has a braidGraph, that graph becomes the system prompt; otherwise
 // classicalPrompt is used. There is no separate mode field and no benchmark-
 // specific instruction prefix is injected.
 
-const SOLVER_TEMPERATURE = 0.7;
+// specific instruction prefix is injected.
 
 interface Cell {
   testCase: BenchmarkTestCase;
@@ -86,16 +86,16 @@ export class BenchmarkRunner {
 
     try {
       const cells = this.shuffleCells(await this.buildMatrix(bm), bm.seed);
-      const completedKeys = await this.deps.results.findCompletedKeys(benchmarkId);
+      const existingKeys = await this.deps.results.findExistingKeys(benchmarkId);
       const total = cells.length;
       let completed = 0;
       for (const cell of cells) {
-        if (completedKeys.has(cellKey(cell))) completed += 1;
+        if (existingKeys.has(cellKey(cell))) completed += 1;
       }
 
       await this.report(benchmarkId, ctx, completed, total);
 
-      const pending = cells.filter((c) => !completedKeys.has(cellKey(c)));
+      const pending = cells.filter((c) => !existingKeys.has(cellKey(c)));
       const judges = this.buildJudges(bm.judgeModels);
 
       await mapConcurrent(pending, Math.max(1, bm.concurrency), async (cell) => {
@@ -107,7 +107,7 @@ export class BenchmarkRunner {
         await this.report(benchmarkId, ctx, completed, total);
       });
 
-      await this.applyReferenceFreeVerbosityPass(bm);
+      await this.applyReferenceFreeVerbosityPenalty(benchmarkId, bm);
 
       await this.deps.benchmarks.updateStatus(benchmarkId, {
         status: "completed",
@@ -202,7 +202,7 @@ export class BenchmarkRunner {
           { role: "system", content: systemPrompt },
           { role: "user", content: cell.testCase.input },
         ],
-        temperature: SOLVER_TEMPERATURE,
+        temperature: bm.solverTemperature,
         seed: solverSeed,
       });
     } catch (err) {
@@ -223,6 +223,7 @@ export class BenchmarkRunner {
           const graded = await judge.grade({
             input: cell.testCase.input,
             candidate: candidate.text,
+            seed: deriveJudgeSeed(bm.seed, cell, model),
             reference: cell.testCase.expectedOutput ?? undefined,
             systemPrompt,
           });
@@ -254,6 +255,9 @@ export class BenchmarkRunner {
 
     const judgeFailures = judgeExecution.filter((j) => !j.ok);
     const votes = judgeExecution.filter((j): j is Extract<typeof judgeExecution[number], { ok: true }> => j.ok);
+    const successfulJudgeInputTokens = votes.reduce((sum, vote) => sum + vote.vote.inputTokens, 0);
+    const successfulJudgeOutputTokens = votes.reduce((sum, vote) => sum + vote.vote.outputTokens, 0);
+    const successfulJudgeCostUsd = votes.reduce((sum, vote) => sum + vote.vote.costUsd, 0);
     if (votes.length === 0) {
       const firstFailure = judgeFailures[0];
       const partialJudgeInputTokens = judgeFailures.reduce(
@@ -268,14 +272,19 @@ export class BenchmarkRunner {
         (sum, failure) => sum + (failure.partial?.costUsd ?? 0),
         0,
       );
-      return buildFailedRow(bm.id, cell, firstFailure?.err ?? new Error("Judge failed"), {
-        latencyMs,
-        candidate,
-        candidateCostUsd: candidateCost.totalUsd,
-        judgeInputTokens: partialJudgeInputTokens,
-        judgeOutputTokens: partialJudgeOutputTokens,
-        judgeCostUsd: partialJudgeCostUsd,
-      });
+      return buildFailedRow(
+        bm.id,
+        cell,
+        firstFailure?.err ?? new Error("Judge ensemble incomplete"),
+        {
+          latencyMs,
+          candidate,
+          candidateCostUsd: candidateCost.totalUsd,
+          judgeInputTokens: successfulJudgeInputTokens + partialJudgeInputTokens,
+          judgeOutputTokens: successfulJudgeOutputTokens + partialJudgeOutputTokens,
+          judgeCostUsd: successfulJudgeCostUsd + partialJudgeCostUsd,
+        },
+      );
     }
 
     const meanAccuracy = mean(votes.map((v) => v.vote.accuracy));
@@ -302,11 +311,11 @@ export class BenchmarkRunner {
     );
 
     const judgeInputTokens =
-      votes.reduce((s, v) => s + v.vote.inputTokens, 0) + partialJudgeInputTokens;
+      successfulJudgeInputTokens + partialJudgeInputTokens;
     const judgeOutputTokens =
-      votes.reduce((s, v) => s + v.vote.outputTokens, 0) + partialJudgeOutputTokens;
+      successfulJudgeOutputTokens + partialJudgeOutputTokens;
     const judgeCostUsd =
-      votes.reduce((s, v) => s + v.vote.costUsd, 0) + partialJudgeCostUsd;
+      successfulJudgeCostUsd + partialJudgeCostUsd;
 
     return {
       benchmarkId: bm.id,
@@ -355,53 +364,39 @@ export class BenchmarkRunner {
     await ctx.reportProgress({ completed, total });
   }
 
-  // Reference-free verbosity pass. Rows whose test case has no expectedOutput
-  // never saw a per-row penalty during grading, so we derive a per-test-case
-  // baseline from the cohort of completed candidates. Two fairness guards on
-  // top of "just take the median":
-  //
-  // 1. Length is measured in output tokens (from provider usage) rather than
-  //    character count, because tokens are what the judge actually reads and
-  //    what the user pays for. The column falls back to character length only
-  //    when the provider did not report usage (legacy/test rows).
-  // 2. Baseline is the trimmed median over the interquartile range, so a
-  //    single model that answers "ok." in one word does not drag the baseline
-  //    to the floor and thereby penalise every normally-verbose candidate.
-  private async applyReferenceFreeVerbosityPass(bm: Benchmark): Promise<void> {
-    const rows = await this.deps.results.listByBenchmark(bm.id);
-    const completedRows = rows.filter(isCompletedRow);
-    const testCasesById = new Map(bm.testCases.map((testCase) => [testCase.id, testCase]));
-    const baselineByTestCase = new Map<string, number>();
-    for (const [testCaseId, testCase] of testCasesById) {
-      if (testCase?.expectedOutput) continue;
-      const lengths = completedRows
-        .filter((row) => row.testCaseId === testCaseId)
-        .map(candidateResponseLength)
-        .filter((length) => length > 0);
-      const baseline = trimmedMedian(lengths);
-      if (baseline > 0) {
-        baselineByTestCase.set(testCaseId, baseline);
-      }
+  private async applyReferenceFreeVerbosityPenalty(
+    benchmarkId: string,
+    bm: Benchmark,
+  ): Promise<void> {
+    const rows = await this.deps.results.listByBenchmark(benchmarkId);
+    const expectedByTestCaseId = new Map(
+      bm.testCases.map((testCase) => [testCase.id, testCase.expectedOutput]),
+    );
+    const lengthsByTestCaseId = new Map<string, number[]>();
+
+    for (const row of rows) {
+      if (row.status !== "completed") continue;
+      if (expectedByTestCaseId.get(row.testCaseId)) continue;
+      const bucket = lengthsByTestCaseId.get(row.testCaseId) ?? [];
+      bucket.push(estimateTokenCount(row.candidateOutput));
+      lengthsByTestCaseId.set(row.testCaseId, bucket);
     }
 
-    if (baselineByTestCase.size === 0) return;
-
-    await Promise.all(
-      completedRows
-        .filter((row) => shouldApplyReferenceFreeVerbosityPenalty(row, testCasesById))
-        .map((row) => {
-          const baseline = baselineByTestCase.get(row.testCaseId) ?? 0;
-          const verbosityPenalty = computeVerbosityPenaltyAgainstBaseline(
-            candidateResponseLength(row),
-            baseline,
-          );
-          return this.deps.results.updateScores({
-            id: row.id,
-            verbosityPenalty,
-            finalScore: row.rawScore * (1 - verbosityPenalty),
-          });
-        }),
-    );
+    for (const row of rows) {
+      if (row.status !== "completed") continue;
+      if (expectedByTestCaseId.get(row.testCaseId)) continue;
+      const baselineLength = median(lengthsByTestCaseId.get(row.testCaseId) ?? []);
+      const verbosityPenalty = computeVerbosityPenaltyAgainstBaseline(
+        estimateTokenCount(row.candidateOutput),
+        baselineLength,
+      );
+      if (verbosityPenalty === row.verbosityPenalty) continue;
+      await this.deps.results.updateScores({
+        id: row.id,
+        verbosityPenalty,
+        finalScore: row.rawScore * (1 - verbosityPenalty),
+      });
+    }
   }
 
   private shuffleCells(cells: readonly Cell[], seed: number): Cell[] {
@@ -448,9 +443,9 @@ const buildFailedRow = (
     runIndex: cell.runIndex,
     input: cell.testCase.input,
     candidateOutput: partial.candidate?.text ?? "",
-    judgeAccuracy: 1,
-    judgeCoherence: 1,
-    judgeInstruction: 1,
+    judgeAccuracy: 0,
+    judgeCoherence: 0,
+    judgeInstruction: 0,
     judgeVotes: [],
     rawScore: 0,
     verbosityPenalty: 0,
@@ -486,47 +481,17 @@ const buildPartialJudgeUsage = (
 const mean = (values: readonly number[]): number =>
   values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
-const isCompletedRow = (
-  row: UpsertBenchmarkResultInput | import("../../../domain/entities/benchmark-result.js").BenchmarkResult,
-): boolean => row.status === "completed";
-
-// Prefer provider-reported output tokens over raw character count. Tokens
-// reflect what the judge reads and what cost is charged on; character count
-// is the fallback when a row predates usage tracking.
-const candidateResponseLength = (
-  row: Pick<UpsertBenchmarkResultInput, "candidateOutput" | "candidateOutputTokens">,
-): number => {
-  if (row.candidateOutputTokens > 0) return row.candidateOutputTokens;
-  return row.candidateOutput.length;
-};
-
-const shouldApplyReferenceFreeVerbosityPenalty = (
-  row: Pick<UpsertBenchmarkResultInput, "testCaseId">,
-  testCasesById: ReadonlyMap<string, BenchmarkTestCase>,
-): boolean => !testCasesById.get(row.testCaseId)?.expectedOutput;
-
 const median = (values: readonly number[]): number => {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) {
-    return sorted[mid] ?? 0;
-  }
-  return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle] as number;
+  return ((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2;
 };
 
-// Median over the interquartile range. With ≥4 samples we drop the outer
-// quartiles before taking the median so a single extreme candidate (1-word
-// refusal, or a run-on hallucination) does not dominate the baseline that
-// every sibling row is judged against. With <4 samples we fall back to the
-// plain median because there is nothing meaningful to trim.
-const trimmedMedian = (values: readonly number[]): number => {
-  if (values.length < 4) return median(values);
-  const sorted = [...values].sort((a, b) => a - b);
-  const q1Index = Math.floor(sorted.length / 4);
-  const q3Index = sorted.length - q1Index;
-  const trimmed = sorted.slice(q1Index, q3Index);
-  return median(trimmed.length > 0 ? trimmed : sorted);
+const estimateTokenCount = (text: string): number => {
+  const matches = text.match(/[\p{L}\p{N}]+(?:['_-][\p{L}\p{N}]+)*|[^\s]/gu);
+  return matches?.length ?? 0;
 };
 
 const nextShuffleState = (state: number): number => {
@@ -542,6 +507,20 @@ const nextShuffleState = (state: number): number => {
 // gets a distinct but reproducible sampling seed.
 const deriveSeed = (benchmarkSeed: number, cell: Cell): number => {
   const str = `${cell.testCase.id}|${cell.version.id}|${cell.solverModel}|${cell.runIndex}`;
+  let h = benchmarkSeed >>> 0;
+  for (let i = 0; i < str.length; i += 1) {
+    h = (h ^ str.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h & 0x7fffffff;
+};
+
+const deriveJudgeSeed = (
+  benchmarkSeed: number,
+  cell: Cell,
+  judgeModel: string,
+): number => {
+  const str = `${cell.testCase.id}|${cell.version.id}|${cell.solverModel}|${cell.runIndex}|${judgeModel}`;
   let h = benchmarkSeed >>> 0;
   for (let i = 0; i < str.length; i += 1) {
     h = (h ^ str.charCodeAt(i)) >>> 0;

@@ -29,8 +29,11 @@ export class BenchmarkController {
   create: RequestHandler = async (req: Request, res: Response) => {
     const ownerId = requireUserId(req);
     const input = createBenchmarkSchema.parse(req.body);
-    const bm = await this.benchmarks.createBenchmark.execute({ ...input, ownerId });
-    res.status(201).json({ benchmark: toBenchmarkDetailDto(bm, []) });
+    const { benchmark, versionLabels } = await this.benchmarks.createBenchmark.execute({
+      ...input,
+      ownerId,
+    });
+    res.status(201).json({ benchmark: toBenchmarkDetailDto(benchmark, [], versionLabels) });
   };
 
   list: RequestHandler = async (req: Request, res: Response) => {
@@ -48,11 +51,11 @@ export class BenchmarkController {
   get: RequestHandler = async (req: Request, res: Response) => {
     const ownerId = requireUserId(req);
     const id = requireParam(req, "id");
-    const { benchmark, results } = await this.benchmarks.getBenchmark.execute({
+    const { benchmark, results, versionLabels } = await this.benchmarks.getBenchmark.execute({
       benchmarkId: id,
       ownerId,
     });
-    res.json({ benchmark: toBenchmarkDetailDto(benchmark, results) });
+    res.json({ benchmark: toBenchmarkDetailDto(benchmark, results, versionLabels) });
   };
 
   start: RequestHandler = async (req: Request, res: Response) => {
@@ -106,7 +109,10 @@ export class BenchmarkController {
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
 
-    send("snapshot", toBenchmarkDetailDto(snapshot.benchmark, snapshot.results));
+    send(
+      "snapshot",
+      toBenchmarkDetailDto(snapshot.benchmark, snapshot.results, snapshot.versionLabels),
+    );
 
     const bm = snapshot.benchmark;
     if (bm.status === "completed" || bm.status === "failed" || bm.status === "draft") {
@@ -138,7 +144,7 @@ export class BenchmarkController {
         ) {
           send(
             "snapshot",
-            toBenchmarkDetailDto(latest.benchmark, latest.results),
+            toBenchmarkDetailDto(latest.benchmark, latest.results, latest.versionLabels),
           );
           send("done", { status: latest.benchmark.status });
           clearInterval(interval);

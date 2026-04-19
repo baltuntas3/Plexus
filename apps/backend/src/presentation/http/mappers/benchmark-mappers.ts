@@ -124,6 +124,7 @@ export const toBenchmarkAnalysisDto = (
 export const toBenchmarkDetailDto = (
   bm: Benchmark,
   results: BenchmarkResult[],
+  versionLabels: Record<string, string>,
 ): BenchmarkDetailDto => ({
   ...toBenchmarkDto(bm),
   results: results.map(toBenchmarkResultDto),
@@ -134,4 +135,5 @@ export const toBenchmarkDetailDto = (
     category: tc.category,
     source: tc.source,
   })),
+  versionLabels,
 });

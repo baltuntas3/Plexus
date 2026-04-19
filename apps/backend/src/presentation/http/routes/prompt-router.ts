@@ -23,6 +23,7 @@ export const createPromptRouter = (
   router.get("/:id/versions", asyncHandler(controller.listVersions));
   router.get("/:id/versions/:version", asyncHandler(controller.getVersion));
   router.post("/:id/versions/:version/promote", asyncHandler(controller.promoteVersion));
+  router.patch("/:id/versions/:version", asyncHandler(controller.updateVersionName));
   router.post("/:id/versions/:version/generate-braid", asyncHandler(controller.generateBraid));
   router.patch("/:id/versions/:version/braid", asyncHandler(controller.updateBraid));
   router.post("/:id/versions/:version/braid/chat", asyncHandler(controller.chatBraid));

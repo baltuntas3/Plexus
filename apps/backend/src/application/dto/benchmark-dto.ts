@@ -9,16 +9,27 @@ const uniqueStringArray = (field: string, min = 1) =>
       message: `${field} must be unique`,
     });
 
-// The public create-benchmark surface exposes only the four choices the
-// caller actually needs to make. Judge ensemble, generator, test-generation
-// mode, analysis model, repetitions, concurrency and seed are derived inside
-// the use case so the simplest call still produces a fair, reproducible
-// benchmark.
+// The public create-benchmark surface exposes four required choices (name,
+// versions, solvers, testCount). Everything else is derived inside the use
+// case so the simplest call still produces a fair, reproducible benchmark.
+//
+// Advanced overrides are optional: callers who need reproducibility across
+// runs pass an explicit `seed`, cost control can dial `judgeCount` or
+// `repetitions` down, and explicit `testGenerationMode` bypasses the
+// automatic single-vs-multi-version heuristic. All overrides are validated
+// against the same bounds the defaults respect so the simple surface
+// remains the low-ceiling default rather than being silently wrong.
 export const createBenchmarkSchema = z.object({
   name: z.string().min(1).max(120),
   promptVersionIds: uniqueStringArray("promptVersionIds"),
   solverModels: uniqueStringArray("solverModels"),
   testCount: z.coerce.number().int().min(1).max(100),
+  seed: z.coerce.number().int().min(0).max(0x7fffffff).optional(),
+  judgeCount: z.coerce.number().int().min(1).max(5).optional(),
+  repetitions: z.coerce.number().int().min(1).max(10).optional(),
+  concurrency: z.coerce.number().int().min(1).max(16).optional(),
+  testGenerationMode: z.enum(["shared-core", "diff-seeking"]).optional(),
+  generatorModel: z.string().min(1).optional(),
 });
 export type CreateBenchmarkDto = z.infer<typeof createBenchmarkSchema>;
 

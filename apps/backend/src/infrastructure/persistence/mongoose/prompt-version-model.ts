@@ -5,6 +5,7 @@ const promptVersionSchema = new Schema(
   {
     promptId: { type: Schema.Types.ObjectId, ref: "Prompt", required: true, index: true },
     version: { type: String, required: true },
+    name: { type: String, default: null },
     classicalPrompt: { type: String, required: true },
     braidGraph: { type: String, default: null },
     generatorModel: { type: String, default: null },

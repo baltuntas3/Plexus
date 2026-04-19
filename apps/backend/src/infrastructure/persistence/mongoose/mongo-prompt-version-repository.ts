@@ -13,6 +13,7 @@ type VersionDoc = HydratedDocument<{
   _id: Types.ObjectId;
   promptId: Types.ObjectId;
   version: string;
+  name: string | null;
   classicalPrompt: string;
   braidGraph: string | null;
   generatorModel: string | null;
@@ -26,6 +27,7 @@ const toDomain = (doc: VersionDoc): PromptVersion => ({
   id: String(doc._id),
   promptId: String(doc.promptId),
   version: doc.version,
+  name: doc.name ?? null,
   classicalPrompt: doc.classicalPrompt,
   braidGraph: doc.braidGraph,
   generatorModel: doc.generatorModel,
@@ -37,7 +39,11 @@ const toDomain = (doc: VersionDoc): PromptVersion => ({
 
 export class MongoPromptVersionRepository implements IPromptVersionRepository {
   async create(input: CreateVersionInput): Promise<PromptVersion> {
-    const doc = await PromptVersionModel.create({ ...input, status: "draft" });
+    const doc = await PromptVersionModel.create({
+      ...input,
+      name: input.name ?? null,
+      status: "draft",
+    });
     return toDomain(doc as unknown as VersionDoc);
   }
 
@@ -78,6 +84,10 @@ export class MongoPromptVersionRepository implements IPromptVersionRepository {
 
   async updateStatus(id: string, status: VersionStatus): Promise<void> {
     await PromptVersionModel.updateOne({ _id: id }, { status });
+  }
+
+  async updateName(id: string, name: string | null): Promise<void> {
+    await PromptVersionModel.updateOne({ _id: id }, { name });
   }
 
   async setBraidGraph(id: string, braidGraph: string, generatorModel: string): Promise<void> {

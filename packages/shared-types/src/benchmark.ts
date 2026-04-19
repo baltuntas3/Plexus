@@ -127,6 +127,10 @@ export interface UpdateTestCasesRequest {
 export interface BenchmarkDetailDto extends BenchmarkDto {
   results: BenchmarkResultDto[];
   testCases: BenchmarkTestCaseDto[];
+  // Label for each promptVersionId: the user-set name when present, the
+  // auto-generated version string otherwise. UIs should key off this instead
+  // of reconstructing "v1"/"v2" locally.
+  versionLabels: Record<string, string>;
 }
 
 // Unified analysis: one pass produces per-candidate stats with bootstrap 95% CI,

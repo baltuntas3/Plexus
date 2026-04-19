@@ -355,34 +355,45 @@ export class BenchmarkRunner {
     await ctx.reportProgress({ completed, total });
   }
 
+  // Reference-free verbosity pass. Rows whose test case has no expectedOutput
+  // never saw a per-row penalty during grading, so we derive a per-test-case
+  // baseline from the cohort of completed candidates. Two fairness guards on
+  // top of "just take the median":
+  //
+  // 1. Length is measured in output tokens (from provider usage) rather than
+  //    character count, because tokens are what the judge actually reads and
+  //    what the user pays for. The column falls back to character length only
+  //    when the provider did not report usage (legacy/test rows).
+  // 2. Baseline is the trimmed median over the interquartile range, so a
+  //    single model that answers "ok." in one word does not drag the baseline
+  //    to the floor and thereby penalise every normally-verbose candidate.
   private async applyReferenceFreeVerbosityPass(bm: Benchmark): Promise<void> {
     const rows = await this.deps.results.listByBenchmark(bm.id);
     const completedRows = rows.filter(isCompletedRow);
     const testCasesById = new Map(bm.testCases.map((testCase) => [testCase.id, testCase]));
-    const baselineLengthByTestCase = new Map<string, number>();
+    const baselineByTestCase = new Map<string, number>();
     for (const [testCaseId, testCase] of testCasesById) {
       if (testCase?.expectedOutput) continue;
       const lengths = completedRows
         .filter((row) => row.testCaseId === testCaseId)
-        .map(candidateLength)
-        .filter((length) => length > 0)
-        .sort((a, b) => a - b);
-      const baselineLength = median(lengths);
-      if (baselineLength > 0) {
-        baselineLengthByTestCase.set(testCaseId, baselineLength);
+        .map(candidateResponseLength)
+        .filter((length) => length > 0);
+      const baseline = trimmedMedian(lengths);
+      if (baseline > 0) {
+        baselineByTestCase.set(testCaseId, baseline);
       }
     }
 
-    if (baselineLengthByTestCase.size === 0) return;
+    if (baselineByTestCase.size === 0) return;
 
     await Promise.all(
       completedRows
         .filter((row) => shouldApplyReferenceFreeVerbosityPenalty(row, testCasesById))
         .map((row) => {
-          const baselineLength = baselineLengthByTestCase.get(row.testCaseId) ?? 0;
+          const baseline = baselineByTestCase.get(row.testCaseId) ?? 0;
           const verbosityPenalty = computeVerbosityPenaltyAgainstBaseline(
-            candidateLength(row),
-            baselineLength,
+            candidateResponseLength(row),
+            baseline,
           );
           return this.deps.results.updateScores({
             id: row.id,
@@ -479,9 +490,15 @@ const isCompletedRow = (
   row: UpsertBenchmarkResultInput | import("../../../domain/entities/benchmark-result.js").BenchmarkResult,
 ): boolean => row.status === "completed";
 
-const candidateLength = (
-  row: Pick<UpsertBenchmarkResultInput, "candidateOutput">,
-): number => row.candidateOutput.length;
+// Prefer provider-reported output tokens over raw character count. Tokens
+// reflect what the judge reads and what cost is charged on; character count
+// is the fallback when a row predates usage tracking.
+const candidateResponseLength = (
+  row: Pick<UpsertBenchmarkResultInput, "candidateOutput" | "candidateOutputTokens">,
+): number => {
+  if (row.candidateOutputTokens > 0) return row.candidateOutputTokens;
+  return row.candidateOutput.length;
+};
 
 const shouldApplyReferenceFreeVerbosityPenalty = (
   row: Pick<UpsertBenchmarkResultInput, "testCaseId">,
@@ -490,11 +507,26 @@ const shouldApplyReferenceFreeVerbosityPenalty = (
 
 const median = (values: readonly number[]): number => {
   if (values.length === 0) return 0;
-  const mid = Math.floor(values.length / 2);
-  if (values.length % 2 === 1) {
-    return values[mid] ?? 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[mid] ?? 0;
   }
-  return ((values[mid - 1] ?? 0) + (values[mid] ?? 0)) / 2;
+  return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+};
+
+// Median over the interquartile range. With ≥4 samples we drop the outer
+// quartiles before taking the median so a single extreme candidate (1-word
+// refusal, or a run-on hallucination) does not dominate the baseline that
+// every sibling row is judged against. With <4 samples we fall back to the
+// plain median because there is nothing meaningful to trim.
+const trimmedMedian = (values: readonly number[]): number => {
+  if (values.length < 4) return median(values);
+  const sorted = [...values].sort((a, b) => a - b);
+  const q1Index = Math.floor(sorted.length / 4);
+  const q3Index = sorted.length - q1Index;
+  const trimmed = sorted.slice(q1Index, q3Index);
+  return median(trimmed.length > 0 ? trimmed : sorted);
 };
 
 const nextShuffleState = (state: number): number => {

@@ -42,8 +42,22 @@ const MAX_FAILURE_RATE_FOR_RECOMMENDATION = 0.1;
 
 // finalScore is in [0,1]; stddev 0.25 is the practical ceiling for real LLM
 // benchmark runs (scores alternating near 0 and 1), so anything above it
-// clamps to 0% consistency.
-const CONSISTENCY_STDDEV_CEILING = 0.25;
+// clamps to 0% consistency. Exposed as a default so stricter task families
+// (e.g. deterministic math) can dial it down via AnalyzerOptions.
+const DEFAULT_CONSISTENCY_STDDEV_CEILING = 0.25;
+
+// Composite ranking weights. Quality (geometric mean across rubric + consistency)
+// counts 80%, efficiency (latency + cost) 20% — split 10/10. The geometric-mean
+// inner weights sum to 80/80 so consistency + rubric line up with the overall
+// 80% quality share. Expressed as named constants here so the policy is
+// greppable in one place and easy to adjust without hunting magic numbers.
+const COMPOSITE_QUALITY_WEIGHT = 0.8;
+const QUALITY_ACCURACY_FRACTION = 25 / 80;
+const QUALITY_COHERENCE_FRACTION = 20 / 80;
+const QUALITY_INSTRUCTION_FRACTION = 20 / 80;
+const QUALITY_CONSISTENCY_FRACTION = 15 / 80;
+const EFFICIENCY_LATENCY_WEIGHT = 0.1;
+const EFFICIENCY_COST_WEIGHT = 0.1;
 
 export interface CandidateStats {
   candidateKey: string;
@@ -121,7 +135,10 @@ export const candidateKey = (c: Pick<
   "promptVersionId" | "solverModel"
 >): string => `${c.promptVersionId}::${c.solverModel}`;
 
-export const aggregateResults = (results: readonly BenchmarkResult[]): CandidateStats[] => {
+export const aggregateResults = (
+  results: readonly BenchmarkResult[],
+  consistencyStddevCeiling: number = DEFAULT_CONSISTENCY_STDDEV_CEILING,
+): CandidateStats[] => {
   type Bucket = {
     promptVersionId: string;
     solverModel: string;
@@ -198,7 +215,7 @@ export const aggregateResults = (results: readonly BenchmarkResult[]): Candidate
       ci95Low: ci.low,
       ci95High: ci.high,
       stderr: sampleCount === 0 ? 0 : sd / Math.sqrt(sampleCount),
-      consistencyScore: consistencyFromStddev(sd),
+      consistencyScore: consistencyFromStddev(sd, consistencyStddevCeiling),
       meanLatencyMs: mean(bucket.latencies),
       meanCostUsd: mean(bucket.costs),
       totalCostUsd: bucket.totalCost,
@@ -264,28 +281,17 @@ const computePPD = (
 // Composite score: weighted combination of quality (geometric mean — penalises
 // any dimension sitting at zero) and efficiency (additive — allows the worst
 // latency/cost candidate to still contribute to quality-driven ranking).
-//
-// Weights (sum = 1.0):
-//   accuracy      25%
-//   coherence     20%
-//   instruction   20%
-//   consistency   15%
-//   latency       10%
-//   cost          10%
+// Weights live in the module-level COMPOSITE_/QUALITY_/EFFICIENCY_ constants
+// above so the policy is greppable in one place.
 const computeCompositeRanking = (
   candidates: readonly CandidateStats[],
 ): CompositeRanking[] => {
   const eligible = candidates.filter((c) => c.completedCount > 0);
   if (eligible.length === 0) return [];
 
-  const latencies = eligible.map((c) => c.meanLatencyMs);
-  const costs = eligible.map((c) => c.meanCostUsd);
-  const minMaxNorm = (values: number[], value: number): number => {
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    if (max === min) return 1;
-    return (max - value) / (max - min);
-  };
+  // Compute min/max once per dimension (was O(n²) per candidate before).
+  const latencyRange = rangeOf(eligible, (c) => c.meanLatencyMs);
+  const costRange = rangeOf(eligible, (c) => c.meanCostUsd);
 
   return eligible
     .map((c) => {
@@ -294,21 +300,52 @@ const computeCompositeRanking = (
       const ins = (c.meanInstruction - 1) / 4;
       const con = c.consistencyScore;
       const quality =
-        Math.pow(acc, 25 / 80) *
-        Math.pow(coh, 20 / 80) *
-        Math.pow(ins, 20 / 80) *
-        Math.pow(con, 15 / 80);
+        Math.pow(acc, QUALITY_ACCURACY_FRACTION) *
+        Math.pow(coh, QUALITY_COHERENCE_FRACTION) *
+        Math.pow(ins, QUALITY_INSTRUCTION_FRACTION) *
+        Math.pow(con, QUALITY_CONSISTENCY_FRACTION);
       const efficiency =
-        0.10 * minMaxNorm(latencies, c.meanLatencyMs) +
-        0.10 * minMaxNorm(costs, c.meanCostUsd);
-      const compositeScore = 0.80 * quality + efficiency;
+        EFFICIENCY_LATENCY_WEIGHT *
+          normaliseDescending(c.meanLatencyMs, latencyRange) +
+        EFFICIENCY_COST_WEIGHT *
+          normaliseDescending(c.meanCostUsd, costRange);
+      const compositeScore = COMPOSITE_QUALITY_WEIGHT * quality + efficiency;
       return { candidateKey: c.candidateKey, compositeScore };
     })
     .sort((a, b) => b.compositeScore - a.compositeScore);
 };
 
+interface NumericRange {
+  min: number;
+  max: number;
+}
+
+const rangeOf = <T>(items: readonly T[], pick: (item: T) => number): NumericRange => {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const item of items) {
+    const value = pick(item);
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return { min: 0, max: 0 };
+  }
+  return { min, max };
+};
+
+// Maps `value` into [0, 1] where the best (lowest) value in `range` scores 1.
+// When min === max every candidate ties, so they all score 1 (rather than NaN).
+const normaliseDescending = (value: number, range: NumericRange): number => {
+  if (range.max === range.min) return 1;
+  return (range.max - value) / (range.max - range.min);
+};
+
 export interface AnalyzerOptions {
   minScoreFraction?: number;
+  // Override the stddev→consistency ceiling; lower values make the
+  // consistency axis stricter. Omit to use DEFAULT_CONSISTENCY_STDDEV_CEILING.
+  consistencyStddevCeiling?: number;
   testCasesById?: Record<
     string,
     Pick<BenchmarkTestCase, "category" | "source">
@@ -413,7 +450,10 @@ export const computeAnalysis = (
   results: readonly BenchmarkResult[],
   options: AnalyzerOptions = {},
 ): Omit<BenchmarkAnalysis, "commentary"> => {
-  const candidates = aggregateResults(results);
+  const candidates = aggregateResults(
+    results,
+    options.consistencyStddevCeiling ?? DEFAULT_CONSISTENCY_STDDEV_CEILING,
+  );
   const categoryBreakdown = aggregateCategoryBreakdown(
     results,
     options.testCasesById ?? {},
@@ -709,8 +749,13 @@ const stddev = (values: readonly number[]): number => {
   return Math.sqrt(variance);
 };
 
-const consistencyFromStddev = (sd: number): number =>
-  Math.max(0, Math.min(1, 1 - sd / CONSISTENCY_STDDEV_CEILING));
+const consistencyFromStddev = (
+  sd: number,
+  ceiling: number = DEFAULT_CONSISTENCY_STDDEV_CEILING,
+): number => {
+  if (ceiling <= 0) return sd === 0 ? 1 : 0;
+  return Math.max(0, Math.min(1, 1 - sd / ceiling));
+};
 
 const bootstrapCI = (
   values: readonly number[],

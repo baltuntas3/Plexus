@@ -7,6 +7,7 @@ import { CreateVersionUseCase } from "../application/use-cases/prompts/create-ve
 import { ListVersionsUseCase } from "../application/use-cases/prompts/list-versions.js";
 import { GetVersionUseCase } from "../application/use-cases/prompts/get-version.js";
 import { PromoteVersionUseCase } from "../application/use-cases/prompts/promote-version.js";
+import { UpdateVersionNameUseCase } from "../application/use-cases/prompts/update-version-name.js";
 import { GenerateBraidUseCase } from "../application/use-cases/prompts/generate-braid.js";
 import { LintVersionUseCase } from "../application/use-cases/prompts/lint-version.js";
 import { UpdateBraidGraphUseCase } from "../application/use-cases/prompts/update-braid-graph.js";
@@ -23,6 +24,7 @@ export interface PromptComposition {
   listVersions: ListVersionsUseCase;
   getVersion: GetVersionUseCase;
   promoteVersion: PromoteVersionUseCase;
+  updateVersionName: UpdateVersionNameUseCase;
   generateBraid: GenerateBraidUseCase;
   lintVersion: LintVersionUseCase;
   updateBraidGraph: UpdateBraidGraphUseCase;
@@ -45,6 +47,7 @@ export const createPromptComposition = (
     listVersions: new ListVersionsUseCase(prompts, versions),
     getVersion: new GetVersionUseCase(prompts, versions),
     promoteVersion: new PromoteVersionUseCase(prompts, versions),
+    updateVersionName: new UpdateVersionNameUseCase(prompts, versions),
     generateBraid: new GenerateBraidUseCase(prompts, versions, generator, linter),
     lintVersion: new LintVersionUseCase(prompts, versions, linter),
     updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter),

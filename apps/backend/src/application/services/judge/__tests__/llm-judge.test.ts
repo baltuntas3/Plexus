@@ -96,16 +96,51 @@ describe("LLMJudge.grade", () => {
     ).rejects.toThrow(/rubric validation/);
   });
 
-  it("rejects a malformed JSON response", async () => {
+  it("rejects a malformed JSON response after a retry attempt", async () => {
+    // The judge retries once on unparseable output, so when the provider
+    // keeps returning garbage we expect the reported partial usage to cover
+    // both attempts and the eventual error to mention the missing JSON.
     const { judge } = buildJudge("not json at all");
     await expect(judge.grade({ input: "x", candidate: "y" })).rejects.toMatchObject({
       name: "JudgeExecutionError",
       message: expect.stringMatching(/no JSON object/),
       partial: {
-        usage: { inputTokens: 50, outputTokens: 30 },
+        usage: { inputTokens: 100, outputTokens: 60 },
         model: "gpt-4o-mini",
       },
     } satisfies Partial<JudgeExecutionError>);
+  });
+
+  it("recovers via retry when the first response is unparseable and the second is valid", async () => {
+    let callCount = 0;
+    const provider = new FakeAIProvider(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          text: "I cannot comply with the JSON format",
+          usage: { inputTokens: 50, outputTokens: 30 },
+          model: "gpt-4o-mini",
+        };
+      }
+      return {
+        text: JSON.stringify({
+          accuracy: 4,
+          coherence: 4,
+          instruction: 4,
+          reasoning: "retry recovered",
+        }),
+        usage: { inputTokens: 60, outputTokens: 20 },
+        model: "gpt-4o-mini",
+      };
+    });
+    const judge = new LLMJudge(new FakeAIProviderFactory(provider), {
+      judgeModel: "gpt-4o-mini",
+    });
+
+    const result = await judge.grade({ input: "x", candidate: "y" });
+    expect(callCount).toBe(2);
+    expect(result.score.rubric).toEqual({ accuracy: 4, coherence: 4, instruction: 4 });
+    expect(result.usage).toEqual({ inputTokens: 110, outputTokens: 50 });
   });
 
   it("forwards the configured judge model and a deterministic temperature", async () => {

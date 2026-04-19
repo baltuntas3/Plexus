@@ -45,8 +45,8 @@ export const createBenchmarkComposition = (
     createBenchmark: new CreateBenchmarkUseCase(benchmarks, versions, aiFactory),
     startBenchmark: new StartBenchmarkUseCase(benchmarks, queue),
     listBenchmarks: new ListBenchmarksUseCase(benchmarks),
-    getBenchmark: new GetBenchmarkUseCase(benchmarks, results),
-    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results, analyzer),
+    getBenchmark: new GetBenchmarkUseCase(benchmarks, results, versions),
+    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results, versions, analyzer),
     updateTestCases: new UpdateTestCasesUseCase(benchmarks),
     queue,
   };

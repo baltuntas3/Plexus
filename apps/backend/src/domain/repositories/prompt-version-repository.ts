@@ -5,6 +5,7 @@ export interface CreateVersionInput {
   promptId: string;
   version: string;
   classicalPrompt: string;
+  name?: string | null;
 }
 
 export interface ListVersionsQuery {
@@ -26,6 +27,9 @@ export interface IPromptVersionRepository {
   countByPrompt(promptId: string): Promise<number>;
   findCurrentByStatus(promptId: string, status: VersionStatus): Promise<PromptVersion | null>;
   updateStatus(id: string, status: VersionStatus): Promise<void>;
+  // Updates the user-visible name. Pass null to clear it (reverts callers to
+  // displaying the auto-generated `version` field).
+  updateName(id: string, name: string | null): Promise<void>;
   setBraidGraph(id: string, braidGraph: string, generatorModel: string): Promise<void>;
   updateBraidGraph(id: string, braidGraph: string): Promise<void>;
 }

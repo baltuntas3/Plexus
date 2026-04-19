@@ -22,7 +22,12 @@ const makeFactory = (text: string): IAIProviderFactory => ({
 });
 
 describe("TestCaseGenerator", () => {
-  it("requires full category coverage when count reaches the full taxonomy size", async () => {
+  it("accepts whatever category labels the model returns as long as the count and shape match", async () => {
+    // The generator used to reject runs when the model's category mix did
+    // not exactly match the advisory plan (modulo bucket assignment). That
+    // failed too often in practice — the distribution is advisory, the user
+    // can retag cases in the UI, and a whole-benchmark abort over a single
+    // stray label is a worse outcome than accepting the skew.
     const generator = new TestCaseGenerator(
       makeFactory(
         JSON.stringify({
@@ -34,8 +39,22 @@ describe("TestCaseGenerator", () => {
       ),
     );
 
+    const cases = await generator.generate("system", 7, "gpt-4o-mini", 123);
+    expect(cases).toHaveLength(7);
+    expect(cases.every((c) => c.category === "typical")).toBe(true);
+  });
+
+  it("still rejects runs where the generator returned the wrong number of cases", async () => {
+    const generator = new TestCaseGenerator(
+      makeFactory(
+        JSON.stringify({
+          testCases: [{ input: "only one", category: "typical" }],
+        }),
+      ),
+    );
+
     await expect(
-      generator.generate("system", 7, "gpt-4o-mini", 123),
-    ).rejects.toThrow(/did not match required category distribution/);
+      generator.generate("system", 5, "gpt-4o-mini", 123),
+    ).rejects.toThrow(/expected 5/);
   });
 });

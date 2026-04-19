@@ -23,6 +23,7 @@ export class CreateVersionUseCase {
       promptId: command.promptId,
       version: nextVersion,
       classicalPrompt: command.classicalPrompt,
+      name: command.name?.trim() ? command.name.trim() : null,
     });
   }
 }

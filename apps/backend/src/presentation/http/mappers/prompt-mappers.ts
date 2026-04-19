@@ -25,6 +25,7 @@ export const toPromptVersionDto = (version: PromptVersion): PromptVersionDto => 
   id: version.id,
   promptId: version.promptId,
   version: version.version,
+  name: version.name,
   classicalPrompt: version.classicalPrompt,
   braidGraph: version.braidGraph,
   generatorModel: version.generatorModel,

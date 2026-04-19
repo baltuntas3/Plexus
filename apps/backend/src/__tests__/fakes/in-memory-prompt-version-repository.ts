@@ -18,6 +18,7 @@ export class InMemoryPromptVersionRepository implements IPromptVersionRepository
       id,
       promptId: input.promptId,
       version: input.version,
+      name: input.name ?? null,
       classicalPrompt: input.classicalPrompt,
       braidGraph: null,
       generatorModel: null,
@@ -65,6 +66,12 @@ export class InMemoryPromptVersionRepository implements IPromptVersionRepository
     const version = this.versions.get(id);
     if (!version) return;
     this.versions.set(id, { ...version, status, updatedAt: new Date() });
+  }
+
+  async updateName(id: string, name: string | null): Promise<void> {
+    const version = this.versions.get(id);
+    if (!version) return;
+    this.versions.set(id, { ...version, name, updatedAt: new Date() });
   }
 
   async setBraidGraph(id: string, braidGraph: string, generatorModel: string): Promise<void> {

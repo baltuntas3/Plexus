@@ -33,11 +33,12 @@ export class LLMJudge implements IJudge {
 
   async grade(input: JudgeInput): Promise<JudgeResult> {
     const provider = this.providers.forModel(this.config.judgeModel);
+    const messages = buildJudgeMessages(input);
     let response;
     try {
       response = await provider.generate({
         model: this.config.judgeModel,
-        messages: buildJudgeMessages(input),
+        messages,
         temperature: this.config.temperature ?? 0,
       });
     } catch (err) {
@@ -50,8 +51,46 @@ export class LLMJudge implements IJudge {
       throw err;
     }
 
+    // Malformed-JSON retry: judges occasionally wrap the object in prose or
+    // markdown fences even with the explicit instruction. One additional
+    // attempt with a strict reminder recovers those rows cheaply; after that
+    // we surface the usage from both attempts so partial cost is preserved.
+    let parsed: z.infer<typeof rubricSchema>;
+    let totalInputTokens = response.usage.inputTokens;
+    let totalOutputTokens = response.usage.outputTokens;
+    let lastModel = response.model;
     try {
-      const parsed = parseRubric(response.text);
+      parsed = parseRubric(response.text);
+    } catch (firstErr) {
+      try {
+        const retry = await provider.generate({
+          model: this.config.judgeModel,
+          messages: [
+            ...messages,
+            { role: "assistant", content: response.text },
+            {
+              role: "user",
+              content:
+                "Your previous response was not valid JSON. Respond with ONLY the JSON object specified — no markdown fences, no prose.",
+            },
+          ],
+          temperature: 0,
+        });
+        totalInputTokens += retry.usage.inputTokens;
+        totalOutputTokens += retry.usage.outputTokens;
+        lastModel = retry.model;
+        parsed = parseRubric(retry.text);
+      } catch (retryErr) {
+        const cause = retryErr instanceof Error ? retryErr : firstErr;
+        const message = cause instanceof Error ? cause.message : String(cause);
+        throw new JudgeExecutionError(message, {
+          usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+          model: lastModel,
+        }, { cause });
+      }
+    }
+
+    try {
       const verbosityPenalty = computeVerbosityPenalty(input.candidate, input.reference);
       const score = JudgeScore.fromRubric(
         {
@@ -64,17 +103,14 @@ export class LLMJudge implements IJudge {
       );
       return {
         score,
-        usage: {
-          inputTokens: response.usage.inputTokens,
-          outputTokens: response.usage.outputTokens,
-        },
-        model: response.model,
+        usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+        model: lastModel,
       };
     } catch (err) {
       if (err instanceof Error) {
         throw new JudgeExecutionError(err.message, {
-          usage: response.usage,
-          model: response.model,
+          usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+          model: lastModel,
         }, { cause: err });
       }
       throw err;

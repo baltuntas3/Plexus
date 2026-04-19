@@ -208,14 +208,13 @@ describe("BenchmarkRunner.run", () => {
       version: "v3",
       classicalPrompt: "Keep answers compact.",
     });
-    const provider = new RecordingProvider((req) => ({
-      text:
+    const provider = new RecordingProvider((req) => {
+      const text =
         req.messages[1]?.content === "q1?" && req.messages[0]?.content === "Answer concisely."
           ? "x".repeat(300)
-          : "short",
-      inputTokens: 1,
-      outputTokens: 1,
-    }));
+          : "short";
+      return { text, inputTokens: 1, outputTokens: text.length };
+    });
     const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
     const runner = new BenchmarkRunner({
       benchmarks,

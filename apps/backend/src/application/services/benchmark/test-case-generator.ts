@@ -146,14 +146,15 @@ Each test case must fall into one of these categories:
 6. contradictory — A request with internal contradictions that are meaningful in this domain (not generic nonsense).
 7. stress — Maximally demanding version of a valid request for this system.
 
-Required category counts:
+Target category mix (aim for this distribution, but prefer realism — it is fine
+if one case lands in an adjacent category when the domain demands it):
 ${formatCategoryPlan(count)}
 
 Rules:
 - Messages must be realistic — something a real user of THIS system would plausibly send.
 - Do NOT use generic attacks. Adversarial and edge cases must exploit properties specific to this prompt.
 - The "input" field must be the raw user message only — no category label inside it.
-- Match the required category counts exactly.
+- Return exactly ${count} cases. Tag each one with whichever listed category best fits; do not invent new labels.
 
 Respond with a JSON object in this exact format:
 {
@@ -167,25 +168,12 @@ Use category values from this set only: typical, complex, ambiguous, adversarial
 
 Return only the JSON object, no other text.`;
 
-const validateCategoryCoverage = (
-  testCases: readonly GeneratedTestCase[],
-  count: number,
-): void => {
-  const expectedPlan = buildCategoryPlan(count);
-  const actualCounts = countByCategory(testCases);
-  const mismatches = TEST_CASE_CATEGORIES.filter(
-    (category) => actualCounts.get(category) !== expectedPlan.get(category),
-  ).map(
-    (category) =>
-      `${category}: expected ${expectedPlan.get(category) ?? 0}, got ${actualCounts.get(category) ?? 0}`,
-  );
-  if (mismatches.length > 0) {
-    throw ValidationError(
-      `Test case generator did not match required category distribution: ${mismatches.join("; ")}`,
-    );
-  }
-};
-
+// Target distribution is advisory — we surface it to the generator so the
+// model has a concrete target to aim at, but we do not fail a run when the
+// model lands a case in an adjacent category. Category labels exist so the
+// analyzer can break results down by kind, and the user can re-tag any case
+// in the UI. Rejecting the whole benchmark over a single mis-labelled case
+// was a false-positive source given how much non-determinism LLMs have here.
 const buildCategoryPlan = (count: number): Map<TestCaseCategory, number> => {
   const plan = new Map<TestCaseCategory, number>(
     TEST_CASE_CATEGORIES.map((category) => [category, 0]),
@@ -205,18 +193,6 @@ const formatCategoryPlan = (count: number): string => {
   }).join("\n");
 };
 
-const countByCategory = (
-  testCases: readonly GeneratedTestCase[],
-): Map<TestCaseCategory, number> => {
-  const counts = new Map<TestCaseCategory, number>(
-    TEST_CASE_CATEGORIES.map((category) => [category, 0]),
-  );
-  for (const testCase of testCases) {
-    counts.set(testCase.category, (counts.get(testCase.category) ?? 0) + 1);
-  }
-  return counts;
-};
-
 export class TestCaseGenerator {
   constructor(private readonly providers: IAIProviderFactory) {}
 
@@ -227,48 +203,91 @@ export class TestCaseGenerator {
     seed?: number,
   ): Promise<GeneratedTestCase[]> {
     const provider = this.providers.forModel(model);
-    const response = await provider.generate({
+    const basePrompt = buildGenerationPrompt(systemPrompt, count);
+    const baseMessages = [{ role: "user" as const, content: basePrompt }];
+
+    const firstResponse = await provider.generate({
       model,
-      messages: [
-        {
-          role: "user",
-          content: buildGenerationPrompt(systemPrompt, count),
-        },
-      ],
+      messages: baseMessages,
       temperature: 0.8,
       ...(seed !== undefined ? { seed } : {}),
     });
 
-    const match = JSON_OBJECT_REGEX.exec(response.text.trim());
-    if (!match) {
-      throw ValidationError("Test case generator returned no JSON object");
+    const firstParsed = tryParseTestCases(firstResponse.text);
+    if (firstParsed.ok) {
+      return finaliseTestCases(firstParsed.value, count);
     }
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(match[0]);
-    } catch {
-      throw ValidationError("Test case generator returned malformed JSON");
-    }
+    // Retry once with the previous assistant turn echoed back so the model
+    // sees exactly what failed and a strict correction instruction. We keep
+    // temperature at 0 here because the retry is about format compliance,
+    // not exploration.
+    const retryResponse = await provider.generate({
+      model,
+      messages: [
+        ...baseMessages,
+        { role: "assistant", content: firstResponse.text },
+        {
+          role: "user",
+          content:
+            "Your previous response could not be parsed as valid JSON. " +
+            `Respond again with ONLY the JSON object in the exact shape requested, containing exactly ${count} test cases and matching the required category counts. No markdown, no prose.`,
+        },
+      ],
+      temperature: 0,
+      ...(seed !== undefined ? { seed } : {}),
+    });
 
-    const result = responseSchema.safeParse(parsed);
-    if (!result.success) {
-      throw ValidationError("Test case generator output failed validation", {
-        issues: result.error.issues,
-      });
+    const retryParsed = tryParseTestCases(retryResponse.text);
+    if (!retryParsed.ok) {
+      throw retryParsed.error;
     }
-
-    const testCases = result.data.testCases.slice(0, count).map((tc) => ({
-      id: randomUUID(),
-      input: tc.input,
-      category: tc.category,
-    }));
-    if (testCases.length !== count) {
-      throw ValidationError(
-        `Test case generator returned ${testCases.length} cases, expected ${count}`,
-      );
-    }
-    validateCategoryCoverage(testCases, count);
-    return testCases;
+    return finaliseTestCases(retryParsed.value, count);
   }
 }
+
+type RawTestCase = z.infer<typeof responseSchema>["testCases"][number];
+
+type ParseResult =
+  | { ok: true; value: RawTestCase[] }
+  | { ok: false; error: Error };
+
+const tryParseTestCases = (text: string): ParseResult => {
+  const match = JSON_OBJECT_REGEX.exec(text.trim());
+  if (!match) {
+    return { ok: false, error: ValidationError("Test case generator returned no JSON object") };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    return { ok: false, error: ValidationError("Test case generator returned malformed JSON") };
+  }
+  const result = responseSchema.safeParse(parsed);
+  if (!result.success) {
+    return {
+      ok: false,
+      error: ValidationError("Test case generator output failed validation", {
+        issues: result.error.issues,
+      }),
+    };
+  }
+  return { ok: true, value: result.data.testCases };
+};
+
+const finaliseTestCases = (
+  raw: RawTestCase[],
+  count: number,
+): GeneratedTestCase[] => {
+  const testCases = raw.slice(0, count).map((tc) => ({
+    id: randomUUID(),
+    input: tc.input,
+    category: tc.category,
+  }));
+  if (testCases.length !== count) {
+    throw ValidationError(
+      `Test case generator returned ${testCases.length} cases, expected ${count}`,
+    );
+  }
+  return testCases;
+};

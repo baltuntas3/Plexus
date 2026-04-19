@@ -5,6 +5,7 @@ import {
   listPromptsQuerySchema,
   listVersionsQuerySchema,
   promoteVersionInputSchema,
+  updateVersionInputSchema,
 } from "../../../application/dto/prompt-dto.js";
 import { chatBraidInputSchema, generateBraidInputSchema, updateBraidInputSchema } from "../../../application/dto/braid-dto.js";
 import { UnauthorizedError, ValidationError } from "../../../domain/errors/domain-error.js";
@@ -110,6 +111,20 @@ export class PromptController {
     const version = requireParam(req, "version");
     const input = promoteVersionInputSchema.parse(req.body);
     const updated = await this.prompts.promoteVersion.execute({
+      ...input,
+      promptId: id,
+      version,
+      ownerId,
+    });
+    res.json({ version: toPromptVersionDto(updated) });
+  };
+
+  updateVersionName: RequestHandler = async (req: Request, res: Response) => {
+    const ownerId = requireUserId(req);
+    const id = requireParam(req, "id");
+    const version = requireParam(req, "version");
+    const input = updateVersionInputSchema.parse(req.body);
+    const updated = await this.prompts.updateVersionName.execute({
       ...input,
       promptId: id,
       version,

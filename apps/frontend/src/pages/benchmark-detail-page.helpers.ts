@@ -41,9 +41,6 @@ export const CATEGORY_OPTIONS = [
   })),
 ];
 
-export const buildVersionLabels = (ids: string[]): Record<string, string> =>
-  Object.fromEntries(ids.map((id, i) => [id, `v${i + 1}`]));
-
 export const buildDraftBenchmarkEdits = (
   testCases: readonly BenchmarkTestCaseDto[],
 ): DraftBenchmarkEdits => {

@@ -11,8 +11,16 @@ export type CreatePromptInputDto = z.infer<typeof createPromptInputSchema>;
 
 export const createVersionInputSchema = z.object({
   classicalPrompt: z.string().min(1).max(20_000),
+  name: z.string().trim().min(1).max(80).optional(),
 });
 export type CreateVersionInputDto = z.infer<typeof createVersionInputSchema>;
+
+// `null` clears the name; a trimmed non-empty string sets it. Undefined is
+// not accepted — the endpoint is explicitly for changing the name.
+export const updateVersionInputSchema = z.object({
+  name: z.union([z.string().trim().min(1).max(80), z.null()]),
+});
+export type UpdateVersionInputDto = z.infer<typeof updateVersionInputSchema>;
 
 export const promoteVersionInputSchema = z.object({
   targetStatus: z.enum(VERSION_STATUSES).refine((s) => s !== "draft", {

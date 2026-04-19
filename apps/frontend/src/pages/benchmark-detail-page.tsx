@@ -56,7 +56,6 @@ import {
   buildDraftBenchmarkEdits,
   buildResultsByCase,
   buildTestCaseUpdatePayload,
-  buildVersionLabels,
   CATEGORY_OPTIONS,
   createEmptyNewCase,
   type NewCaseDraft,
@@ -224,7 +223,7 @@ export const BenchmarkDetailPage = () => {
     benchmark.progress.total === 0
       ? 0
       : (benchmark.progress.completed / benchmark.progress.total) * 100;
-  const versionLabels = buildVersionLabels(benchmark.promptVersionIds);
+  const versionLabels = benchmark.versionLabels;
   const comparedVersions = benchmark.promptVersionIds
     .map((id) => versionLabels[id] ?? id.slice(-6))
     .join(" vs ");

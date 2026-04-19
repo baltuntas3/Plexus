@@ -21,6 +21,9 @@ export interface PromptVersionDto {
   id: string;
   promptId: string;
   version: string;
+  // User-friendly label for this version. Null means the user has not named
+  // it; UIs should fall back to `version` (e.g. "v1") in that case.
+  name: string | null;
   classicalPrompt: string;
   braidGraph: string | null;
   generatorModel: string | null;
@@ -39,6 +42,11 @@ export interface CreatePromptRequest {
 
 export interface CreateVersionRequest {
   classicalPrompt: string;
+  name?: string;
+}
+
+export interface UpdateVersionRequest {
+  name: string | null;
 }
 
 export interface PromoteVersionRequest {

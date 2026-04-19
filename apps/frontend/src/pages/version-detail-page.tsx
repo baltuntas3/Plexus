@@ -16,6 +16,7 @@ import {
   Stack,
   Tabs,
   Text,
+  TextInput,
   Textarea,
   Title,
 } from "@mantine/core";
@@ -28,6 +29,7 @@ import {
   createVersionAtom,
   fetchPromptDetailAtom,
   promptDetailRefreshAtom,
+  updateVersionNameAtom,
 } from "../atoms/prompts.atoms.js";
 import { createBenchmarkAtom } from "../atoms/benchmarks.atoms.js";
 import { chatBraidAtom, lintVersionAtom, modelsAtom, updateBraidAtom } from "../atoms/braid.atoms.js";
@@ -429,6 +431,7 @@ export const VersionDetailPage = () => {
   const lint = useSetAtom(lintVersionAtom);
   const updateBraid = useSetAtom(updateBraidAtom);
   const createVersion = useSetAtom(createVersionAtom);
+  const updateVersionName = useSetAtom(updateVersionNameAtom);
   const refresh = useAtomValue(promptDetailRefreshAtom);
   const [current, setCurrent] = useState<PromptVersionDto | null>(null);
   const [allVersions, setAllVersions] = useState<PromptVersionDto[]>([]);
@@ -445,6 +448,9 @@ export const VersionDetailPage = () => {
   const [savingBraid, setSavingBraid] = useState(false);
   // liveMermaid mirrors the current displayed graph (updated by chat without page reload)
   const [liveMermaid, setLiveMermaid] = useState<string | null>(null);
+  const [renamingName, setRenamingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   const runLint = useCallback(
     async (promptId: string, versionName: string): Promise<void> => {
@@ -573,11 +579,89 @@ export const VersionDetailPage = () => {
   const hasBraid = Boolean(liveMermaid ?? current.braidGraph);
   const compareVersion = allVersions.find((v) => v.version === compareTo) ?? null;
 
+  const startRenaming = () => {
+    setNameDraft(current.name ?? "");
+    setRenamingName(true);
+  };
+
+  const cancelRenaming = () => {
+    setRenamingName(false);
+    setNameDraft("");
+  };
+
+  const commitRename = async () => {
+    if (!id) return;
+    const trimmed = nameDraft.trim();
+    // Clear the name by sending null when the field is empty — the API treats
+    // that as "revert to auto-generated version label".
+    const payload = trimmed.length > 0 ? trimmed : null;
+    if ((payload ?? null) === (current.name ?? null)) {
+      cancelRenaming();
+      return;
+    }
+    setSavingName(true);
+    try {
+      const updated = await updateVersionName({
+        promptId: id,
+        version: current.version,
+        input: { name: payload },
+      });
+      setCurrent(updated);
+      setRenamingName(false);
+      notifications.show({
+        color: "green",
+        title: "Name saved",
+        message: payload ? `Version renamed to "${payload}"` : "Version name cleared",
+      });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Failed to rename";
+      notifications.show({ color: "red", title: "Error", message });
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const displayName = current.name?.trim() || current.version;
+
   return (
     <Stack>
       <Group justify="space-between">
         <Group>
-          <Title order={2}>{current.version}</Title>
+          {renamingName ? (
+            <Group gap="xs">
+              <TextInput
+                autoFocus
+                size="sm"
+                value={nameDraft}
+                placeholder="Version name (leave empty to clear)"
+                onChange={(e) => setNameDraft(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void commitRename();
+                  if (e.key === "Escape") cancelRenaming();
+                }}
+                maxLength={80}
+                style={{ minWidth: 260 }}
+              />
+              <Button size="xs" loading={savingName} onClick={commitRename}>
+                Save
+              </Button>
+              <Button size="xs" variant="subtle" onClick={cancelRenaming}>
+                Cancel
+              </Button>
+            </Group>
+          ) : (
+            <Group gap="xs">
+              <Title order={2}>{displayName}</Title>
+              {current.name && (
+                <Text c="dimmed" size="sm">
+                  ({current.version})
+                </Text>
+              )}
+              <Button size="xs" variant="subtle" onClick={startRenaming}>
+                Rename
+              </Button>
+            </Group>
+          )}
           <Badge color={statusColor[current.status]}>{current.status}</Badge>
           {(liveMermaid ?? current.braidGraph) && <Badge color="violet">BRAID</Badge>}
         </Group>
@@ -606,7 +690,10 @@ export const VersionDetailPage = () => {
                 disabled={editing}
                 data={allVersions
                   .filter((v) => v.version !== current.version)
-                  .map((v) => ({ value: v.version, label: v.version }))}
+                  .map((v) => ({
+                    value: v.version,
+                    label: v.name?.trim() ? `${v.name} (${v.version})` : v.version,
+                  }))}
                 w={200}
               />
               {!editing && (

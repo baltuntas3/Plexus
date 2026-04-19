@@ -33,6 +33,11 @@ export interface CreateBenchmarkCommand extends CreateBenchmarkDto {
   ownerId: string;
 }
 
+export interface CreateBenchmarkResult {
+  benchmark: Benchmark;
+  versionLabels: Record<string, string>;
+}
+
 export class CreateBenchmarkUseCase {
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
@@ -40,22 +45,26 @@ export class CreateBenchmarkUseCase {
     private readonly providers: IAIProviderFactory,
   ) {}
 
-  async execute(command: CreateBenchmarkCommand): Promise<Benchmark> {
+  async execute(command: CreateBenchmarkCommand): Promise<CreateBenchmarkResult> {
     const resolvedVersions = await this.loadVersions(command.promptVersionIds);
 
     for (const model of command.solverModels) {
       ModelRegistry.require(model);
     }
 
-    const judgeModels = pickJudgeModels(command.solverModels, DEFAULT_JUDGE_COUNT);
+    const judgeModels = pickJudgeModels(
+      command.solverModels,
+      command.judgeCount ?? DEFAULT_JUDGE_COUNT,
+    );
     const generatorModel = pickGeneratorModel(
       command.solverModels,
-      DEFAULT_GENERATOR_MODEL,
+      command.generatorModel ?? DEFAULT_GENERATOR_MODEL,
     );
     const analysisModel = judgeModels[0] ?? null;
     const testGenerationMode =
-      resolvedVersions.length > 1 ? "diff-seeking" : "shared-core";
-    const seed = generateSeed();
+      command.testGenerationMode ??
+      (resolvedVersions.length > 1 ? "diff-seeking" : "shared-core");
+    const seed = command.seed ?? generateSeed();
 
     const spec = buildEvaluationSpecFromVersions(
       resolvedVersions,
@@ -70,7 +79,7 @@ export class CreateBenchmarkUseCase {
       seed,
     );
 
-    return this.benchmarks.create({
+    const benchmark = await this.benchmarks.create({
       name: command.name,
       ownerId: command.ownerId,
       promptVersionIds: command.promptVersionIds,
@@ -80,7 +89,7 @@ export class CreateBenchmarkUseCase {
       testGenerationMode,
       analysisModel,
       testCount: command.testCount,
-      repetitions: DEFAULT_REPETITIONS,
+      repetitions: command.repetitions ?? DEFAULT_REPETITIONS,
       seed,
       testCases: generated.map((tc) => ({
         id: tc.id,
@@ -89,8 +98,14 @@ export class CreateBenchmarkUseCase {
         category: tc.category,
         source: "generated" as const,
       })),
-      concurrency: DEFAULT_CONCURRENCY,
+      concurrency: command.concurrency ?? DEFAULT_CONCURRENCY,
     });
+
+    const versionLabels: Record<string, string> = {};
+    resolvedVersions.forEach((v, i) => {
+      versionLabels[v.id] = v.name?.trim() || v.version || `v${i + 1}`;
+    });
+    return { benchmark, versionLabels };
   }
 
   private async loadVersions(ids: string[]) {

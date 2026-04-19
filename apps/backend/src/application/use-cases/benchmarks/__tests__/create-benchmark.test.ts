@@ -65,7 +65,7 @@ const baseCommand = (versionId: string) => ({
 describe("CreateBenchmarkUseCase", () => {
   it("creates a draft benchmark with generated test cases and derived defaults", async () => {
     const { useCase, version } = await buildScaffold();
-    const bm = await useCase.execute(baseCommand(version.id));
+    const { benchmark: bm, versionLabels } = await useCase.execute(baseCommand(version.id));
     expect(bm.status).toBe("draft");
     expect(bm.progress).toEqual({ completed: 0, total: 0 });
     expect(bm.promptVersionIds).toEqual([version.id]);
@@ -85,6 +85,9 @@ describe("CreateBenchmarkUseCase", () => {
     expect(bm.testCount).toBe(5);
     expect(bm.testCases).toHaveLength(5);
     expect(bm.testCases[0]).toMatchObject({ input: expect.any(String), expectedOutput: null });
+    // Version labels fall back to the auto-generated "v1" when the version
+    // has no user-set name yet.
+    expect(versionLabels[version.id]).toBe(version.version);
   });
 
   it("rejects unknown prompt versions", async () => {
@@ -174,7 +177,7 @@ describe("CreateBenchmarkUseCase", () => {
       makeProviders(5, (req) => seen.push(req)),
     );
 
-    const bm = await useCase.execute({
+    const { benchmark: bm } = await useCase.execute({
       ...baseCommand(v1.id),
       promptVersionIds: [v1.id, v2.id],
     });

@@ -113,7 +113,7 @@ export const PromptDetailPage = () => {
                   style={{ cursor: "pointer", textDecoration: "underline" }}
                   onClick={() => navigate(`/prompts/${prompt.id}/versions/${v.version}`)}
                 >
-                  {v.version}
+                  {v.name?.trim() ? `${v.name} (${v.version})` : v.version}
                 </Text>
               </Table.Td>
               <Table.Td>

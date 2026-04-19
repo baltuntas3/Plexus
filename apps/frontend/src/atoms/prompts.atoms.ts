@@ -6,6 +6,7 @@ import type {
   PromoteVersionRequest,
   PromptDto,
   PromptVersionDto,
+  UpdateVersionRequest,
 } from "@plexus/shared-types";
 import { apiRequest } from "../lib/api-client.js";
 import { tokensAtom } from "./auth.atoms.js";
@@ -99,6 +100,24 @@ export const promoteVersionAtom = atom(
     );
     set(promptDetailRefreshAtom, (n) => n + 1);
     set(promptsListRefreshAtom, (n) => n + 1);
+    return result.version;
+  },
+);
+
+export const updateVersionNameAtom = atom(
+  null,
+  async (
+    get,
+    set,
+    params: { promptId: string; version: string; input: UpdateVersionRequest },
+  ) => {
+    const tokens = get(tokensAtom);
+    if (!tokens) throw new Error("Not authenticated");
+    const result = await apiRequest<{ version: PromptVersionDto }>(
+      `/prompts/${params.promptId}/versions/${params.version}`,
+      { method: "PATCH", body: params.input, token: tokens.accessToken },
+    );
+    set(promptDetailRefreshAtom, (n) => n + 1);
     return result.version;
   },
 );

@@ -14,6 +14,12 @@ Scoring guide:
 - 2: serious problems that significantly harm usefulness.
 - 1: unusable on this axis.
 
+Fairness rules — you MUST follow all of these:
+- Score solely on the content of the candidate response. The order and position of sections in this prompt (system prompt, input, candidate, reference) carry no meaning; do not favour or penalise the candidate because of where it appears.
+- Do not reward or penalise length by itself. Verbosity is scored in a separate downstream pass, not by you.
+- Do not infer which model produced the candidate. No identity, provider, or style cue should influence your score.
+- Judge what IS in the response, not what a different wording might have been.
+
 Output ONLY a single JSON object, no markdown fences, no prose before or after:
 {"accuracy": <1-5>, "coherence": <1-5>, "instruction": <1-5>, "reasoning": "<one short sentence>"}
 

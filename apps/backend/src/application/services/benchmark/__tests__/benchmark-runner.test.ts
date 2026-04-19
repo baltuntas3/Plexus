@@ -118,6 +118,8 @@ const queueBenchmark = async (
     seed: overrides.seed ?? 42,
     testCases: overrides.testCases ?? TEST_CASES,
     concurrency: overrides.concurrency ?? 2,
+    cellTimeoutMs: overrides.cellTimeoutMs ?? null,
+    budgetUsd: overrides.budgetUsd ?? null,
   });
 
 describe("BenchmarkRunner.run", () => {
@@ -700,6 +702,35 @@ describe("BenchmarkRunner.run", () => {
     expect(row?.judgeVotes).toHaveLength(1);
     expect(row?.error).toContain("judge-b malformed JSON");
     expect(row?.judgeCostUsd).toBeGreaterThan(0);
+  });
+
+  it("marks remaining cells as failed when budget is exceeded", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "answer",
+      inputTokens: 10000,
+      outputTokens: 5000,
+    }));
+    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      budgetUsd: 0.0001,
+      repetitions: 3,
+      concurrency: 1,
+    });
+    await runner.run(bm.id, buildContext().ctx);
+    const rows = await results.listByBenchmark(bm.id);
+    const budgetErrors = rows.filter(
+      (r) => r.status === "failed" && r.error?.includes("Budget exceeded"),
+    );
+    expect(budgetErrors.length).toBeGreaterThan(0);
   });
 
   it("marks the benchmark failed when it has no test cases", async () => {

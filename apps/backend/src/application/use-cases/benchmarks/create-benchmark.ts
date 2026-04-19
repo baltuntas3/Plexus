@@ -99,6 +99,8 @@ export class CreateBenchmarkUseCase {
         source: "generated" as const,
       })),
       concurrency: command.concurrency ?? DEFAULT_CONCURRENCY,
+      cellTimeoutMs: command.cellTimeoutMs ?? null,
+      budgetUsd: command.budgetUsd ?? null,
     });
 
     const versionLabels: Record<string, string> = {};

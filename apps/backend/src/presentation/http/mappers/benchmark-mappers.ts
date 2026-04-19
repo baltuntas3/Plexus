@@ -23,6 +23,8 @@ export const toBenchmarkDto = (bm: Benchmark): BenchmarkDto => ({
   solverTemperature: bm.solverTemperature,
   seed: bm.seed,
   concurrency: bm.concurrency,
+  cellTimeoutMs: bm.cellTimeoutMs,
+  budgetUsd: bm.budgetUsd,
   status: bm.status,
   progress: bm.progress,
   jobId: bm.jobId,
@@ -119,6 +121,24 @@ export const toBenchmarkAnalysisDto = (
     pairedDiffCiLow: analysis.recommendationDecision.pairedDiffCiLow,
     pairedDiffCiHigh: analysis.recommendationDecision.pairedDiffCiHigh,
   },
+  pairwiseComparisons: analysis.pairwiseComparisons.map((pc) => ({
+    candidateKeyA: pc.candidateKeyA,
+    candidateKeyB: pc.candidateKeyB,
+    meanDiff: pc.meanDiff,
+    ci95Low: pc.ci95Low,
+    ci95High: pc.ci95High,
+    isSignificant: pc.isSignificant,
+    effectSize: pc.effectSize,
+    effectLabel: pc.effectLabel,
+  })),
+  varianceDecomposition: {
+    totalVariance: analysis.varianceDecomposition.totalVariance,
+    withinRunVariance: analysis.varianceDecomposition.withinRunVariance,
+    acrossTestCaseVariance: analysis.varianceDecomposition.acrossTestCaseVariance,
+  },
+  exclusionReasons: { ...analysis.exclusionReasons },
+  suggestedRepetitions: analysis.suggestedRepetitions,
+  suggestedRepetitionsRationale: analysis.suggestedRepetitionsRationale,
   commentary: analysis.commentary,
 });
 

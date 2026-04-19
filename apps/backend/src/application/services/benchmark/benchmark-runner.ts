@@ -52,7 +52,9 @@ import type { GenerateResponse } from "../ai-provider.js";
 // classicalPrompt is used. There is no separate mode field and no benchmark-
 // specific instruction prefix is injected.
 
-// specific instruction prefix is injected.
+const DEFAULT_CELL_TIMEOUT_MS = 120_000;
+const DEFAULT_BUDGET_USD = 50;
+const REFERENCE_FREE_MAX_PENALTY = 0.15;
 
 interface Cell {
   testCase: BenchmarkTestCase;
@@ -97,11 +99,23 @@ export class BenchmarkRunner {
 
       const pending = cells.filter((c) => !existingKeys.has(cellKey(c)));
       const judges = this.buildJudges(bm.judgeModels);
+      const cellTimeout = bm.cellTimeoutMs ?? DEFAULT_CELL_TIMEOUT_MS;
+      const budget = bm.budgetUsd ?? DEFAULT_BUDGET_USD;
+      let spentUsd = 0;
 
       await mapConcurrent(pending, Math.max(1, bm.concurrency), async (cell) => {
-        const row = await this.runCell(bm, cell, judges).catch((err) =>
-          buildFailedRow(bm.id, cell, err),
-        );
+        if (spentUsd >= budget) {
+          const row = buildFailedRow(bm.id, cell, new BudgetExceededError(spentUsd, budget));
+          await this.deps.results.upsert(row);
+          completed += 1;
+          await this.report(benchmarkId, ctx, completed, total);
+          return;
+        }
+        const row = await withTimeout(
+          this.runCell(bm, cell, judges),
+          cellTimeout,
+        ).catch((err) => buildFailedRow(bm.id, cell, err));
+        spentUsd += row.totalCostUsd;
         await this.deps.results.upsert(row);
         completed += 1;
         await this.report(benchmarkId, ctx, completed, total);
@@ -389,6 +403,7 @@ export class BenchmarkRunner {
       const verbosityPenalty = computeVerbosityPenaltyAgainstBaseline(
         estimateTokenCount(row.candidateOutput),
         baselineLength,
+        REFERENCE_FREE_MAX_PENALTY,
       );
       if (verbosityPenalty === row.verbosityPenalty) continue;
       await this.deps.results.updateScores({
@@ -412,6 +427,24 @@ export class BenchmarkRunner {
     return shuffled;
   }
 }
+
+class BudgetExceededError extends Error {
+  constructor(spent: number, budget: number) {
+    super(`Budget exceeded: $${spent.toFixed(4)} spent of $${budget.toFixed(2)} limit`);
+    this.name = "BudgetExceededError";
+  }
+}
+
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Cell timed out after ${ms}ms`)), ms);
+      timer.unref?.();
+    }),
+  ]);
+};
 
 const cellKey = (cell: Cell): string =>
   benchmarkResultKey(

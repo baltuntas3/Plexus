@@ -32,6 +32,8 @@ const buildDraftBenchmark = async (benchmarks: InMemoryBenchmarkRepository) =>
       },
     ],
     concurrency: 2,
+    cellTimeoutMs: null,
+    budgetUsd: null,
   });
 
 describe("UpdateTestCasesUseCase", () => {

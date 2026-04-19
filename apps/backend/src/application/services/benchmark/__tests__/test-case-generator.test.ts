@@ -44,6 +44,24 @@ describe("TestCaseGenerator", () => {
     expect(cases.every((c) => c.category === "typical")).toBe(true);
   });
 
+  it("deduplicates test cases with identical normalised inputs", async () => {
+    const generator = new TestCaseGenerator(
+      makeFactory(
+        JSON.stringify({
+          testCases: [
+            { input: "What is AI?", category: "typical" },
+            { input: "  what is ai?  ", category: "complex" },
+            { input: "How does ML work?", category: "typical" },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      generator.generate("system", 3, "gpt-4o-mini", 123),
+    ).rejects.toThrow(/2 unique cases, expected 3/);
+  });
+
   it("still rejects runs where the generator returned the wrong number of cases", async () => {
     const generator = new TestCaseGenerator(
       makeFactory(

@@ -20,6 +20,8 @@ export interface CreateBenchmarkInput {
   seed: number;
   testCases: BenchmarkTestCase[];
   concurrency: number;
+  cellTimeoutMs: number | null;
+  budgetUsd: number | null;
 }
 
 export interface ListBenchmarksQuery {

@@ -57,6 +57,8 @@ const benchmarkSchema = new Schema(
       default: [],
     },
     concurrency: { type: Number, required: true, min: 1, max: 16 },
+    cellTimeoutMs: { type: Number, default: null, min: 1000 },
+    budgetUsd: { type: Number, default: null, min: 0.01 },
     status: {
       type: String,
       enum: BENCHMARK_STATUSES,

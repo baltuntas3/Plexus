@@ -27,6 +27,8 @@ export interface BenchmarkDto {
   solverTemperature: number;
   seed: number;
   concurrency: number;
+  cellTimeoutMs: number | null;
+  budgetUsd: number | null;
   status: BenchmarkStatus;
   progress: BenchmarkProgressDto;
   jobId: string | null;
@@ -199,6 +201,23 @@ export interface RecommendationDecisionDto {
   pairedDiffCiHigh: number | null;
 }
 
+export interface PairwiseComparisonDto {
+  candidateKeyA: string;
+  candidateKeyB: string;
+  meanDiff: number;
+  ci95Low: number;
+  ci95High: number;
+  isSignificant: boolean;
+  effectSize: number;
+  effectLabel: "negligible" | "small" | "medium" | "large";
+}
+
+export interface VarianceDecompositionDto {
+  totalVariance: number;
+  withinRunVariance: number;
+  acrossTestCaseVariance: number;
+}
+
 export interface BenchmarkAnalysisDto {
   candidates: CandidateStatsDto[];
   categoryBreakdown: CategoryBreakdownRowDto[];
@@ -209,6 +228,11 @@ export interface BenchmarkAnalysisDto {
   recommendedKey: string | null;
   recommendedReasoning: string;
   recommendationDecision: RecommendationDecisionDto;
+  pairwiseComparisons: PairwiseComparisonDto[];
+  varianceDecomposition: VarianceDecompositionDto;
+  exclusionReasons: Record<string, string>;
+  suggestedRepetitions: number;
+  suggestedRepetitionsRationale: string;
   commentary: string;
 }
 

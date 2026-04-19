@@ -24,16 +24,17 @@ export const computeVerbosityPenalty = (
 export const computeVerbosityPenaltyAgainstBaseline = (
   candidateLength: number,
   baselineLength: number,
+  maxPenalty: number = MAX_PENALTY,
 ): number => {
   if (baselineLength <= 0) return 0;
-  return rampedPenalty(candidateLength / baselineLength);
+  return rampedPenalty(candidateLength / baselineLength, maxPenalty);
 };
 
-const rampedPenalty = (ratio: number): number => {
+const rampedPenalty = (ratio: number, cap: number = MAX_PENALTY): number => {
   if (ratio <= FREE_RATIO) return 0;
-  if (ratio >= CAP_RATIO) return MAX_PENALTY;
+  if (ratio >= CAP_RATIO) return cap;
   const t = (ratio - FREE_RATIO) / (CAP_RATIO - FREE_RATIO);
-  return t * MAX_PENALTY;
+  return t * cap;
 };
 
 const normaliseLength = (

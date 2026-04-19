@@ -361,6 +361,68 @@ describe("computeAnalysis", () => {
     );
   });
 
+  it("includes pairwise comparisons with significance and effect size", () => {
+    const aScores = [0.85, 0.88, 0.92, 0.95, 0.90];
+    const bScores = [0.45, 0.50, 0.55, 0.48, 0.52];
+    const analysis = computeAnalysis([
+      ...aScores.map((f, i) =>
+        row({ promptVersionId: "vA", testCaseId: `tc${i}`, finalScore: f, totalCostUsd: 0.1 }),
+      ),
+      ...bScores.map((f, i) =>
+        row({ promptVersionId: "vB", testCaseId: `tc${i}`, finalScore: f, totalCostUsd: 0.1 }),
+      ),
+    ]);
+    expect(analysis.pairwiseComparisons).toHaveLength(1);
+    const pair = analysis.pairwiseComparisons[0]!;
+    expect(pair.candidateKeyA).toContain("vA");
+    expect(pair.candidateKeyB).toContain("vB");
+    expect(pair.meanDiff).toBeGreaterThan(0);
+    expect(pair.isSignificant).toBe(true);
+    expect(pair.effectSize).toBeGreaterThan(0);
+    expect(["small", "medium", "large"]).toContain(pair.effectLabel);
+  });
+
+  it("computes variance decomposition", () => {
+    const analysis = computeAnalysis([
+      row({ promptVersionId: "vA", testCaseId: "tc1", runIndex: 0, finalScore: 0.9 }),
+      row({ promptVersionId: "vA", testCaseId: "tc1", runIndex: 1, finalScore: 0.8 }),
+      row({ promptVersionId: "vA", testCaseId: "tc2", runIndex: 0, finalScore: 0.5 }),
+      row({ promptVersionId: "vA", testCaseId: "tc2", runIndex: 1, finalScore: 0.6 }),
+    ]);
+    expect(analysis.varianceDecomposition.totalVariance).toBeGreaterThan(0);
+    expect(analysis.varianceDecomposition.withinRunVariance).toBeGreaterThanOrEqual(0);
+    expect(analysis.varianceDecomposition.acrossTestCaseVariance).toBeGreaterThan(0);
+  });
+
+  it("provides suggested repetitions based on observed variance", () => {
+    const analysis = computeAnalysis([
+      ...Array.from({ length: 10 }, (_, i) =>
+        row({ testCaseId: `tc${i}`, finalScore: 0.5 + Math.random() * 0.5 }),
+      ),
+    ]);
+    expect(analysis.suggestedRepetitions).toBeGreaterThanOrEqual(3);
+    expect(analysis.suggestedRepetitionsRationale).toContain("SD=");
+  });
+
+  it("reports exclusion reasons for unreliable candidates", () => {
+    const analysis = computeAnalysis([
+      row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.8, totalCostUsd: 0.5 }),
+      row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.82, totalCostUsd: 0.5 }),
+      row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 1, totalCostUsd: 0.1 }),
+      row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+    ]);
+    const flakyKey = candidateKey({ promptVersionId: "vFlaky", solverModel: "gpt-4o" });
+    expect(analysis.exclusionReasons[flakyKey]).toContain("Failure rate");
+  });
+
+  it("uses a gentler consistency ceiling of 0.4", () => {
+    const [stats] = aggregateResults([
+      row({ testCaseId: "a", finalScore: 0.8 }),
+      row({ testCaseId: "b", finalScore: 0.5 }),
+    ]);
+    expect(stats!.consistencyScore).toBeGreaterThan(0);
+  });
+
   it("scans the full ranking for paired non-significant candidates instead of stopping early", () => {
     const topKey = candidateKey({ promptVersionId: "vTop", solverModel: "gpt-4o" });
     const middleKey = candidateKey({ promptVersionId: "vMiddle", solverModel: "gpt-4o" });

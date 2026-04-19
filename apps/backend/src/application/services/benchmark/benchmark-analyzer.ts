@@ -32,7 +32,7 @@ import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
 import { PPD } from "../../../domain/value-objects/ppd.js";
 import type { IAIProviderFactory } from "../ai-provider.js";
 
-const BOOTSTRAP_SAMPLES = 1000;
+const BOOTSTRAP_SAMPLES = 10_000;
 const BOOTSTRAP_SEED = 0x9e3779b9;
 const SCORE_FLOOR_FRACTION = 0.8;
 // A candidate whose share of failed cells exceeds this rate is not eligible
@@ -44,7 +44,7 @@ const MAX_FAILURE_RATE_FOR_RECOMMENDATION = 0.1;
 // benchmark runs (scores alternating near 0 and 1), so anything above it
 // clamps to 0% consistency. Exposed as a default so stricter task families
 // (e.g. deterministic math) can dial it down via AnalyzerOptions.
-const DEFAULT_CONSISTENCY_STDDEV_CEILING = 0.25;
+const DEFAULT_CONSISTENCY_STDDEV_CEILING = 0.4;
 
 // Composite ranking weights. Quality (geometric mean across rubric + consistency)
 // counts 80%, efficiency (latency + cost) 20% — split 10/10. The geometric-mean
@@ -108,6 +108,23 @@ export interface CategoryBreakdownRow {
   failureRate: number;
 }
 
+export interface PairwiseComparison {
+  candidateKeyA: string;
+  candidateKeyB: string;
+  meanDiff: number;
+  ci95Low: number;
+  ci95High: number;
+  isSignificant: boolean;
+  effectSize: number;
+  effectLabel: "negligible" | "small" | "medium" | "large";
+}
+
+export interface VarianceDecomposition {
+  totalVariance: number;
+  withinRunVariance: number;
+  acrossTestCaseVariance: number;
+}
+
 export interface BenchmarkAnalysis {
   candidates: CandidateStats[];
   categoryBreakdown: CategoryBreakdownRow[];
@@ -118,6 +135,11 @@ export interface BenchmarkAnalysis {
   recommendedKey: string | null;
   recommendedReasoning: string;
   recommendationDecision: RecommendationDecision;
+  pairwiseComparisons: PairwiseComparison[];
+  varianceDecomposition: VarianceDecomposition;
+  exclusionReasons: Record<string, string>;
+  suggestedRepetitions: number;
+  suggestedRepetitionsRationale: string;
   commentary: string;
 }
 
@@ -347,7 +369,8 @@ const normaliseDescending = (value: number, range: NumericRange): number => {
 
 const normaliseRubricMean = (value: number): number => {
   const bounded = Math.max(0, Math.min(5, value));
-  return Math.max(0.1, 0.1 + ((bounded - 1) / 4) * 0.9);
+  if (bounded < 1) return Math.max(0.01, bounded * 0.1);
+  return 0.1 + ((bounded - 1) / 4) * 0.9;
 };
 
 const isReliableForComparativeViews = (candidate: CandidateStats): boolean =>
@@ -462,6 +485,149 @@ const aggregateCategoryBreakdown = (
     });
 };
 
+const effectSizeLabel = (d: number): PairwiseComparison["effectLabel"] => {
+  const abs = Math.abs(d);
+  if (abs < 0.2) return "negligible";
+  if (abs < 0.5) return "small";
+  if (abs < 0.8) return "medium";
+  return "large";
+};
+
+const computePairwiseComparisons = (
+  candidates: readonly CandidateStats[],
+  results: readonly BenchmarkResult[],
+): PairwiseComparison[] => {
+  const reliable = candidates.filter(isReliableForComparativeViews);
+  if (reliable.length < 2) return [];
+
+  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
+  for (const row of results) {
+    const key = candidateKey(row);
+    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
+  }
+
+  const comparisons: PairwiseComparison[] = [];
+  for (let i = 0; i < reliable.length; i += 1) {
+    for (let j = i + 1; j < reliable.length; j += 1) {
+      const a = reliable[i]!;
+      const b = reliable[j]!;
+      const aRows = rowsByCandidate.get(a.candidateKey) ?? [];
+      const bRows = rowsByCandidate.get(b.candidateKey) ?? [];
+      const ci = pairedDifferenceCI(aRows, bRows);
+
+      const pooledSd = Math.sqrt(
+        (stddev(aRows.map((r) => r.status === "failed" ? 0 : r.finalScore)) ** 2 +
+          stddev(bRows.map((r) => r.status === "failed" ? 0 : r.finalScore)) ** 2) /
+          2,
+      );
+      const diff = a.meanFinalScore - b.meanFinalScore;
+      const d = pooledSd > 0 ? diff / pooledSd : 0;
+
+      comparisons.push({
+        candidateKeyA: a.candidateKey,
+        candidateKeyB: b.candidateKey,
+        meanDiff: diff,
+        ci95Low: ci?.low ?? diff,
+        ci95High: ci?.high ?? diff,
+        isSignificant: ci ? ci.low > 0 || ci.high < 0 : false,
+        effectSize: d,
+        effectLabel: effectSizeLabel(d),
+      });
+    }
+  }
+  return comparisons;
+};
+
+const computeVarianceDecomposition = (
+  results: readonly BenchmarkResult[],
+): VarianceDecomposition => {
+  const completedScores = results
+    .filter((r) => r.status === "completed")
+    .map((r) => r.finalScore);
+  const totalVar = variance(completedScores);
+
+  const byConfig = new Map<string, Map<string, number[]>>();
+  for (const r of results) {
+    if (r.status !== "completed") continue;
+    const configKey = candidateKey(r);
+    if (!byConfig.has(configKey)) byConfig.set(configKey, new Map());
+    const testCaseBucket = byConfig.get(configKey)!;
+    const bucket = testCaseBucket.get(r.testCaseId) ?? [];
+    bucket.push(r.finalScore);
+    testCaseBucket.set(r.testCaseId, bucket);
+  }
+
+  const withinRunVars: number[] = [];
+  const configMeans: number[] = [];
+  for (const testCaseBuckets of byConfig.values()) {
+    const allScoresForConfig: number[] = [];
+    for (const scores of testCaseBuckets.values()) {
+      if (scores.length > 1) withinRunVars.push(variance(scores));
+      allScoresForConfig.push(...scores);
+    }
+    const testCaseMeans = [...testCaseBuckets.values()].map((s) => mean(s));
+    if (testCaseMeans.length > 1) {
+      configMeans.push(variance(testCaseMeans));
+    }
+  }
+
+  return {
+    totalVariance: totalVar,
+    withinRunVariance: withinRunVars.length > 0 ? mean(withinRunVars) : 0,
+    acrossTestCaseVariance: configMeans.length > 0 ? mean(configMeans) : 0,
+  };
+};
+
+const Z_ALPHA_HALF = 1.96;
+const Z_BETA_80 = 0.84;
+const MIN_DETECTABLE_DIFF = 0.1;
+
+const computeSuggestedRepetitions = (
+  candidates: readonly CandidateStats[],
+): { count: number; rationale: string } => {
+  const reliable = candidates.filter((c) => c.completedCount > 0);
+  if (reliable.length === 0) {
+    return { count: 3, rationale: "No completed results to estimate variance." };
+  }
+  const pooledStderr = mean(reliable.map((c) => c.stderr));
+  const sampleSizes = reliable.map((c) => c.completedCount + c.failedCount);
+  const avgN = mean(sampleSizes);
+  const estimatedSd = pooledStderr * Math.sqrt(avgN);
+  if (estimatedSd <= 0) {
+    return { count: 3, rationale: "Scores are perfectly consistent; minimum repetitions suffice." };
+  }
+  const required = Math.ceil(
+    (2 * ((Z_ALPHA_HALF + Z_BETA_80) ** 2) * estimatedSd ** 2) /
+      MIN_DETECTABLE_DIFF ** 2,
+  );
+  const clamped = Math.max(3, Math.min(50, required));
+  return {
+    count: clamped,
+    rationale:
+      `Pooled SD=${estimatedSd.toFixed(3)}. To detect a ${MIN_DETECTABLE_DIFF} point ` +
+      `difference at 95% confidence / 80% power: ~${clamped} repetitions per cell.`,
+  };
+};
+
+const computeExclusionReasons = (
+  candidates: readonly CandidateStats[],
+  ranking: readonly CompositeRanking[],
+): Record<string, string> => {
+  const rankedKeys = new Set(ranking.map((r) => r.candidateKey));
+  const reasons: Record<string, string> = {};
+  for (const c of candidates) {
+    if (rankedKeys.has(c.candidateKey)) continue;
+    if (c.completedCount === 0) {
+      reasons[c.candidateKey] = "No completed results — all runs failed.";
+    } else if (c.failureRate > MAX_FAILURE_RATE_FOR_RECOMMENDATION) {
+      reasons[c.candidateKey] =
+        `Failure rate ${(c.failureRate * 100).toFixed(1)}% exceeds ` +
+        `${(MAX_FAILURE_RATE_FOR_RECOMMENDATION * 100).toFixed(0)}% reliability threshold.`;
+    }
+  }
+  return reasons;
+};
+
 export const computeAnalysis = (
   results: readonly BenchmarkResult[],
   options: AnalyzerOptions = {},
@@ -495,6 +661,11 @@ export const computeAnalysis = (
         pairedDiffCiLow: null,
         pairedDiffCiHigh: null,
       },
+      pairwiseComparisons: [],
+      varianceDecomposition: { totalVariance: 0, withinRunVariance: 0, acrossTestCaseVariance: 0 },
+      exclusionReasons: computeExclusionReasons(candidates, []),
+      suggestedRepetitions: 3,
+      suggestedRepetitionsRationale: "No completed results to estimate variance.",
     };
   }
 
@@ -537,6 +708,11 @@ export const computeAnalysis = (
       ? computePPD(candidates, baseline)
       : [];
 
+  const pairwiseComparisons = computePairwiseComparisons(candidates, results);
+  const varianceDecomposition = computeVarianceDecomposition(results);
+  const exclusionReasons = computeExclusionReasons(candidates, ranking);
+  const power = computeSuggestedRepetitions(candidates);
+
   return {
     candidates,
     categoryBreakdown,
@@ -565,6 +741,11 @@ export const computeAnalysis = (
           pairedDiffCiLow: null,
           pairedDiffCiHigh: null,
         },
+    pairwiseComparisons,
+    varianceDecomposition,
+    exclusionReasons,
+    suggestedRepetitions: power.count,
+    suggestedRepetitionsRationale: power.rationale,
   };
 };
 
@@ -692,11 +873,16 @@ export class BenchmarkAnalyzer {
     if (core.candidates.every((c) => c.completedCount === 0)) {
       return { ...core, commentary: "No completed results to analyze." };
     }
-    const commentary = await this.generateCommentary(
-      core.candidates,
-      versionLabels,
-      commentaryModel,
-    );
+    let commentary: string;
+    try {
+      commentary = await this.generateCommentary(
+        core.candidates,
+        versionLabels,
+        commentaryModel,
+      );
+    } catch {
+      commentary = "Commentary generation failed. Deterministic analysis above remains valid.";
+    }
     return { ...core, commentary };
   }
 
@@ -758,12 +944,13 @@ Return only the paragraph text, no JSON, no headings.`;
 const mean = (values: readonly number[]): number =>
   values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
-const stddev = (values: readonly number[]): number => {
+const variance = (values: readonly number[]): number => {
   if (values.length < 2) return 0;
   const m = mean(values);
-  const variance = values.reduce((s, v) => s + (v - m) ** 2, 0) / values.length;
-  return Math.sqrt(variance);
+  return values.reduce((s, v) => s + (v - m) ** 2, 0) / values.length;
 };
+
+const stddev = (values: readonly number[]): number => Math.sqrt(variance(values));
 
 const consistencyFromStddev = (
   sd: number,

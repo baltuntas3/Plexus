@@ -71,6 +71,8 @@ export interface Benchmark {
   solverTemperature: number;
   seed: number;
   concurrency: number;
+  cellTimeoutMs: number | null;
+  budgetUsd: number | null;
   status: BenchmarkStatus;
   progress: BenchmarkProgress;
   testCases: BenchmarkTestCase[];

@@ -275,18 +275,30 @@ const tryParseTestCases = (text: string): ParseResult => {
   return { ok: true, value: result.data.testCases };
 };
 
+const normaliseForDedup = (input: string): string =>
+  input.trim().toLowerCase().replace(/\s+/g, " ");
+
 const finaliseTestCases = (
   raw: RawTestCase[],
   count: number,
 ): GeneratedTestCase[] => {
-  const testCases = raw.slice(0, count).map((tc) => ({
+  const seen = new Set<string>();
+  const unique: RawTestCase[] = [];
+  for (const tc of raw) {
+    const key = normaliseForDedup(tc.input);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(tc);
+  }
+
+  const testCases = unique.slice(0, count).map((tc) => ({
     id: randomUUID(),
     input: tc.input,
     category: tc.category,
   }));
   if (testCases.length !== count) {
     throw ValidationError(
-      `Test case generator returned ${testCases.length} cases, expected ${count}`,
+      `Test case generator returned ${testCases.length} unique cases, expected ${count}`,
     );
   }
   return testCases;

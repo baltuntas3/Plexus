@@ -30,6 +30,8 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
       seed: input.seed,
       testCases: input.testCases,
       concurrency: input.concurrency,
+      cellTimeoutMs: input.cellTimeoutMs,
+      budgetUsd: input.budgetUsd,
       status: "draft",
       progress: { completed: 0, total: 0 },
       jobId: null,

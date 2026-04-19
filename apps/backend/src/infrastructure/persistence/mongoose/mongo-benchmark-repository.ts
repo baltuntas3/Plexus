@@ -39,6 +39,8 @@ type BenchmarkDoc = HydratedDocument<{
     source: TestCaseSource;
   }>;
   concurrency: number;
+  cellTimeoutMs: number | null;
+  budgetUsd: number | null;
   status: BenchmarkStatus;
   progress: BenchmarkProgress;
   jobId: string | null;
@@ -70,6 +72,8 @@ const toDomain = (doc: BenchmarkDoc): Benchmark => ({
     source: tc.source ?? "generated",
   })),
   concurrency: doc.concurrency,
+  cellTimeoutMs: doc.cellTimeoutMs ?? null,
+  budgetUsd: doc.budgetUsd ?? null,
   status: doc.status,
   progress: { completed: doc.progress.completed, total: doc.progress.total },
   jobId: doc.jobId,
@@ -96,6 +100,8 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
       seed: input.seed,
       testCases: input.testCases,
       concurrency: input.concurrency,
+      cellTimeoutMs: input.cellTimeoutMs,
+      budgetUsd: input.budgetUsd,
       status: "draft",
       progress: { completed: 0, total: 0 },
     });

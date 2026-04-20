@@ -21,7 +21,6 @@ import type { JobContext } from "../job-queue.js";
 import { calculateCost } from "../model-registry.js";
 import { LLMJudge } from "../judge/llm-judge.js";
 import { JudgeExecutionError, type IJudge } from "../judge/judge.js";
-import { computeVerbosityPenaltyAgainstBaseline } from "../judge/verbosity-penalty.js";
 import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 import type { GenerateResponse } from "../ai-provider.js";
 
@@ -54,8 +53,6 @@ import type { GenerateResponse } from "../ai-provider.js";
 
 const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 const DEFAULT_BUDGET_USD = 50;
-const REFERENCE_FREE_MAX_PENALTY = 0.15;
-
 interface Cell {
   testCase: BenchmarkTestCase;
   version: PromptVersion;
@@ -69,7 +66,7 @@ export interface BenchmarkRunnerDeps {
   versions: IPromptVersionRepository;
   providers: IAIProviderFactory;
   // Seam for tests — production path instantiates LLMJudge per judge model.
-  judgeFactory?: (model: string) => IJudge;
+  judgeFactory?: (model: string, taskType: Benchmark["taskType"]) => IJudge;
 }
 
 export class BenchmarkRunner {
@@ -88,7 +85,9 @@ export class BenchmarkRunner {
 
     try {
       const cells = this.shuffleCells(await this.buildMatrix(bm), bm.seed);
+      const estimatedCellCostUsd = estimateCellCostUsd(bm, cells.length);
       const existingKeys = await this.deps.results.findExistingKeys(benchmarkId);
+      const existingRows = await this.deps.results.listByBenchmark(benchmarkId);
       const total = cells.length;
       let completed = 0;
       for (const cell of cells) {
@@ -98,30 +97,50 @@ export class BenchmarkRunner {
       await this.report(benchmarkId, ctx, completed, total);
 
       const pending = cells.filter((c) => !existingKeys.has(cellKey(c)));
-      const judges = this.buildJudges(bm.judgeModels);
+      const judges = this.buildJudges(bm.judgeModels, bm.taskType);
       const cellTimeout = bm.cellTimeoutMs ?? DEFAULT_CELL_TIMEOUT_MS;
       const budget = bm.budgetUsd ?? DEFAULT_BUDGET_USD;
-      let spentUsd = 0;
+      let spentUsd = existingRows.reduce((sum, row) => sum + row.totalCostUsd, 0);
+      let reservedUsd = 0;
+      let observedCellCosts = 0;
+      let observedCellCount = 0;
+      for (const row of existingRows) {
+        observedCellCosts += row.totalCostUsd;
+        observedCellCount += 1;
+      }
+
+      const reservePerCellUsd = (): number => {
+        if (observedCellCount > 0) {
+          return observedCellCosts / observedCellCount;
+        }
+        return estimatedCellCostUsd;
+      };
 
       await mapConcurrent(pending, Math.max(1, bm.concurrency), async (cell) => {
-        if (spentUsd >= budget) {
+        const reservedForCell = reservePerCellUsd();
+        if (spentUsd + reservedUsd + reservedForCell > budget) {
           const row = buildFailedRow(bm.id, cell, new BudgetExceededError(spentUsd, budget));
           await this.deps.results.upsert(row);
           completed += 1;
           await this.report(benchmarkId, ctx, completed, total);
           return;
         }
-        const row = await withTimeout(
-          this.runCell(bm, cell, judges),
-          cellTimeout,
-        ).catch((err) => buildFailedRow(bm.id, cell, err));
-        spentUsd += row.totalCostUsd;
-        await this.deps.results.upsert(row);
-        completed += 1;
-        await this.report(benchmarkId, ctx, completed, total);
+        reservedUsd += reservedForCell;
+        try {
+          const row = await withTimeout(
+            this.runCell(bm, cell, judges),
+            cellTimeout,
+          ).catch((err) => buildFailedRow(bm.id, cell, err));
+          spentUsd += row.totalCostUsd;
+          observedCellCosts += row.totalCostUsd;
+          observedCellCount += 1;
+          await this.deps.results.upsert(row);
+          completed += 1;
+          await this.report(benchmarkId, ctx, completed, total);
+        } finally {
+          reservedUsd -= reservedForCell;
+        }
       });
-
-      await this.applyReferenceFreeVerbosityPenalty(benchmarkId, bm);
 
       await this.deps.benchmarks.updateStatus(benchmarkId, {
         status: "completed",
@@ -188,12 +207,15 @@ export class BenchmarkRunner {
     return versions;
   }
 
-  private buildJudges(models: readonly string[]): Array<{ model: string; judge: IJudge }> {
+  private buildJudges(
+    models: readonly string[],
+    taskType: Benchmark["taskType"],
+  ): Array<{ model: string; judge: IJudge }> {
     return models.map((model) => ({
       model,
       judge: this.deps.judgeFactory
-        ? this.deps.judgeFactory(model)
-        : new LLMJudge(this.deps.providers, { judgeModel: model }),
+        ? this.deps.judgeFactory(model, taskType)
+        : new LLMJudge(this.deps.providers, { judgeModel: model, taskType }),
     }));
   }
 
@@ -346,6 +368,8 @@ export class BenchmarkRunner {
       rawScore: score.rawScore,
       verbosityPenalty: meanVerbosityPenalty,
       finalScore: score.finalScore,
+      exactMatch: null,
+      fuzzyMatchScore: null,
       candidateInputTokens: candidate.usage.inputTokens,
       candidateOutputTokens: candidate.usage.outputTokens,
       candidateCostUsd: candidateCost.totalUsd,
@@ -376,42 +400,6 @@ export class BenchmarkRunner {
   ): Promise<void> {
     await this.deps.benchmarks.updateProgress(benchmarkId, { completed, total });
     await ctx.reportProgress({ completed, total });
-  }
-
-  private async applyReferenceFreeVerbosityPenalty(
-    benchmarkId: string,
-    bm: Benchmark,
-  ): Promise<void> {
-    const rows = await this.deps.results.listByBenchmark(benchmarkId);
-    const expectedByTestCaseId = new Map(
-      bm.testCases.map((testCase) => [testCase.id, testCase.expectedOutput]),
-    );
-    const lengthsByTestCaseId = new Map<string, number[]>();
-
-    for (const row of rows) {
-      if (row.status !== "completed") continue;
-      if (expectedByTestCaseId.get(row.testCaseId)) continue;
-      const bucket = lengthsByTestCaseId.get(row.testCaseId) ?? [];
-      bucket.push(estimateTokenCount(row.candidateOutput));
-      lengthsByTestCaseId.set(row.testCaseId, bucket);
-    }
-
-    for (const row of rows) {
-      if (row.status !== "completed") continue;
-      if (expectedByTestCaseId.get(row.testCaseId)) continue;
-      const baselineLength = median(lengthsByTestCaseId.get(row.testCaseId) ?? []);
-      const verbosityPenalty = computeVerbosityPenaltyAgainstBaseline(
-        estimateTokenCount(row.candidateOutput),
-        baselineLength,
-        REFERENCE_FREE_MAX_PENALTY,
-      );
-      if (verbosityPenalty === row.verbosityPenalty) continue;
-      await this.deps.results.updateScores({
-        id: row.id,
-        verbosityPenalty,
-        finalScore: row.rawScore * (1 - verbosityPenalty),
-      });
-    }
   }
 
   private shuffleCells(cells: readonly Cell[], seed: number): Cell[] {
@@ -483,6 +471,8 @@ const buildFailedRow = (
     rawScore: 0,
     verbosityPenalty: 0,
     finalScore: 0,
+    exactMatch: null,
+    fuzzyMatchScore: null,
     candidateInputTokens: partial.candidate?.usage.inputTokens ?? 0,
     candidateOutputTokens: partial.candidate?.usage.outputTokens ?? 0,
     candidateCostUsd: partial.candidateCostUsd ?? 0,
@@ -514,17 +504,9 @@ const buildPartialJudgeUsage = (
 const mean = (values: readonly number[]): number =>
   values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
-const median = (values: readonly number[]): number => {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[middle] as number;
-  return ((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2;
-};
-
-const estimateTokenCount = (text: string): number => {
-  const matches = text.match(/[\p{L}\p{N}]+(?:['_-][\p{L}\p{N}]+)*|[^\s]/gu);
-  return matches?.length ?? 0;
+const estimateCellCostUsd = (bm: Benchmark, totalCells: number): number => {
+  if (!bm.costForecast || totalCells <= 0) return 0;
+  return bm.costForecast.estimatedTotalCostUsd / totalCells;
 };
 
 const nextShuffleState = (state: number): number => {

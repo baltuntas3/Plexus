@@ -11,6 +11,9 @@ const FREE_RATIO = 2;
 const CAP_RATIO = 4;
 const MAX_PENALTY = 0.5;
 
+const BREVITY_FREE_RATIO = 0.5;
+const BREVITY_CAP_RATIO = 0.25;
+
 export const computeVerbosityPenalty = (
   candidate: string,
   reference: string | undefined,
@@ -18,7 +21,10 @@ export const computeVerbosityPenalty = (
   const candidateLength = normaliseLength(candidate);
   const referenceLength = normaliseLength(reference);
   if (referenceLength <= 0) return 0;
-  return rampedPenalty(candidateLength / referenceLength);
+  return clampPenalty(
+    rampedPenalty(candidateLength / referenceLength) +
+      computeBrevityPenaltyAgainstBaseline(candidateLength, referenceLength),
+  );
 };
 
 export const computeVerbosityPenaltyAgainstBaseline = (
@@ -36,6 +42,24 @@ const rampedPenalty = (ratio: number, cap: number = MAX_PENALTY): number => {
   const t = (ratio - FREE_RATIO) / (CAP_RATIO - FREE_RATIO);
   return t * cap;
 };
+
+export const computeBrevityPenaltyAgainstBaseline = (
+  candidateLength: number,
+  baselineLength: number,
+  maxPenalty: number = MAX_PENALTY,
+): number => {
+  if (baselineLength <= 0) return 0;
+  const ratio = candidateLength / baselineLength;
+  if (ratio >= BREVITY_FREE_RATIO) return 0;
+  if (ratio <= BREVITY_CAP_RATIO) return maxPenalty;
+  const t = (BREVITY_FREE_RATIO - ratio) / (BREVITY_FREE_RATIO - BREVITY_CAP_RATIO);
+  return t * maxPenalty;
+};
+
+export const combineLengthPenalties = (...penalties: number[]): number =>
+  clampPenalty(penalties.reduce((sum, penalty) => sum + penalty, 0));
+
+const clampPenalty = (value: number): number => Math.max(0, Math.min(1, value));
 
 const normaliseLength = (
   text: string | undefined,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { TaskType } from "@plexus/shared-types";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { AIProviderError, type IAIProviderFactory } from "../ai-provider.js";
@@ -14,6 +15,7 @@ import { computeVerbosityPenalty } from "./verbosity-penalty.js";
 export interface LLMJudgeConfig {
   judgeModel: string;
   temperature?: number;
+  taskType?: TaskType;
 }
 
 const rubricSchema = z.object({
@@ -23,7 +25,7 @@ const rubricSchema = z.object({
   reasoning: z.string().min(1),
 });
 
-const JSON_OBJECT_REGEX = /\{[\s\S]*\}/;
+const JSON_OBJECT_REGEX = /\{[\s\S]*?\}/;
 
 export class LLMJudge implements IJudge {
   constructor(
@@ -33,7 +35,7 @@ export class LLMJudge implements IJudge {
 
   async grade(input: JudgeInput): Promise<JudgeResult> {
     const provider = this.providers.forModel(this.config.judgeModel);
-    const messages = buildJudgeMessages(input);
+    const messages = buildJudgeMessages(input, this.config.taskType);
     let response;
     try {
       response = await provider.generate({

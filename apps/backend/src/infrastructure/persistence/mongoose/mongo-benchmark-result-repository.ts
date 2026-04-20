@@ -28,6 +28,8 @@ type BenchmarkResultDoc = HydratedDocument<{
   rawScore: number;
   verbosityPenalty: number;
   finalScore: number;
+  exactMatch: boolean | null;
+  fuzzyMatchScore: number | null;
   candidateInputTokens: number;
   candidateOutputTokens: number;
   candidateCostUsd: number;
@@ -57,6 +59,8 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   rawScore: doc.rawScore,
   verbosityPenalty: doc.verbosityPenalty,
   finalScore: doc.finalScore,
+  exactMatch: doc.exactMatch ?? null,
+  fuzzyMatchScore: doc.fuzzyMatchScore ?? null,
   candidateInputTokens: doc.candidateInputTokens,
   candidateOutputTokens: doc.candidateOutputTokens,
   candidateCostUsd: doc.candidateCostUsd,

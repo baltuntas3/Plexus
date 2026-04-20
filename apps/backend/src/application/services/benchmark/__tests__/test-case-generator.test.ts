@@ -12,7 +12,7 @@ class StubProvider implements IAIProvider {
     return {
       text: this.text,
       usage: { inputTokens: 1, outputTokens: 1 },
-      model: "gpt-4o-mini",
+      model: "openai/gpt-oss-20b",
     };
   }
 }
@@ -22,12 +22,7 @@ const makeFactory = (text: string): IAIProviderFactory => ({
 });
 
 describe("TestCaseGenerator", () => {
-  it("accepts whatever category labels the model returns as long as the count and shape match", async () => {
-    // The generator used to reject runs when the model's category mix did
-    // not exactly match the advisory plan (modulo bucket assignment). That
-    // failed too often in practice — the distribution is advisory, the user
-    // can retag cases in the UI, and a whole-benchmark abort over a single
-    // stray label is a worse outcome than accepting the skew.
+  it("rejects runs that miss required category coverage", async () => {
     const generator = new TestCaseGenerator(
       makeFactory(
         JSON.stringify({
@@ -39,9 +34,9 @@ describe("TestCaseGenerator", () => {
       ),
     );
 
-    const cases = await generator.generate("system", 7, "gpt-4o-mini", 123);
-    expect(cases).toHaveLength(7);
-    expect(cases.every((c) => c.category === "typical")).toBe(true);
+    await expect(
+      generator.generate("system", 7, "openai/gpt-oss-20b", 123),
+    ).rejects.toThrow(/category coverage/);
   });
 
   it("deduplicates test cases with identical normalised inputs", async () => {
@@ -58,7 +53,7 @@ describe("TestCaseGenerator", () => {
     );
 
     await expect(
-      generator.generate("system", 3, "gpt-4o-mini", 123),
+      generator.generate("system", 3, "openai/gpt-oss-20b", 123),
     ).rejects.toThrow(/2 unique cases, expected 3/);
   });
 
@@ -72,7 +67,7 @@ describe("TestCaseGenerator", () => {
     );
 
     await expect(
-      generator.generate("system", 5, "gpt-4o-mini", 123),
+      generator.generate("system", 5, "openai/gpt-oss-20b", 123),
     ).rejects.toThrow(/expected 5/);
   });
 });

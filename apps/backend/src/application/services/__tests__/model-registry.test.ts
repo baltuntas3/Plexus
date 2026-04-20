@@ -10,29 +10,23 @@ describe("ModelRegistry", () => {
     expect(() => ModelRegistry.require("nonexistent-model")).toThrow(DomainError);
   });
 
-  it("byProvider filters models", () => {
-    const openai = ModelRegistry.byProvider("openai");
-    expect(openai.length).toBeGreaterThan(0);
-    expect(openai.every((m) => m.provider === "openai")).toBe(true);
-
-    const anthropic = ModelRegistry.byProvider("anthropic");
-    expect(anthropic.every((m) => m.provider === "anthropic")).toBe(true);
+  it("byProvider filters groq models", () => {
+    const groq = ModelRegistry.byProvider("groq");
+    expect(groq.length).toBe(3);
+    expect(groq.every((m) => m.provider === "groq")).toBe(true);
   });
 
-  it("list returns all models across providers", () => {
+  it("list returns all 3 groq models", () => {
     const all = ModelRegistry.list();
-    const sum =
-      ModelRegistry.byProvider("openai").length +
-      ModelRegistry.byProvider("anthropic").length +
-      ModelRegistry.byProvider("groq").length;
-    expect(all.length).toBe(sum);
+    expect(all.length).toBe(3);
+    expect(all.every((m) => m.provider === "groq")).toBe(true);
   });
 });
 
 describe("calculateCost", () => {
   it("uses pricing from the registry entry", () => {
-    const info = ModelRegistry.require("gpt-4o");
-    const cost = calculateCost("gpt-4o", 1_000_000, 0);
+    const info = ModelRegistry.require("llama-3.3-70b-versatile");
+    const cost = calculateCost("llama-3.3-70b-versatile", 1_000_000, 0);
     expect(cost.totalUsd).toBeCloseTo(info.inputPricePerMillion);
   });
 

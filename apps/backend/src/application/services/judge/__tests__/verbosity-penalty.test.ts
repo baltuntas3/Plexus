@@ -25,6 +25,12 @@ describe("computeVerbosityPenalty", () => {
     // 3x → halfway → 0.25
     expect(computeVerbosityPenalty("a ".repeat(300), ref)).toBeCloseTo(0.25, 6);
   });
+
+  it("penalizes overly short answers against the same reference baseline", () => {
+    const ref = "a ".repeat(100);
+    expect(computeVerbosityPenalty("a ".repeat(60), ref)).toBe(0);
+    expect(computeVerbosityPenalty("a ".repeat(25), ref)).toBe(0.5);
+  });
 });
 
 describe("computeVerbosityPenaltyAgainstBaseline", () => {

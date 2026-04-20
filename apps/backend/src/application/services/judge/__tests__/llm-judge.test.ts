@@ -9,11 +9,11 @@ const buildJudge = (responseText: string) => {
   const provider = new FakeAIProvider(() => ({
     text: responseText,
     usage: { inputTokens: 50, outputTokens: 30 },
-    model: "gpt-4o-mini",
+    model: "openai/gpt-oss-20b",
   }));
   const factory = new FakeAIProviderFactory(provider);
   return {
-    judge: new LLMJudge(factory, { judgeModel: "gpt-4o-mini" }),
+    judge: new LLMJudge(factory, { judgeModel: "openai/gpt-oss-20b" }),
     provider,
   };
 };
@@ -42,7 +42,7 @@ describe("LLMJudge.grade", () => {
     expect(score.verbosityPenalty).toBe(0);
     expect(score.finalScore).toBeCloseTo(0.75, 6);
     expect(result.usage).toEqual({ inputTokens: 50, outputTokens: 30 });
-    expect(result.model).toBe("gpt-4o-mini");
+    expect(result.model).toBe("openai/gpt-oss-20b");
   });
 
   it("applies verbosity penalty when the candidate is much longer than the reference", async () => {
@@ -64,6 +64,27 @@ describe("LLMJudge.grade", () => {
     expect(score.rawScore).toBe(1);
     expect(score.verbosityPenalty).toBe(0.5);
     expect(score.finalScore).toBe(0.5);
+  });
+
+  it("applies brevity penalty when the candidate is much shorter than the reference", async () => {
+    const { judge } = buildJudge(
+      JSON.stringify({
+        accuracy: 5,
+        coherence: 5,
+        instruction: 5,
+        reasoning: "Too terse.",
+      }),
+    );
+
+    const { score } = await judge.grade({
+      input: "Summarize the policy.",
+      candidate: "Approved.",
+      reference: "Approved after full policy review and documented mitigation steps.",
+    });
+
+    expect(score.rawScore).toBe(1);
+    expect(score.verbosityPenalty).toBeGreaterThan(0);
+    expect(score.finalScore).toBeLessThan(1);
   });
 
   it("extracts JSON even when the judge adds stray prose", async () => {
@@ -106,7 +127,7 @@ describe("LLMJudge.grade", () => {
       message: expect.stringMatching(/no JSON object/),
       partial: {
         usage: { inputTokens: 100, outputTokens: 60 },
-        model: "gpt-4o-mini",
+        model: "openai/gpt-oss-20b",
       },
     } satisfies Partial<JudgeExecutionError>);
   });
@@ -119,7 +140,7 @@ describe("LLMJudge.grade", () => {
         return {
           text: "I cannot comply with the JSON format",
           usage: { inputTokens: 50, outputTokens: 30 },
-          model: "gpt-4o-mini",
+          model: "openai/gpt-oss-20b",
         };
       }
       return {
@@ -130,11 +151,11 @@ describe("LLMJudge.grade", () => {
           reasoning: "retry recovered",
         }),
         usage: { inputTokens: 60, outputTokens: 20 },
-        model: "gpt-4o-mini",
+        model: "openai/gpt-oss-20b",
       };
     });
     const judge = new LLMJudge(new FakeAIProviderFactory(provider), {
-      judgeModel: "gpt-4o-mini",
+      judgeModel: "openai/gpt-oss-20b",
     });
 
     const result = await judge.grade({ input: "x", candidate: "y" });
@@ -155,7 +176,7 @@ describe("LLMJudge.grade", () => {
 
     await judge.grade({ input: "x", candidate: "y" });
 
-    expect(provider.lastRequest?.model).toBe("gpt-4o-mini");
+    expect(provider.lastRequest?.model).toBe("openai/gpt-oss-20b");
     expect(provider.lastRequest?.temperature).toBe(0);
   });
 });

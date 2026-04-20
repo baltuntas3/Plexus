@@ -11,6 +11,7 @@ import { StartBenchmarkUseCase } from "../application/use-cases/benchmarks/start
 import { UpdateTestCasesUseCase } from "../application/use-cases/benchmarks/update-test-cases.js";
 import { MongoBenchmarkRepository } from "../infrastructure/persistence/mongoose/mongo-benchmark-repository.js";
 import { MongoBenchmarkResultRepository } from "../infrastructure/persistence/mongoose/mongo-benchmark-result-repository.js";
+import { MongoPromptRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-repository.js";
 import { MongoPromptVersionRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-version-repository.js";
 
 export interface BenchmarkComposition {
@@ -29,6 +30,7 @@ export const createBenchmarkComposition = (
 ): BenchmarkComposition => {
   const benchmarks = new MongoBenchmarkRepository();
   const results = new MongoBenchmarkResultRepository();
+  const prompts = new MongoPromptRepository();
   const versions = new MongoPromptVersionRepository();
 
   const runner = new BenchmarkRunner({
@@ -42,7 +44,7 @@ export const createBenchmarkComposition = (
   const analyzer = new BenchmarkAnalyzer(aiFactory);
 
   return {
-    createBenchmark: new CreateBenchmarkUseCase(benchmarks, versions, aiFactory),
+    createBenchmark: new CreateBenchmarkUseCase(benchmarks, versions, aiFactory, prompts),
     startBenchmark: new StartBenchmarkUseCase(benchmarks, queue),
     listBenchmarks: new ListBenchmarksUseCase(benchmarks),
     getBenchmark: new GetBenchmarkUseCase(benchmarks, results, versions),

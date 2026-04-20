@@ -1,4 +1,4 @@
-export type ProviderNameDto = "openai" | "anthropic" | "groq";
+export type ProviderNameDto = "groq";
 
 export interface ModelInfoDto {
   id: string;

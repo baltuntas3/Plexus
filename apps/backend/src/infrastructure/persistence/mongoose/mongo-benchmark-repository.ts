@@ -1,6 +1,8 @@
 import type { HydratedDocument, Types } from "mongoose";
+import type { TaskType } from "@plexus/shared-types";
 import type {
   Benchmark,
+  BenchmarkCostForecast,
   BenchmarkProgress,
   BenchmarkStatus,
   BenchmarkTestCase,
@@ -27,6 +29,8 @@ type BenchmarkDoc = HydratedDocument<{
   generatorModel: string;
   testGenerationMode: TestGenerationMode;
   analysisModel: string | null;
+  taskType: TaskType;
+  costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
   solverTemperature: number;
@@ -60,6 +64,8 @@ const toDomain = (doc: BenchmarkDoc): Benchmark => ({
   generatorModel: doc.generatorModel,
   testGenerationMode: doc.testGenerationMode ?? "shared-core",
   analysisModel: doc.analysisModel ?? null,
+  taskType: doc.taskType ?? "general",
+  costForecast: doc.costForecast ?? null,
   testCount: doc.testCount,
   repetitions: doc.repetitions,
   solverTemperature: doc.solverTemperature,
@@ -94,6 +100,8 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
       generatorModel: input.generatorModel,
       testGenerationMode: input.testGenerationMode,
       analysisModel: input.analysisModel,
+      taskType: input.taskType,
+      costForecast: input.costForecast,
       testCount: input.testCount,
       repetitions: input.repetitions,
       solverTemperature: input.solverTemperature,

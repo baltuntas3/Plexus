@@ -1,3 +1,5 @@
+import type { TaskType } from "@plexus/shared-types";
+
 // Benchmark = "evaluate these prompt versions against each other using
 // LLM-generated test inputs, scored by an ensemble of judge models". Test
 // inputs are produced at run time by a generator model that reads the prompt
@@ -24,6 +26,17 @@ export type BenchmarkStatus = "draft" | "queued" | "running" | "completed" | "fa
 export interface BenchmarkProgress {
   completed: number;
   total: number;
+}
+
+export interface BenchmarkCostForecast {
+  estimatedMatrixCells: number;
+  estimatedCandidateInputTokens: number;
+  estimatedCandidateOutputTokens: number;
+  estimatedJudgeInputTokens: number;
+  estimatedJudgeOutputTokens: number;
+  estimatedCandidateCostUsd: number;
+  estimatedJudgeCostUsd: number;
+  estimatedTotalCostUsd: number;
 }
 
 // Test-case categories mirror the labels the generator LLM is asked to produce.
@@ -66,6 +79,8 @@ export interface Benchmark {
   // judge models so the narrative layer is not tied to grading. Falls back to
   // the first judge model when null.
   analysisModel: string | null;
+  taskType: TaskType;
+  costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
   solverTemperature: number;

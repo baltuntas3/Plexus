@@ -116,7 +116,26 @@ const seededShuffle = <T>(items: readonly T[], seed: number): T[] => {
   return shuffled;
 };
 
-const JSON_OBJECT_REGEX = /\{[\s\S]*\}/;
+const extractJsonObject = (text: string): string | null => {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (escape) { escape = false; continue; }
+    if (ch === "\\" && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+};
 
 const buildGenerationPrompt = (systemPrompt: string, count: number): string =>
   `You are an expert QA engineer stress-testing an AI system. Your task has two phases.
@@ -168,12 +187,11 @@ Use category values from this set only: typical, complex, ambiguous, adversarial
 
 Return only the JSON object, no other text.`;
 
-// Target distribution is advisory — we surface it to the generator so the
-// model has a concrete target to aim at, but we do not fail a run when the
-// model lands a case in an adjacent category. Category labels exist so the
-// analyzer can break results down by kind, and the user can re-tag any case
-// in the UI. Rejecting the whole benchmark over a single mis-labelled case
-// was a false-positive source given how much non-determinism LLMs have here.
+// Category plan remains advisory beyond minimum coverage, but we do require
+// the generator to cover every category that the plan assigns at least once.
+// Without that guard, a benchmark can silently miss whole failure modes
+// (e.g. no adversarial or ambiguous cases) even though the prompt asked for
+// them explicitly.
 const buildCategoryPlan = (count: number): Map<TestCaseCategory, number> => {
   const plan = new Map<TestCaseCategory, number>(
     TEST_CASE_CATEGORIES.map((category) => [category, 0]),
@@ -183,6 +201,28 @@ const buildCategoryPlan = (count: number): Map<TestCaseCategory, number> => {
     plan.set(category, (plan.get(category) ?? 0) + 1);
   }
   return plan;
+};
+
+const validateCategoryCoverage = (
+  testCases: readonly Pick<GeneratedTestCase, "category">[],
+  count: number,
+): void => {
+  const required = buildCategoryPlan(count);
+  const actual = new Map<TestCaseCategory, number>(
+    TEST_CASE_CATEGORIES.map((category) => [category, 0]),
+  );
+  for (const testCase of testCases) {
+    actual.set(testCase.category, (actual.get(testCase.category) ?? 0) + 1);
+  }
+  const missing = TEST_CASE_CATEGORIES.filter((category) => {
+    const target = required.get(category) ?? 0;
+    return target > 0 && (actual.get(category) ?? 0) === 0;
+  });
+  if (missing.length > 0) {
+    throw ValidationError(
+      `Generator missed required category coverage: ${missing.join(", ")}`,
+    );
+  }
 };
 
 const formatCategoryPlan = (count: number): string => {
@@ -253,13 +293,13 @@ type ParseResult =
   | { ok: false; error: Error };
 
 const tryParseTestCases = (text: string): ParseResult => {
-  const match = JSON_OBJECT_REGEX.exec(text.trim());
+  const match = extractJsonObject(text.trim());
   if (!match) {
     return { ok: false, error: ValidationError("Test case generator returned no JSON object") };
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(match[0]);
+    parsed = JSON.parse(match);
   } catch {
     return { ok: false, error: ValidationError("Test case generator returned malformed JSON") };
   }
@@ -301,5 +341,6 @@ const finaliseTestCases = (
       `Test case generator returned ${testCases.length} unique cases, expected ${count}`,
     );
   }
+  validateCategoryCoverage(testCases, count);
   return testCases;
 };

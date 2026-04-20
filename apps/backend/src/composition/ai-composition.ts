@@ -1,11 +1,8 @@
 import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../infrastructure/config/env.js";
 import { logger } from "../infrastructure/logger/logger.js";
 import type { IAIProvider, IAIProviderFactory } from "../application/services/ai-provider.js";
 import type { ProviderName } from "../application/services/model-registry.js";
-import { OpenAIProvider } from "../infrastructure/ai-providers/openai-provider.js";
-import { AnthropicProvider } from "../infrastructure/ai-providers/anthropic-provider.js";
 import { GroqProvider } from "../infrastructure/ai-providers/groq-provider.js";
 import { AIProviderFactory } from "../infrastructure/ai-providers/ai-provider-factory.js";
 
@@ -19,15 +16,6 @@ export interface AIComposition {
 export const createAIComposition = (): AIComposition => {
   const providers = new Map<ProviderName, IAIProvider>();
 
-  if (env.OPENAI_API_KEY) {
-    providers.set("openai", new OpenAIProvider(new OpenAI({ apiKey: env.OPENAI_API_KEY })));
-  }
-  if (env.ANTHROPIC_API_KEY) {
-    providers.set(
-      "anthropic",
-      new AnthropicProvider(new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })),
-    );
-  }
   if (env.GROQ_API_KEY) {
     providers.set(
       "groq",
@@ -37,9 +25,7 @@ export const createAIComposition = (): AIComposition => {
 
   const enabledProviders = [...providers.keys()];
   if (enabledProviders.length === 0) {
-    logger.warn(
-      "No AI providers configured (OPENAI_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY missing)",
-    );
+    logger.warn("No AI providers configured (GROQ_API_KEY missing)");
   } else {
     logger.info({ providers: enabledProviders }, "AI providers initialized");
   }

@@ -1,3 +1,4 @@
+import { TASK_TYPES } from "@plexus/shared-types";
 import { Schema, model } from "mongoose";
 
 const BENCHMARK_STATUSES = ["draft", "queued", "running", "completed", "failed"] as const;
@@ -12,7 +13,6 @@ const TEST_CASE_CATEGORIES = [
 ] as const;
 const TEST_CASE_SOURCES = ["generated", "manual"] as const;
 const TEST_GENERATION_MODES = ["shared-core", "diff-seeking"] as const;
-
 const benchmarkSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -31,6 +31,25 @@ const benchmarkSchema = new Schema(
       default: "shared-core",
     },
     analysisModel: { type: String, default: null },
+    taskType: {
+      type: String,
+      enum: TASK_TYPES,
+      required: true,
+      default: "general",
+    },
+    costForecast: {
+      type: {
+        estimatedMatrixCells: { type: Number, required: true, min: 0 },
+        estimatedCandidateInputTokens: { type: Number, required: true, min: 0 },
+        estimatedCandidateOutputTokens: { type: Number, required: true, min: 0 },
+        estimatedJudgeInputTokens: { type: Number, required: true, min: 0 },
+        estimatedJudgeOutputTokens: { type: Number, required: true, min: 0 },
+        estimatedCandidateCostUsd: { type: Number, required: true, min: 0 },
+        estimatedJudgeCostUsd: { type: Number, required: true, min: 0 },
+        estimatedTotalCostUsd: { type: Number, required: true, min: 0 },
+      },
+      default: null,
+    },
     testCount: { type: Number, required: true, min: 1, max: 100 },
     repetitions: { type: Number, required: true, min: 1, max: 20, default: 3 },
     solverTemperature: { type: Number, required: true, default: 0.7 },

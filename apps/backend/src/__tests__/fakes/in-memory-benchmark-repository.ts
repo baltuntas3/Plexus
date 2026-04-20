@@ -24,6 +24,8 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
       generatorModel: input.generatorModel,
       testGenerationMode: input.testGenerationMode,
       analysisModel: input.analysisModel,
+      taskType: input.taskType,
+      costForecast: input.costForecast,
       testCount: input.testCount,
       repetitions: input.repetitions,
       solverTemperature: input.solverTemperature,

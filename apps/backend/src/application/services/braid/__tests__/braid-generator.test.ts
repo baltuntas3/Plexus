@@ -15,7 +15,7 @@ const makeProvider = (text: string, inputTokens = 100, outputTokens = 50): FakeA
   new FakeAIProvider(() => ({
     text,
     usage: { inputTokens, outputTokens },
-    model: "gpt-4o-mini",
+    model: "openai/gpt-oss-20b",
   }));
 
 // Skipped: this suite has been hanging for hours in CI / local runs despite
@@ -32,7 +32,7 @@ describe.skip("BraidGenerator", () => {
     const result = await generator.generate({
       classicalPrompt: "Summarize the text",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
     });
 
     expect(result.cached).toBe(false);
@@ -52,7 +52,7 @@ describe.skip("BraidGenerator", () => {
     const result = await generator.generate({
       classicalPrompt: "Summarize the text",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
     });
     expect(result.graph.nodeCount).toBe(4);
   });
@@ -67,12 +67,12 @@ describe.skip("BraidGenerator", () => {
     await generator.generate({
       classicalPrompt: "Summarize",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
     });
     const second = await generator.generate({
       classicalPrompt: "Summarize",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
     });
 
     expect(provider.calls).toBe(1);
@@ -89,12 +89,12 @@ describe.skip("BraidGenerator", () => {
     await generator.generate({
       classicalPrompt: "Summarize",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
     });
     await generator.generate({
       classicalPrompt: "Summarize",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
       forceRegenerate: true,
     });
 
@@ -111,12 +111,12 @@ describe.skip("BraidGenerator", () => {
     await generator.generate({
       classicalPrompt: "Summarize A",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
     });
     await generator.generate({
       classicalPrompt: "Summarize B",
       taskType: "general",
-      generatorModel: "gpt-4o-mini",
+      generatorModel: "openai/gpt-oss-20b",
     });
 
     expect(provider.calls).toBe(2);
@@ -133,7 +133,7 @@ describe.skip("BraidGenerator", () => {
       generator.generate({
         classicalPrompt: "Summarize",
         taskType: "general",
-        generatorModel: "gpt-4o-mini",
+        generatorModel: "openai/gpt-oss-20b",
       }),
     ).rejects.toThrow(DomainError);
   });
@@ -149,7 +149,7 @@ describe.skip("BraidGenerator", () => {
       generator.generate({
         classicalPrompt: "Summarize",
         taskType: "general",
-        generatorModel: "gpt-4o-mini",
+        generatorModel: "openai/gpt-oss-20b",
       }),
     ).rejects.toThrow(DomainError);
   });
@@ -165,7 +165,7 @@ describe.skip("BraidGenerator", () => {
       generator.generate({
         classicalPrompt: "Summarize",
         taskType: "general",
-        generatorModel: "gpt-4o-mini",
+        generatorModel: "openai/gpt-oss-20b",
       }),
     ).rejects.toThrow(DomainError);
 
@@ -173,7 +173,7 @@ describe.skip("BraidGenerator", () => {
       generator.generate({
         classicalPrompt: "Summarize",
         taskType: "general",
-        generatorModel: "gpt-4o-mini",
+        generatorModel: "openai/gpt-oss-20b",
       }),
     ).rejects.toThrow(DomainError);
 

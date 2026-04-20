@@ -3,7 +3,7 @@ import { createBenchmarkSchema } from "../benchmark-dto.js";
 const baseInput = {
   name: "Test",
   promptVersionIds: ["v1"],
-  solverModels: ["gpt-4o-mini"],
+  solverModels: ["openai/gpt-oss-20b"],
   testCount: 5,
 };
 
@@ -25,7 +25,7 @@ describe("createBenchmarkSchema", () => {
   it("rejects duplicate solverModels", () => {
     const result = createBenchmarkSchema.safeParse({
       ...baseInput,
-      solverModels: ["gpt-4o-mini", "gpt-4o-mini"],
+      solverModels: ["openai/gpt-oss-20b", "openai/gpt-oss-20b"],
     });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toMatch(/solverModels/);

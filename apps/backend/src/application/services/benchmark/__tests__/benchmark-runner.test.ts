@@ -44,7 +44,7 @@ class StubJudge implements IJudge {
   public calls = 0;
   constructor(
     private readonly score: { accuracy: number; coherence: number; instruction: number },
-    private readonly judgeModel = "gpt-4o-mini",
+    private readonly judgeModel = "openai/gpt-oss-20b",
   ) {}
   async grade(): Promise<JudgeResult> {
     this.calls += 1;
@@ -107,11 +107,13 @@ const queueBenchmark = async (
     name: overrides.name ?? "bm",
     ownerId: overrides.ownerId ?? "u1",
     promptVersionIds: overrides.promptVersionIds ?? [versionId],
-    solverModels: overrides.solverModels ?? ["gpt-4o-mini"],
-    judgeModels: overrides.judgeModels ?? ["gpt-4o-mini"],
-    generatorModel: overrides.generatorModel ?? "gpt-4o-mini",
+    solverModels: overrides.solverModels ?? ["openai/gpt-oss-20b"],
+    judgeModels: overrides.judgeModels ?? ["openai/gpt-oss-20b"],
+    generatorModel: overrides.generatorModel ?? "openai/gpt-oss-20b",
     testGenerationMode: overrides.testGenerationMode ?? "shared-core",
     analysisModel: overrides.analysisModel ?? null,
+    taskType: overrides.taskType ?? "general",
+    costForecast: overrides.costForecast ?? null,
     testCount: overrides.testCount ?? 2,
     repetitions: overrides.repetitions ?? 1,
     solverTemperature: overrides.solverTemperature ?? 0.7,
@@ -237,7 +239,7 @@ describe("BenchmarkRunner.run", () => {
     expect(judgeProvider.calls.every((call) => call.seed !== undefined)).toBe(true);
   });
 
-  it("applies a fallback verbosity penalty to unusually long reference-free rows", async () => {
+  it("does not penalize long reference-free rows based on competitor outputs", async () => {
     const { benchmarks, results, versions } = await buildScaffold();
     const provider = new RecordingProvider((req) => {
       const text =
@@ -277,11 +279,43 @@ describe("BenchmarkRunner.run", () => {
 
     await runner.run(bm.id, buildContext().ctx);
     const rows = await results.listByBenchmark(bm.id);
-    const longRow = rows.find((row) => row.candidateOutput.length > 300);
-    const shortRows = rows.filter((row) => row.candidateOutput.length <= 300);
-    expect(longRow?.verbosityPenalty).toBeGreaterThan(0);
-    expect(longRow?.finalScore).toBeLessThan(longRow?.rawScore ?? 1);
-    expect(shortRows.every((row) => row.verbosityPenalty === 0)).toBe(true);
+    expect(rows.every((row) => row.verbosityPenalty === 0)).toBe(true);
+  });
+
+  it("does not penalize short reference-free rows based on competitor outputs", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const provider = new RecordingProvider((req) => {
+      const prompt = String(req.messages[0]?.content ?? "");
+      const text = prompt.includes("more detail") ? "detailed answer with enough context" : "ok";
+      return { text, inputTokens: 1, outputTokens: text.length };
+    });
+    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      testCases: [
+        { id: "tc1", input: "q1?", expectedOutput: null, category: null, source: "generated" },
+      ],
+      promptVersionIds: [
+        "1",
+        (await versions.create({
+          promptId: "p1",
+          version: "v2",
+          classicalPrompt: "Answer with more detail when useful.",
+        })).id,
+      ],
+      concurrency: 1,
+    });
+
+    await runner.run(bm.id, buildContext().ctx);
+    const rows = await results.listByBenchmark(bm.id);
+    expect(rows.every((row) => row.verbosityPenalty === 0)).toBe(true);
   });
 
   it("grades every row with every judge in the ensemble and averages their scores", async () => {
@@ -292,18 +326,18 @@ describe("BenchmarkRunner.run", () => {
       outputTokens: 1,
     }));
 
-    const judgeA = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 }, "gpt-4o-mini");
-    const judgeB = new StubJudge({ accuracy: 3, coherence: 3, instruction: 3 }, "gpt-4o");
+    const judgeA = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 }, "openai/gpt-oss-20b");
+    const judgeB = new StubJudge({ accuracy: 3, coherence: 3, instruction: 3 }, "openai/gpt-oss-120b");
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
       versions,
       providers: new SingleProviderFactory(provider),
-      judgeFactory: (model) => (model === "gpt-4o-mini" ? judgeA : judgeB),
+      judgeFactory: (model) => (model === "openai/gpt-oss-20b" ? judgeA : judgeB),
     });
 
     const bm = await queueBenchmark(benchmarks, {
-      judgeModels: ["gpt-4o-mini", "gpt-4o"],
+      judgeModels: ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
       testCases: [
         {
           id: "tc1",
@@ -337,7 +371,7 @@ describe("BenchmarkRunner.run", () => {
         return {
           score: JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, 0, "ok"),
           usage: { inputTokens: 10, outputTokens: 5 },
-          model: "gpt-4o-mini",
+          model: "openai/gpt-oss-20b",
         };
       },
     };
@@ -406,7 +440,7 @@ describe("BenchmarkRunner.run", () => {
           if (judgeCall === 2) {
             throw new JudgeExecutionError("judge parse failed", {
               usage: { inputTokens: 11, outputTokens: 7 },
-              model: "gpt-4o",
+              model: "openai/gpt-oss-120b",
             });
           }
           return {
@@ -416,14 +450,14 @@ describe("BenchmarkRunner.run", () => {
               "ok",
             ),
             usage: { inputTokens: 10, outputTokens: 6 },
-            model: "gpt-4o-mini",
+            model: "openai/gpt-oss-20b",
           };
         },
       }),
     });
 
     const bm = await queueBenchmark(benchmarks, {
-      judgeModels: ["gpt-4o-mini", "gpt-4o"],
+      judgeModels: ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
       testCases: [
         {
           id: "tc1",
@@ -564,7 +598,7 @@ describe("BenchmarkRunner.run", () => {
       grade: async () => {
         throw new JudgeExecutionError("judge returned malformed JSON", {
           usage: { inputTokens: 30, outputTokens: 12 },
-          model: "gpt-4o-mini",
+          model: "openai/gpt-oss-20b",
         });
       },
     };
@@ -611,7 +645,7 @@ describe("BenchmarkRunner.run", () => {
       version: "v2",
       classicalPrompt: "classical",
     });
-    await versions.setBraidGraph(versionWithBraid.id, "graph TD\nA-->B", "gpt-4o");
+    await versions.setBraidGraph(versionWithBraid.id, "graph TD\nA-->B", "openai/gpt-oss-120b");
 
     const provider = new RecordingProvider((req) => ({
       text: `seen:${req.messages[0]?.content?.slice(0, 8) ?? ""}`,
@@ -670,7 +704,7 @@ describe("BenchmarkRunner.run", () => {
       grade: async () => {
         throw new JudgeExecutionError("judge-b malformed JSON", {
           usage: { inputTokens: 11, outputTokens: 7 },
-          model: "gpt-4o-mini",
+          model: "openai/gpt-oss-20b",
         });
       },
     };
@@ -725,6 +759,65 @@ describe("BenchmarkRunner.run", () => {
       repetitions: 3,
       concurrency: 1,
     });
+    await runner.run(bm.id, buildContext().ctx);
+    const rows = await results.listByBenchmark(bm.id);
+    const budgetErrors = rows.filter(
+      (r) => r.status === "failed" && r.error?.includes("Budget exceeded"),
+    );
+    expect(budgetErrors.length).toBeGreaterThan(0);
+  });
+
+  it("counts existing spend before resuming a budget-limited benchmark", async () => {
+    const { benchmarks, results, versions } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "answer",
+      inputTokens: 10000,
+      outputTokens: 5000,
+    }));
+    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      versions,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      budgetUsd: 0.02,
+      repetitions: 2,
+      concurrency: 1,
+    });
+
+    await results.upsert({
+      benchmarkId: bm.id,
+      testCaseId: "tc1",
+      promptVersionId: "1",
+      solverModel: "openai/gpt-oss-20b",
+      runIndex: 0,
+      input: "q1?",
+      candidateOutput: "answer",
+      judgeAccuracy: 5,
+      judgeCoherence: 5,
+      judgeInstruction: 5,
+      judgeVotes: [],
+      rawScore: 1,
+      verbosityPenalty: 0,
+      finalScore: 1,
+      exactMatch: null,
+      fuzzyMatchScore: null,
+      candidateInputTokens: 10000,
+      candidateOutputTokens: 5000,
+      candidateCostUsd: 0.01,
+      judgeInputTokens: 0,
+      judgeOutputTokens: 0,
+      judgeCostUsd: 0,
+      totalCostUsd: 0.019,
+      latencyMs: 1,
+      status: "completed",
+      error: null,
+    });
+
     await runner.run(bm.id, buildContext().ctx);
     const rows = await results.listByBenchmark(bm.id);
     const budgetErrors = rows.filter(

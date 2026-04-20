@@ -50,6 +50,8 @@ const benchmarkResultSchema = new Schema(
     rawScore: { type: Number, required: true },
     verbosityPenalty: { type: Number, required: true },
     finalScore: { type: Number, required: true },
+    exactMatch: { type: Boolean, default: null },
+    fuzzyMatchScore: { type: Number, default: null },
 
     candidateInputTokens: { type: Number, required: true, default: 0 },
     candidateOutputTokens: { type: Number, required: true, default: 0 },

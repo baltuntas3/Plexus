@@ -13,7 +13,7 @@ const row = (overrides: Partial<BenchmarkResult>): BenchmarkResult => ({
   benchmarkId: "bm",
   testCaseId: "tc1",
   promptVersionId: "v1",
-  solverModel: "gpt-4o",
+  solverModel: "llama-3.3-70b-versatile",
   runIndex: 0,
   input: "",
   candidateOutput: "",
@@ -24,6 +24,8 @@ const row = (overrides: Partial<BenchmarkResult>): BenchmarkResult => ({
   rawScore: 1,
   verbosityPenalty: 0,
   finalScore: 1,
+  exactMatch: null,
+  fuzzyMatchScore: null,
   candidateInputTokens: 0,
   candidateOutputTokens: 0,
   candidateCostUsd: 0,
@@ -43,12 +45,12 @@ describe("aggregateResults", () => {
     const candidates = aggregateResults([
       row({ testCaseId: "a", finalScore: 1.0, totalCostUsd: 0.01 }),
       row({ testCaseId: "b", finalScore: 0.5, totalCostUsd: 0.02 }),
-      row({ testCaseId: "a", solverModel: "gpt-4o-mini", finalScore: 0.9, totalCostUsd: 0.001 }),
+      row({ testCaseId: "a", solverModel: "openai/gpt-oss-20b", finalScore: 0.9, totalCostUsd: 0.001 }),
     ]);
 
     expect(candidates).toHaveLength(2);
-    const big = candidates.find((c) => c.solverModel === "gpt-4o");
-    const small = candidates.find((c) => c.solverModel === "gpt-4o-mini");
+    const big = candidates.find((c) => c.solverModel === "llama-3.3-70b-versatile");
+    const small = candidates.find((c) => c.solverModel === "openai/gpt-oss-20b");
     expect(big?.meanFinalScore).toBeCloseTo(0.75, 6);
     expect(big?.totalCostUsd).toBeCloseTo(0.03, 6);
     expect(big?.completedCount).toBe(2);
@@ -236,8 +238,8 @@ describe("computeAnalysis", () => {
       row({ promptVersionId: "vB", judgeAccuracy: 3, judgeCoherence: 3, judgeInstruction: 3, finalScore: 0.5 }),
     ]);
     expect(analysis.ranking.map((r) => r.candidateKey)).toEqual([
-      candidateKey({ promptVersionId: "vA", solverModel: "gpt-4o" }),
-      candidateKey({ promptVersionId: "vB", solverModel: "gpt-4o" }),
+      candidateKey({ promptVersionId: "vA", solverModel: "llama-3.3-70b-versatile" }),
+      candidateKey({ promptVersionId: "vB", solverModel: "llama-3.3-70b-versatile" }),
     ]);
   });
 
@@ -250,7 +252,7 @@ describe("computeAnalysis", () => {
     ]);
 
     expect(analysis.ranking.map((entry) => entry.candidateKey)).toEqual([
-      candidateKey({ promptVersionId: "vSteady", solverModel: "gpt-4o" }),
+      candidateKey({ promptVersionId: "vSteady", solverModel: "llama-3.3-70b-versatile" }),
     ]);
   });
 
@@ -316,7 +318,7 @@ describe("computeAnalysis", () => {
       [
         row({
           promptVersionId: "vA",
-          solverModel: "gpt-4o",
+          solverModel: "llama-3.3-70b-versatile",
           testCaseId: "tc-typical",
           finalScore: 0.9,
           judgeAccuracy: 5,
@@ -326,7 +328,7 @@ describe("computeAnalysis", () => {
         }),
         row({
           promptVersionId: "vA",
-          solverModel: "gpt-4o",
+          solverModel: "llama-3.3-70b-versatile",
           testCaseId: "tc-manual",
           status: "failed",
           finalScore: 0,
@@ -345,20 +347,43 @@ describe("computeAnalysis", () => {
       expect.arrayContaining([
         expect.objectContaining({
           category: "typical",
-          candidateKey: candidateKey({ promptVersionId: "vA", solverModel: "gpt-4o" }),
+          candidateKey: candidateKey({ promptVersionId: "vA", solverModel: "llama-3.3-70b-versatile" }),
           meanFinalScore: 0.9,
           completedCount: 1,
           failedCount: 0,
         }),
         expect.objectContaining({
           category: "manual",
-          candidateKey: candidateKey({ promptVersionId: "vA", solverModel: "gpt-4o" }),
+          candidateKey: candidateKey({ promptVersionId: "vA", solverModel: "llama-3.3-70b-versatile" }),
           meanFinalScore: 0,
           completedCount: 0,
           failedCount: 1,
         }),
       ]),
     );
+  });
+
+  it("computes judge agreement and suppresses relative severity with only two judges", () => {
+    const analysis = computeAnalysis([
+      row({
+        testCaseId: "a",
+        judgeVotes: [
+          { model: "judge-a", accuracy: 5, coherence: 4, instruction: 4, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+          { model: "judge-b", accuracy: 3, coherence: 4, instruction: 4, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+        ],
+      }),
+      row({
+        testCaseId: "b",
+        judgeVotes: [
+          { model: "judge-a", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+          { model: "judge-b", accuracy: 4, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+        ],
+      }),
+    ]);
+
+    expect(analysis.judgeAgreement).toHaveLength(1);
+    expect(analysis.judgeAgreement[0]?.judgeModelA).toBe("judge-a");
+    expect(analysis.judgeBias).toEqual([]);
   });
 
   it("includes pairwise comparisons with significance and effect size", () => {
@@ -411,7 +436,7 @@ describe("computeAnalysis", () => {
       row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 1, totalCostUsd: 0.1 }),
       row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
     ]);
-    const flakyKey = candidateKey({ promptVersionId: "vFlaky", solverModel: "gpt-4o" });
+    const flakyKey = candidateKey({ promptVersionId: "vFlaky", solverModel: "llama-3.3-70b-versatile" });
     expect(analysis.exclusionReasons[flakyKey]).toContain("Failure rate");
   });
 
@@ -424,11 +449,11 @@ describe("computeAnalysis", () => {
   });
 
   it("scans the full ranking for paired non-significant candidates instead of stopping early", () => {
-    const topKey = candidateKey({ promptVersionId: "vTop", solverModel: "gpt-4o" });
-    const middleKey = candidateKey({ promptVersionId: "vMiddle", solverModel: "gpt-4o" });
+    const topKey = candidateKey({ promptVersionId: "vTop", solverModel: "llama-3.3-70b-versatile" });
+    const middleKey = candidateKey({ promptVersionId: "vMiddle", solverModel: "llama-3.3-70b-versatile" });
     const cheapKey = candidateKey({
       promptVersionId: "vCheapOverlap",
-      solverModel: "gpt-4o",
+      solverModel: "llama-3.3-70b-versatile",
     });
 
     const picked = pickWithPairedSignificanceTieBreak(
@@ -441,7 +466,7 @@ describe("computeAnalysis", () => {
         {
           candidateKey: topKey,
           promptVersionId: "vTop",
-          solverModel: "gpt-4o",
+          solverModel: "llama-3.3-70b-versatile",
           meanAccuracy: 5,
           meanCoherence: 5,
           meanInstruction: 5,
@@ -460,7 +485,7 @@ describe("computeAnalysis", () => {
         {
           candidateKey: middleKey,
           promptVersionId: "vMiddle",
-          solverModel: "gpt-4o",
+          solverModel: "llama-3.3-70b-versatile",
           meanAccuracy: 5,
           meanCoherence: 5,
           meanInstruction: 5,
@@ -479,7 +504,7 @@ describe("computeAnalysis", () => {
         {
           candidateKey: cheapKey,
           promptVersionId: "vCheapOverlap",
-          solverModel: "gpt-4o",
+          solverModel: "llama-3.3-70b-versatile",
           meanAccuracy: 2,
           meanCoherence: 2,
           meanInstruction: 2,

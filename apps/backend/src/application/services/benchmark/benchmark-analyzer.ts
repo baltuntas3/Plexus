@@ -119,6 +119,30 @@ export interface PairwiseComparison {
   effectLabel: "negligible" | "small" | "medium" | "large";
 }
 
+export interface JudgeAgreementRow {
+  judgeModelA: string;
+  judgeModelB: string;
+  sharedVotes: number;
+  meanAbsAccuracyDiff: number;
+  meanAbsCoherenceDiff: number;
+  meanAbsInstructionDiff: number;
+  exactAgreementRate: number;
+  agreementScore: number;
+}
+
+export interface JudgeBiasRow {
+  judgeModel: string;
+  voteCount: number;
+  meanAccuracy: number;
+  meanCoherence: number;
+  meanInstruction: number;
+  meanSignedAccuracyBias: number;
+  meanSignedCoherenceBias: number;
+  meanSignedInstructionBias: number;
+  meanSignedOverallBias: number;
+  biasLabel: "harsher" | "aligned" | "lenient";
+}
+
 export interface VarianceDecomposition {
   totalVariance: number;
   withinRunVariance: number;
@@ -136,6 +160,8 @@ export interface BenchmarkAnalysis {
   recommendedReasoning: string;
   recommendationDecision: RecommendationDecision;
   pairwiseComparisons: PairwiseComparison[];
+  judgeAgreement: JudgeAgreementRow[];
+  judgeBias: JudgeBiasRow[];
   varianceDecomposition: VarianceDecomposition;
   exclusionReasons: Record<string, string>;
   suggestedRepetitions: number;
@@ -578,6 +604,156 @@ const computeVarianceDecomposition = (
   };
 };
 
+const biasLabelFromMean = (bias: number): JudgeBiasRow["biasLabel"] => {
+  if (bias <= -0.25) return "harsher";
+  if (bias >= 0.25) return "lenient";
+  return "aligned";
+};
+
+const computeJudgeDiagnostics = (
+  results: readonly BenchmarkResult[],
+): {
+  agreement: JudgeAgreementRow[];
+  bias: JudgeBiasRow[];
+} => {
+  type AgreementBucket = {
+    count: number;
+    absAccuracyDiffs: number[];
+    absCoherenceDiffs: number[];
+    absInstructionDiffs: number[];
+    exactAgreements: number;
+  };
+  type BiasBucket = {
+    voteCount: number;
+    accuracies: number[];
+    coherences: number[];
+    instructions: number[];
+    accuracyBiases: number[];
+    coherenceBiases: number[];
+    instructionBiases: number[];
+    overallBiases: number[];
+  };
+
+  const agreementBuckets = new Map<string, AgreementBucket>();
+  const biasBuckets = new Map<string, BiasBucket>();
+  const uniqueJudgeModels = new Set<string>();
+
+  for (const row of results) {
+    if (row.status !== "completed" || row.judgeVotes.length === 0) continue;
+    row.judgeVotes.forEach((vote) => uniqueJudgeModels.add(vote.model));
+
+    for (let i = 0; i < row.judgeVotes.length; i += 1) {
+      const vote = row.judgeVotes[i]!;
+      const others = row.judgeVotes.filter((_, index) => index !== i);
+      const bucket = biasBuckets.get(vote.model) ?? {
+        voteCount: 0,
+        accuracies: [],
+        coherences: [],
+        instructions: [],
+        accuracyBiases: [],
+        coherenceBiases: [],
+        instructionBiases: [],
+        overallBiases: [],
+      };
+      bucket.voteCount += 1;
+      bucket.accuracies.push(vote.accuracy);
+      bucket.coherences.push(vote.coherence);
+      bucket.instructions.push(vote.instruction);
+      if (others.length > 0) {
+        const accuracyBias = vote.accuracy - mean(others.map((other) => other.accuracy));
+        const coherenceBias = vote.coherence - mean(others.map((other) => other.coherence));
+        const instructionBias =
+          vote.instruction - mean(others.map((other) => other.instruction));
+        bucket.accuracyBiases.push(accuracyBias);
+        bucket.coherenceBiases.push(coherenceBias);
+        bucket.instructionBiases.push(instructionBias);
+        bucket.overallBiases.push(mean([accuracyBias, coherenceBias, instructionBias]));
+      } else {
+        bucket.accuracyBiases.push(0);
+        bucket.coherenceBiases.push(0);
+        bucket.instructionBiases.push(0);
+        bucket.overallBiases.push(0);
+      }
+      biasBuckets.set(vote.model, bucket);
+    }
+
+    for (let i = 0; i < row.judgeVotes.length; i += 1) {
+      for (let j = i + 1; j < row.judgeVotes.length; j += 1) {
+        const left = row.judgeVotes[i]!;
+        const right = row.judgeVotes[j]!;
+        const [judgeModelA, judgeModelB] = [left.model, right.model].sort();
+        const key = `${judgeModelA}::${judgeModelB}`;
+        const bucket = agreementBuckets.get(key) ?? {
+          count: 0,
+          absAccuracyDiffs: [],
+          absCoherenceDiffs: [],
+          absInstructionDiffs: [],
+          exactAgreements: 0,
+        };
+        bucket.count += 1;
+        bucket.absAccuracyDiffs.push(Math.abs(left.accuracy - right.accuracy));
+        bucket.absCoherenceDiffs.push(Math.abs(left.coherence - right.coherence));
+        bucket.absInstructionDiffs.push(Math.abs(left.instruction - right.instruction));
+        if (
+          left.accuracy === right.accuracy &&
+          left.coherence === right.coherence &&
+          left.instruction === right.instruction
+        ) {
+          bucket.exactAgreements += 1;
+        }
+        agreementBuckets.set(key, bucket);
+      }
+    }
+  }
+
+  const agreement = [...agreementBuckets.entries()]
+    .map(([key, bucket]) => {
+      const [judgeModelA = "", judgeModelB = ""] = key.split("::");
+      const meanAbsAccuracyDiff = mean(bucket.absAccuracyDiffs);
+      const meanAbsCoherenceDiff = mean(bucket.absCoherenceDiffs);
+      const meanAbsInstructionDiff = mean(bucket.absInstructionDiffs);
+      const averageAbsDiff = mean([
+        meanAbsAccuracyDiff,
+        meanAbsCoherenceDiff,
+        meanAbsInstructionDiff,
+      ]);
+      return {
+        judgeModelA,
+        judgeModelB,
+        sharedVotes: bucket.count,
+        meanAbsAccuracyDiff,
+        meanAbsCoherenceDiff,
+        meanAbsInstructionDiff,
+        exactAgreementRate: bucket.count === 0 ? 0 : bucket.exactAgreements / bucket.count,
+        agreementScore: Math.max(0, 1 - averageAbsDiff / 4),
+      };
+    })
+    .sort((a, b) => b.agreementScore - a.agreementScore);
+
+  const bias = [...biasBuckets.entries()]
+    .map(([judgeModel, bucket]) => {
+      const meanSignedOverallBias = mean(bucket.overallBiases);
+      return {
+        judgeModel,
+        voteCount: bucket.voteCount,
+        meanAccuracy: mean(bucket.accuracies),
+        meanCoherence: mean(bucket.coherences),
+        meanInstruction: mean(bucket.instructions),
+        meanSignedAccuracyBias: mean(bucket.accuracyBiases),
+        meanSignedCoherenceBias: mean(bucket.coherenceBiases),
+        meanSignedInstructionBias: mean(bucket.instructionBiases),
+        meanSignedOverallBias,
+        biasLabel: biasLabelFromMean(meanSignedOverallBias),
+      };
+    })
+    .sort((a, b) => Math.abs(b.meanSignedOverallBias) - Math.abs(a.meanSignedOverallBias));
+
+  return {
+    agreement,
+    bias: uniqueJudgeModels.size >= 3 ? bias : [],
+  };
+};
+
 const Z_ALPHA_HALF = 1.96;
 const Z_BETA_80 = 0.84;
 const MIN_DETECTABLE_DIFF = 0.1;
@@ -662,6 +838,8 @@ export const computeAnalysis = (
         pairedDiffCiHigh: null,
       },
       pairwiseComparisons: [],
+      judgeAgreement: [],
+      judgeBias: [],
       varianceDecomposition: { totalVariance: 0, withinRunVariance: 0, acrossTestCaseVariance: 0 },
       exclusionReasons: computeExclusionReasons(candidates, []),
       suggestedRepetitions: 3,
@@ -709,6 +887,7 @@ export const computeAnalysis = (
       : [];
 
   const pairwiseComparisons = computePairwiseComparisons(candidates, results);
+  const judgeDiagnostics = computeJudgeDiagnostics(results);
   const varianceDecomposition = computeVarianceDecomposition(results);
   const exclusionReasons = computeExclusionReasons(candidates, ranking);
   const power = computeSuggestedRepetitions(candidates);
@@ -740,8 +919,10 @@ export const computeAnalysis = (
           comparedAgainstKey: null,
           pairedDiffCiLow: null,
           pairedDiffCiHigh: null,
-        },
+    },
     pairwiseComparisons,
+    judgeAgreement: judgeDiagnostics.agreement,
+    judgeBias: judgeDiagnostics.bias,
     varianceDecomposition,
     exclusionReasons,
     suggestedRepetitions: power.count,
@@ -947,7 +1128,7 @@ const mean = (values: readonly number[]): number =>
 const variance = (values: readonly number[]): number => {
   if (values.length < 2) return 0;
   const m = mean(values);
-  return values.reduce((s, v) => s + (v - m) ** 2, 0) / values.length;
+  return values.reduce((s, v) => s + (v - m) ** 2, 0) / (values.length - 1);
 };
 
 const stddev = (values: readonly number[]): number => Math.sqrt(variance(values));

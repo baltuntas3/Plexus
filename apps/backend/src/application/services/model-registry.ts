@@ -1,15 +1,10 @@
 import { NotFoundError, ValidationError } from "../../domain/errors/domain-error.js";
 import { TokenCost } from "../../domain/value-objects/token-cost.js";
 
-export type ProviderName = "openai" | "anthropic" | "groq";
+export type ProviderName = "groq";
 
-// `family` groups models by the organisation that trained them rather than by
-// the provider hosting the endpoint. Judge selection uses this to avoid
-// in-family bias (e.g. a GPT judge grading a GPT candidate).
 export type ModelFamily =
-  | "openai-gpt"
   | "openai-oss"
-  | "anthropic-claude"
   | "meta-llama";
 
 export interface ModelInfo {
@@ -25,60 +20,12 @@ export interface ModelInfo {
 // before relying on cost figures in production.
 const MODELS: ModelInfo[] = [
   {
-    id: "llama-3.1-8b-instant",
-    provider: "groq",
-    family: "meta-llama",
-    displayName: "Llama 3.1 8B Instant (Groq)",
-    inputPricePerMillion: 0.05,
-    outputPricePerMillion: 0.08,
-  },
-  {
     id: "llama-3.3-70b-versatile",
     provider: "groq",
     family: "meta-llama",
     displayName: "Llama 3.3 70B Versatile (Groq)",
     inputPricePerMillion: 0.59,
     outputPricePerMillion: 0.79,
-  },
-  {
-    id: "gpt-4o",
-    provider: "openai",
-    family: "openai-gpt",
-    displayName: "GPT-4o",
-    inputPricePerMillion: 2.5,
-    outputPricePerMillion: 10.0,
-  },
-  {
-    id: "gpt-4o-mini",
-    provider: "openai",
-    family: "openai-gpt",
-    displayName: "GPT-4o mini",
-    inputPricePerMillion: 0.15,
-    outputPricePerMillion: 0.6,
-  },
-  {
-    id: "claude-opus-4-6",
-    provider: "anthropic",
-    family: "anthropic-claude",
-    displayName: "Claude Opus 4.6",
-    inputPricePerMillion: 15.0,
-    outputPricePerMillion: 75.0,
-  },
-  {
-    id: "claude-sonnet-4-6",
-    provider: "anthropic",
-    family: "anthropic-claude",
-    displayName: "Claude Sonnet 4.6",
-    inputPricePerMillion: 3.0,
-    outputPricePerMillion: 15.0,
-  },
-  {
-    id: "claude-haiku-4-5",
-    provider: "anthropic",
-    family: "anthropic-claude",
-    displayName: "Claude Haiku 4.5",
-    inputPricePerMillion: 1.0,
-    outputPricePerMillion: 5.0,
   },
   {
     id: "openai/gpt-oss-120b",

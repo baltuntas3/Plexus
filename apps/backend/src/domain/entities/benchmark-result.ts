@@ -45,6 +45,8 @@ export interface BenchmarkResult {
   rawScore: number;
   verbosityPenalty: number;
   finalScore: number;
+  exactMatch: boolean | null;
+  fuzzyMatchScore: number | null;
 
   candidateInputTokens: number;
   candidateOutputTokens: number;

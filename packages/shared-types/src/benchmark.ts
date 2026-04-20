@@ -1,4 +1,5 @@
 import type { ISODateString, Paginated } from "./common.js";
+import type { TaskType } from "./prompt.js";
 
 export type BenchmarkStatus = "draft" | "queued" | "running" | "completed" | "failed";
 export type BenchmarkResultStatus = "completed" | "failed";
@@ -22,6 +23,8 @@ export interface BenchmarkDto {
   generatorModel: string;
   testGenerationMode: "shared-core" | "diff-seeking";
   analysisModel: string | null;
+  taskType: TaskType;
+  costForecast: BenchmarkCostForecastDto | null;
   testCount: number;
   repetitions: number;
   solverTemperature: number;
@@ -36,6 +39,17 @@ export interface BenchmarkDto {
   createdAt: ISODateString;
   startedAt: ISODateString | null;
   completedAt: ISODateString | null;
+}
+
+export interface BenchmarkCostForecastDto {
+  estimatedMatrixCells: number;
+  estimatedCandidateInputTokens: number;
+  estimatedCandidateOutputTokens: number;
+  estimatedJudgeInputTokens: number;
+  estimatedJudgeOutputTokens: number;
+  estimatedCandidateCostUsd: number;
+  estimatedJudgeCostUsd: number;
+  estimatedTotalCostUsd: number;
 }
 
 // One vote from a single judge on a single cell run.
@@ -67,6 +81,8 @@ export interface BenchmarkResultDto {
   rawScore: number;
   verbosityPenalty: number;
   finalScore: number;
+  exactMatch: boolean | null;
+  fuzzyMatchScore: number | null;
   candidateInputTokens: number;
   candidateOutputTokens: number;
   candidateCostUsd: number;
@@ -212,6 +228,30 @@ export interface PairwiseComparisonDto {
   effectLabel: "negligible" | "small" | "medium" | "large";
 }
 
+export interface JudgeAgreementRowDto {
+  judgeModelA: string;
+  judgeModelB: string;
+  sharedVotes: number;
+  meanAbsAccuracyDiff: number;
+  meanAbsCoherenceDiff: number;
+  meanAbsInstructionDiff: number;
+  exactAgreementRate: number;
+  agreementScore: number;
+}
+
+export interface JudgeBiasRowDto {
+  judgeModel: string;
+  voteCount: number;
+  meanAccuracy: number;
+  meanCoherence: number;
+  meanInstruction: number;
+  meanSignedAccuracyBias: number;
+  meanSignedCoherenceBias: number;
+  meanSignedInstructionBias: number;
+  meanSignedOverallBias: number;
+  biasLabel: "harsher" | "aligned" | "lenient";
+}
+
 export interface VarianceDecompositionDto {
   totalVariance: number;
   withinRunVariance: number;
@@ -229,6 +269,8 @@ export interface BenchmarkAnalysisDto {
   recommendedReasoning: string;
   recommendationDecision: RecommendationDecisionDto;
   pairwiseComparisons: PairwiseComparisonDto[];
+  judgeAgreement: JudgeAgreementRowDto[];
+  judgeBias: JudgeBiasRowDto[];
   varianceDecomposition: VarianceDecompositionDto;
   exclusionReasons: Record<string, string>;
   suggestedRepetitions: number;

@@ -1,5 +1,6 @@
 import { CreateBenchmarkUseCase } from "../create-benchmark.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
+import { InMemoryPromptRepository } from "../../../../__tests__/fakes/in-memory-prompt-repository.js";
 import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
 import type { GenerateRequest, IAIProvider, IAIProviderFactory } from "../../../services/ai-provider.js";
 
@@ -38,17 +39,25 @@ const makeProviders = (
 
 const buildScaffold = async () => {
   const benchmarks = new InMemoryBenchmarkRepository();
+  const prompts = new InMemoryPromptRepository();
   const versions = new InMemoryPromptVersionRepository();
+  const prompt = await prompts.create({
+    name: "Prompt",
+    description: "desc",
+    taskType: "math",
+    ownerId: "u1",
+  });
 
   const version = await versions.create({
-    promptId: "p1",
+    promptId: prompt.id,
     version: "v1",
     classicalPrompt: "Answer.",
   });
 
   return {
-    useCase: new CreateBenchmarkUseCase(benchmarks, versions, makeProviders()),
+    useCase: new CreateBenchmarkUseCase(benchmarks, versions, makeProviders(), prompts),
     benchmarks,
+    prompts,
     versions,
     version,
   };
@@ -57,7 +66,7 @@ const buildScaffold = async () => {
 const baseCommand = (versionId: string) => ({
   name: "Test benchmark",
   promptVersionIds: [versionId],
-  solverModels: ["gpt-4o-mini"],
+  solverModels: ["openai/gpt-oss-20b"],
   testCount: 5,
   ownerId: "u1",
 });
@@ -71,15 +80,16 @@ describe("CreateBenchmarkUseCase", () => {
     expect(bm.promptVersionIds).toEqual([version.id]);
     // Single version → shared-core; derived automatically.
     expect(bm.testGenerationMode).toBe("shared-core");
-    // Judges derived: must exclude the solver family (openai-gpt) and include
-    // models from at least one other family.
+    // Judges derived: must exclude the solver itself and prefer models from
+    // a different family. With only 3 models, same-family fallback is used.
     expect(bm.judgeModels.length).toBeGreaterThanOrEqual(1);
-    expect(bm.judgeModels).not.toContain("gpt-4o-mini");
-    expect(bm.judgeModels).not.toContain("gpt-4o");
+    expect(bm.judgeModels).not.toContain("openai/gpt-oss-20b");
     // Generator must not be in the solver set.
     expect(bm.solverModels).not.toContain(bm.generatorModel);
     // Analysis model defaults to the first judge.
     expect(bm.analysisModel).toBe(bm.judgeModels[0] ?? null);
+    expect(bm.taskType).toBe("math");
+    expect(bm.costForecast?.estimatedTotalCostUsd ?? 0).toBeGreaterThan(0);
     expect(bm.repetitions).toBeGreaterThanOrEqual(1);
     expect(bm.concurrency).toBeGreaterThanOrEqual(1);
     expect(bm.testCount).toBe(5);
@@ -120,7 +130,7 @@ describe("CreateBenchmarkUseCase", () => {
       version: "v2",
       classicalPrompt: "Outdated classical prompt.",
     });
-    await versions.setBraidGraph(braid.id, "graph TD\nA-->B", "gpt-4o");
+    await versions.setBraidGraph(braid.id, "graph TD\nA-->B", "openai/gpt-oss-120b");
 
     const seen: GenerateRequest[] = [];
     const useCase = new CreateBenchmarkUseCase(
@@ -156,7 +166,7 @@ describe("CreateBenchmarkUseCase", () => {
     ).rejects.toThrow(/expected 5/);
   });
 
-  it("defaults multi-version benchmarks to shared-core generation mode", async () => {
+  it("defaults multi-version benchmarks to diff-seeking generation mode", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
     const versions = new InMemoryPromptVersionRepository();
     const v1 = await versions.create({
@@ -182,9 +192,9 @@ describe("CreateBenchmarkUseCase", () => {
       promptVersionIds: [v1.id, v2.id],
     });
 
-    expect(bm.testGenerationMode).toBe("shared-core");
+    expect(bm.testGenerationMode).toBe("diff-seeking");
     const prompt = String(seen[0]?.messages[0]?.content ?? "");
-    expect(prompt).toContain("probe behaviour common to ALL versions");
+    expect(prompt).toContain("expose differences between versions");
     // Anonymous version labels — no chronological hints leak to the generator.
     expect(prompt).toContain("VERSION A");
     expect(prompt).toContain("VERSION B");

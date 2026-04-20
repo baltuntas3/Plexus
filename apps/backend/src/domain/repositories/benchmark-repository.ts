@@ -1,5 +1,7 @@
+import type { TaskType } from "@plexus/shared-types";
 import type {
   Benchmark,
+  BenchmarkCostForecast,
   BenchmarkProgress,
   BenchmarkStatus,
   BenchmarkTestCase,
@@ -14,6 +16,8 @@ export interface CreateBenchmarkInput {
   generatorModel: string;
   testGenerationMode: Benchmark["testGenerationMode"];
   analysisModel: string | null;
+  taskType: TaskType;
+  costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
   solverTemperature: number;

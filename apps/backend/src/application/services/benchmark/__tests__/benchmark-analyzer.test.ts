@@ -332,12 +332,20 @@ describe("computeAnalysis", () => {
         promptVersionId: "vPartial",
         testCaseId: "a",
         finalScore: 0.95,
+        judgeVotes: [
+          { model: "judge-a", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+          { model: "judge-b", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+        ],
         judgeFailureCount: 1,
       }),
       row({
         promptVersionId: "vPartial",
         testCaseId: "b",
         finalScore: 0.94,
+        judgeVotes: [
+          { model: "judge-a", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+          { model: "judge-b", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+        ],
         judgeFailureCount: 1,
       }),
       row({ promptVersionId: "vClean", testCaseId: "a", finalScore: 0.9 }),
@@ -346,7 +354,7 @@ describe("computeAnalysis", () => {
 
     const partial = analysis.candidates.find((c) => c.promptVersionId === "vPartial");
     expect(partial?.failureRate).toBe(0);
-    expect(partial?.operationalIssueRate).toBe(1);
+    expect(partial?.operationalIssueRate).toBeCloseTo(1 / 3, 6);
     expect(analysis.ranking.some((entry) => entry.candidateKey.includes("vPartial"))).toBe(false);
   });
 
@@ -360,6 +368,13 @@ describe("computeAnalysis", () => {
           promptVersionId: "vMostlyClean",
           testCaseId: `mostly-clean-${i}`,
           finalScore: 0.9,
+          judgeVotes:
+            i === 0
+              ? [
+                  { model: "judge-a", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+                  { model: "judge-b", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+                ]
+              : [],
           judgeFailureCount: i === 0 ? 1 : 0,
         }),
       ),
@@ -367,7 +382,7 @@ describe("computeAnalysis", () => {
 
     expect(analysis.ranking[0]?.candidateKey).toContain("vClean");
     const mostlyClean = analysis.candidates.find((c) => c.promptVersionId === "vMostlyClean");
-    expect(mostlyClean?.operationalIssueRate).toBeCloseTo(0.1, 6);
+    expect(mostlyClean?.operationalIssueRate).toBeCloseTo(1 / 30, 6);
   });
 
   it("prefers the cheaper candidate when CIs overlap", () => {

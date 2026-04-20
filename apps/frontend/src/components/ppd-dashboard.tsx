@@ -34,13 +34,13 @@ const vLabel = (id: string, versionLabels: Record<string, string>): string =>
 const candidateLabel = (c: CandidateStatsDto, versionLabels: Record<string, string>): string =>
   `${vLabel(c.promptVersionId, versionLabels)} · ${c.solverModel}`;
 
-const RELIABILITY_FAILURE_RATE_LIMIT = 0.1;
+const RELIABILITY_ISSUE_RATE_LIMIT = 0.1;
 
 const reliableCandidates = (
   candidates: readonly CandidateStatsDto[],
 ): CandidateStatsDto[] =>
   candidates.filter(
-    (c) => c.completedCount > 0 && c.failureRate <= RELIABILITY_FAILURE_RATE_LIMIT,
+    (c) => c.completedCount > 0 && c.operationalIssueRate <= RELIABILITY_ISSUE_RATE_LIMIT,
   );
 
 export const PPDDashboard = ({ analysis, loading = false, versionLabels }: Props) => {

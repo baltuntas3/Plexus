@@ -31,7 +31,18 @@ export interface AggregateRow {
   totalRuns: number;
   failedRuns: number;
   failureRate: number;
+  operationalIssueWeight: number;
+  operationalIssueRate: number;
 }
+
+const operationalIssueWeight = (result: BenchmarkResultDto): number => {
+  if (result.status === "failed") {
+    return result.failureKind === "budget_exceeded" ? 0 : 1;
+  }
+  const totalJudges = result.judgeVotes.length + result.judgeFailureCount;
+  if (totalJudges <= 0) return 0;
+  return result.judgeFailureCount / totalJudges;
+};
 
 export const CATEGORY_OPTIONS = [
   { value: "", label: "Uncategorized" },
@@ -115,6 +126,7 @@ export const aggregateBenchmarkResults = (
       existing.costUsd += result.totalCostUsd;
       existing.totalRuns += 1;
       if (result.status === "failed") existing.failedRuns += 1;
+      existing.operationalIssueWeight += operationalIssueWeight(result);
       continue;
     }
 
@@ -130,6 +142,8 @@ export const aggregateBenchmarkResults = (
       totalRuns: 1,
       failedRuns: result.status === "failed" ? 1 : 0,
       failureRate: result.status === "failed" ? 1 : 0,
+      operationalIssueWeight: operationalIssueWeight(result),
+      operationalIssueRate: 0,
     });
   }
 
@@ -138,6 +152,8 @@ export const aggregateBenchmarkResults = (
     row.finalScore = completedRuns <= 0 ? 0 : row.finalScore / completedRuns;
     row.accuracyAllRuns = completedRuns <= 0 ? 0 : row.accuracyAllRuns / completedRuns;
     row.failureRate = row.totalRuns === 0 ? 0 : row.failedRuns / row.totalRuns;
+    row.operationalIssueRate =
+      row.totalRuns === 0 ? 0 : row.operationalIssueWeight / row.totalRuns;
   }
 
   return [...rows.values()].sort((a, b) => b.finalScore - a.finalScore);

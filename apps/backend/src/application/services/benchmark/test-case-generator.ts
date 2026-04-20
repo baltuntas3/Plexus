@@ -216,6 +216,7 @@ const validateCategoryCoverage = (
   testCases: readonly Pick<GeneratedTestCase, "category">[],
   count: number,
 ): void => {
+  if (count < TEST_CASE_CATEGORIES.length) return;
   const required = buildCategoryPlan(count);
   const actual = new Map<TestCaseCategory, number>(
     TEST_CASE_CATEGORIES.map((category) => [category, 0]),

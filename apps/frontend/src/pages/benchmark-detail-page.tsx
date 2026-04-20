@@ -744,6 +744,7 @@ const ResultsTable = ({
               <Table.Th>Total Cost</Table.Th>
               <Table.Th>Runs</Table.Th>
               <Table.Th>Failures</Table.Th>
+              <Table.Th>Ops Issues</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -775,13 +776,21 @@ const ResultsTable = ({
                       {row.failedRuns} ({(row.failureRate * 100).toFixed(0)}%)
                     </Text>
                   </Table.Td>
+                  <Table.Td>
+                    <Text
+                      size="xs"
+                      c={row.operationalIssueRate > 0 ? "orange" : "dimmed"}
+                    >
+                      {(row.operationalIssueRate * 100).toFixed(0)}%
+                    </Text>
+                  </Table.Td>
                 </Table.Tr>
               );
             })}
           </Table.Tbody>
         </Table>
         <Text size="xs" c="dimmed">
-          Quality averages use completed runs only. Failure counts and total cost still include failed runs.
+          Quality averages use completed runs only. `Failures` counts hard failed rows; `Ops Issues` also includes partial judge degradation and excludes budget truncation.
         </Text>
       </Stack>
     </Card>
@@ -1005,6 +1014,7 @@ const AnalysisPanel = ({
                 <Table.Th>Cost/test</Table.Th>
                 <Table.Th>Runs</Table.Th>
                 <Table.Th>Failures</Table.Th>
+                <Table.Th>Ops Issues</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -1081,6 +1091,14 @@ const AnalysisPanel = ({
                     <Table.Td>
                       <Text size="xs" c="dimmed">
                         {s.failedCount} ({(s.failureRate * 100).toFixed(0)}%)
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text
+                        size="xs"
+                        c={s.operationalIssueRate > 0 ? "orange" : "dimmed"}
+                      >
+                        {(s.operationalIssueRate * 100).toFixed(0)}%
                       </Text>
                     </Table.Td>
                   </Table.Tr>

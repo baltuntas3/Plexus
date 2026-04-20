@@ -39,6 +39,24 @@ describe("TestCaseGenerator", () => {
     ).rejects.toThrow(/category coverage/);
   });
 
+  it("does not enforce full category coverage when test count is smaller than the category set", async () => {
+    const generator = new TestCaseGenerator(
+      makeFactory(
+        JSON.stringify({
+          testCases: [
+            { input: "question 1", category: "typical" },
+            { input: "question 2", category: "typical" },
+            { input: "question 3", category: "complex" },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      generator.generate("system", 3, "openai/gpt-oss-20b", 123),
+    ).resolves.toHaveLength(3);
+  });
+
   it("deduplicates test cases with identical normalised inputs", async () => {
     const generator = new TestCaseGenerator(
       makeFactory(

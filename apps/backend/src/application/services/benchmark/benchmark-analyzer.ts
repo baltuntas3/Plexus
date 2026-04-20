@@ -35,9 +35,9 @@ import type { IAIProviderFactory } from "../ai-provider.js";
 const BOOTSTRAP_SAMPLES = 10_000;
 const BOOTSTRAP_SEED = 0x9e3779b9;
 const SCORE_FLOOR_FRACTION = 0.8;
-// A candidate whose share of failed cells exceeds this rate is not eligible
-// to be the recommendation — reliability is a precondition for "best", not a
-// knob to trade against a high mean score.
+// A candidate whose operational-issue rate exceeds this threshold is not
+// eligible to be the recommendation — reliability is a precondition for
+// "best", not a knob to trade against a high mean score.
 const MAX_FAILURE_RATE_FOR_RECOMMENDATION = 0.1;
 
 // finalScore is in [0,1]; stddev 0.25 is the practical ceiling for real LLM
@@ -234,7 +234,7 @@ export const aggregateResults = (
       bucket.costs.push(r.totalCostUsd);
       bucket.totalCost += r.totalCostUsd;
       bucket.failedCount += 1;
-      if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
+      bucket.operationalIssueCount += operationalIssueWeight(r);
       continue;
     }
 
@@ -246,7 +246,7 @@ export const aggregateResults = (
     bucket.costs.push(r.totalCostUsd);
     bucket.totalCost += r.totalCostUsd;
     bucket.completedCount += 1;
-    if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
+    bucket.operationalIssueCount += operationalIssueWeight(r);
   }
 
   const rng = mulberry32(BOOTSTRAP_SEED);
@@ -486,7 +486,7 @@ const aggregateCategoryBreakdown = (
       bucket.latencies.push(r.latencyMs);
       bucket.costs.push(r.totalCostUsd);
       bucket.failedCount += 1;
-      if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
+      bucket.operationalIssueCount += operationalIssueWeight(r);
       continue;
     }
 
@@ -497,7 +497,7 @@ const aggregateCategoryBreakdown = (
     bucket.latencies.push(r.latencyMs);
     bucket.costs.push(r.totalCostUsd);
     bucket.completedCount += 1;
-    if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
+    bucket.operationalIssueCount += operationalIssueWeight(r);
   }
 
   return [...buckets.entries()]
@@ -1061,11 +1061,13 @@ const buildRecommendationReasoning = (s: CandidateStats, composite: number): str
   `Latency ${Math.round(s.meanLatencyMs)} ms, ` +
   `Cost $${s.meanCostUsd.toFixed(4)}/test.`;
 
-const countsAsOperationalIssue = (row: BenchmarkResult): boolean => {
+const operationalIssueWeight = (row: BenchmarkResult): number => {
   if (row.status === "failed") {
-    return row.failureKind !== "budget_exceeded";
+    return row.failureKind === "budget_exceeded" ? 0 : 1;
   }
-  return row.judgeFailureCount > 0;
+  const totalJudges = row.judgeVotes.length + row.judgeFailureCount;
+  if (totalJudges <= 0) return 0;
+  return row.judgeFailureCount / totalJudges;
 };
 
 const comparableCompletedScorePairs = (

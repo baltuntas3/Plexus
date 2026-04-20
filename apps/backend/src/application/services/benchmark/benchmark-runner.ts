@@ -1,6 +1,7 @@
 import type { Benchmark, BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
 import {
   benchmarkResultKey,
+  type BenchmarkFailureKind,
   type JudgeVote,
 } from "../../../domain/entities/benchmark-result.js";
 import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
@@ -42,9 +43,8 @@ import type { GenerateResponse } from "../ai-provider.js";
 // empty matrix, missing judge models) abort the whole benchmark.
 //
 // Rows with an `expectedOutput` receive a reference-based verbosity penalty
-// inside the judge. Reference-free rows receive a post-run fallback penalty
-// against the per-test-case median candidate length, so unusually verbose
-// candidates are not silently rewarded when no gold reference exists.
+// inside the judge. Reference-free rows are left as judged; we do not apply
+// any benchmark-relative length penalty after the fact.
 //
 // The system prompt for each cell is determined by the PromptVersion: if it
 // has a braidGraph, that graph becomes the system prompt; otherwise
@@ -119,7 +119,9 @@ export class BenchmarkRunner {
       await mapConcurrent(pending, Math.max(1, bm.concurrency), async (cell) => {
         const reservedForCell = reservePerCellUsd();
         if (spentUsd + reservedUsd + reservedForCell > budget) {
-          const row = buildFailedRow(bm.id, cell, new BudgetExceededError(spentUsd, budget));
+          const row = buildFailedRow(bm.id, cell, new BudgetExceededError(spentUsd, budget), {
+            failureKind: "budget_exceeded",
+          });
           await this.deps.results.upsert(row);
           completed += 1;
           await this.report(benchmarkId, ctx, completed, total);
@@ -244,6 +246,7 @@ export class BenchmarkRunner {
     } catch (err) {
       return buildFailedRow(bm.id, cell, err, {
         latencyMs: Date.now() - start,
+        failureKind: "solver_error",
       });
     }
     const latencyMs = Date.now() - start;
@@ -319,6 +322,7 @@ export class BenchmarkRunner {
           judgeInputTokens: successfulJudgeInputTokens + partialJudgeInputTokens,
           judgeOutputTokens: successfulJudgeOutputTokens + partialJudgeOutputTokens,
           judgeCostUsd: successfulJudgeCostUsd + partialJudgeCostUsd,
+          failureKind: "judge_error",
         },
       );
     }
@@ -377,8 +381,10 @@ export class BenchmarkRunner {
       judgeOutputTokens,
       judgeCostUsd,
       totalCostUsd: candidateCost.totalUsd + judgeCostUsd,
+      judgeFailureCount: judgeFailures.length,
       latencyMs,
       status: "completed",
+      failureKind: null,
       error:
         judgeFailures.length === 0
           ? null
@@ -423,12 +429,19 @@ class BudgetExceededError extends Error {
   }
 }
 
+class CellTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Cell timed out after ${ms}ms`);
+    this.name = "CellTimeoutError";
+  }
+}
+
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Cell timed out after ${ms}ms`)), ms);
+      timer = setTimeout(() => reject(new CellTimeoutError(ms)), ms);
       timer.unref?.();
     }),
   ]);
@@ -453,9 +466,12 @@ const buildFailedRow = (
     judgeInputTokens?: number;
     judgeOutputTokens?: number;
     judgeCostUsd?: number;
+    judgeFailureCount?: number;
+    failureKind?: BenchmarkFailureKind;
   } = {},
 ): UpsertBenchmarkResultInput => {
   const message = err instanceof Error ? err.message : String(err);
+  const failureKind = partial.failureKind ?? classifyFailureKind(err);
   return {
     benchmarkId,
     testCaseId: cell.testCase.id,
@@ -480,10 +496,20 @@ const buildFailedRow = (
     judgeOutputTokens: partial.judgeOutputTokens ?? 0,
     judgeCostUsd: partial.judgeCostUsd ?? 0,
     totalCostUsd: (partial.candidateCostUsd ?? 0) + (partial.judgeCostUsd ?? 0),
+    judgeFailureCount: partial.judgeFailureCount ?? 0,
     latencyMs: partial.latencyMs ?? 0,
     status: "failed",
+    failureKind,
     error: message,
   };
+};
+
+const classifyFailureKind = (err: unknown): BenchmarkFailureKind => {
+  if (err instanceof BudgetExceededError) return "budget_exceeded";
+  if (err instanceof CellTimeoutError) return "timeout";
+  if (err instanceof JudgeExecutionError) return "judge_error";
+  if (err instanceof Error) return "unknown";
+  return "unknown";
 };
 
 const buildPartialJudgeUsage = (

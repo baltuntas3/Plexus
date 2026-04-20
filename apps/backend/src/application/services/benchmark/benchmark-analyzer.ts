@@ -19,11 +19,11 @@
 //      alone ignores consistency.
 //
 // Recommendation is the highest-composite candidate that also passes the
-// score floor — so a cheap-but-terrible row never wins. Failed rows are
-// included in quality aggregates as zero-utility samples, and any observed
-// latency/cost from failed executions is preserved so provider/judge errors do
-// not masquerade as "fast and free". Commentary is an LLM pass that narrates
-// the comparison; it never overrides the deterministic recommendation.
+// score floor — so a cheap-but-terrible row never wins. Quality aggregates
+// only use completed rows; failed rows still contribute to latency/cost and
+// reliability telemetry so provider/judge errors do not masquerade as "fast
+// and free". Commentary is an LLM pass that narrates the comparison; it never
+// overrides the deterministic recommendation.
 
 import type {
   BenchmarkResult,
@@ -58,6 +58,7 @@ const QUALITY_INSTRUCTION_FRACTION = 20 / 80;
 const QUALITY_CONSISTENCY_FRACTION = 15 / 80;
 const EFFICIENCY_LATENCY_WEIGHT = 0.1;
 const EFFICIENCY_COST_WEIGHT = 0.1;
+const SOFT_RELIABILITY_PENALTY_WEIGHT = 0.5;
 
 export interface CandidateStats {
   candidateKey: string;
@@ -77,6 +78,8 @@ export interface CandidateStats {
   completedCount: number;
   failedCount: number;
   failureRate: number;
+  operationalIssueCount: number;
+  operationalIssueRate: number;
 }
 
 export interface PPDRow {
@@ -106,6 +109,8 @@ export interface CategoryBreakdownRow {
   completedCount: number;
   failedCount: number;
   failureRate: number;
+  operationalIssueCount: number;
+  operationalIssueRate: number;
 }
 
 export interface PairwiseComparison {
@@ -199,6 +204,7 @@ export const aggregateResults = (
     totalCost: number;
     completedCount: number;
     failedCount: number;
+    operationalIssueCount: number;
   };
   const buckets = new Map<string, Bucket>();
 
@@ -218,19 +224,17 @@ export const aggregateResults = (
         totalCost: 0,
         completedCount: 0,
         failedCount: 0,
+        operationalIssueCount: 0,
       };
       buckets.set(key, bucket);
     }
 
     if (r.status === "failed") {
-      bucket.finalScores.push(0);
-      bucket.accuracies.push(0);
-      bucket.coherences.push(0);
-      bucket.instructions.push(0);
       bucket.latencies.push(r.latencyMs);
       bucket.costs.push(r.totalCostUsd);
       bucket.totalCost += r.totalCostUsd;
       bucket.failedCount += 1;
+      if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
       continue;
     }
 
@@ -242,6 +246,7 @@ export const aggregateResults = (
     bucket.costs.push(r.totalCostUsd);
     bucket.totalCost += r.totalCostUsd;
     bucket.completedCount += 1;
+    if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
   }
 
   const rng = mulberry32(BOOTSTRAP_SEED);
@@ -271,6 +276,9 @@ export const aggregateResults = (
       completedCount,
       failedCount: bucket.failedCount,
       failureRate: totalRows === 0 ? 0 : bucket.failedCount / totalRows,
+      operationalIssueCount: bucket.operationalIssueCount,
+      operationalIssueRate:
+        totalRows === 0 ? 0 : bucket.operationalIssueCount / totalRows,
     });
   }
   return out;
@@ -329,7 +337,11 @@ const computePPD = (
 
 // Composite score: weighted combination of quality (geometric mean — penalises
 // any dimension sitting at zero) and efficiency (additive — allows the worst
-// latency/cost candidate to still contribute to quality-driven ranking).
+// latency/cost candidate to still contribute to quality-driven ranking),
+// followed by a soft reliability penalty. The hard gate still excludes
+// clearly unreliable candidates, but this soft penalty prevents a cliff where
+// a candidate with modest operational issues remains entirely unpenalised
+// until it crosses the eligibility threshold.
 // Weights live in the module-level COMPOSITE_/QUALITY_/EFFICIENCY_ constants
 // above so the policy is greppable in one place.
 const computeCompositeRanking = (
@@ -358,7 +370,12 @@ const computeCompositeRanking = (
           normaliseDescending(c.meanLatencyMs, latencyRange) +
         EFFICIENCY_COST_WEIGHT *
           normaliseDescending(c.meanCostUsd, costRange);
-      const compositeScore = COMPOSITE_QUALITY_WEIGHT * quality + efficiency;
+      const rawComposite = COMPOSITE_QUALITY_WEIGHT * quality + efficiency;
+      const reliabilityMultiplier = Math.max(
+        0,
+        1 - c.operationalIssueRate * SOFT_RELIABILITY_PENALTY_WEIGHT,
+      );
+      const compositeScore = rawComposite * reliabilityMultiplier;
       return { candidateKey: c.candidateKey, compositeScore };
     })
     .sort((a, b) => b.compositeScore - a.compositeScore);
@@ -401,7 +418,7 @@ const normaliseRubricMean = (value: number): number => {
 
 const isReliableForComparativeViews = (candidate: CandidateStats): boolean =>
   candidate.completedCount > 0 &&
-  candidate.failureRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION;
+  candidate.operationalIssueRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION;
 
 export interface AnalyzerOptions {
   minScoreFraction?: number;
@@ -438,6 +455,7 @@ const aggregateCategoryBreakdown = (
     costs: number[];
     completedCount: number;
     failedCount: number;
+    operationalIssueCount: number;
   };
   const buckets = new Map<string, Bucket>();
 
@@ -459,18 +477,16 @@ const aggregateCategoryBreakdown = (
         costs: [],
         completedCount: 0,
         failedCount: 0,
+        operationalIssueCount: 0,
       };
       buckets.set(key, bucket);
     }
 
     if (r.status === "failed") {
-      bucket.finalScores.push(0);
-      bucket.accuracies.push(0);
-      bucket.coherences.push(0);
-      bucket.instructions.push(0);
       bucket.latencies.push(r.latencyMs);
       bucket.costs.push(r.totalCostUsd);
       bucket.failedCount += 1;
+      if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
       continue;
     }
 
@@ -481,6 +497,7 @@ const aggregateCategoryBreakdown = (
     bucket.latencies.push(r.latencyMs);
     bucket.costs.push(r.totalCostUsd);
     bucket.completedCount += 1;
+    if (countsAsOperationalIssue(r)) bucket.operationalIssueCount += 1;
   }
 
   return [...buckets.entries()]
@@ -501,6 +518,9 @@ const aggregateCategoryBreakdown = (
         completedCount,
         failedCount: bucket.failedCount,
         failureRate: totalRows === 0 ? 0 : bucket.failedCount / totalRows,
+        operationalIssueCount: bucket.operationalIssueCount,
+        operationalIssueRate:
+          totalRows === 0 ? 0 : bucket.operationalIssueCount / totalRows,
       };
     })
     .sort((a, b) => {
@@ -541,10 +561,9 @@ const computePairwiseComparisons = (
       const bRows = rowsByCandidate.get(b.candidateKey) ?? [];
       const ci = pairedDifferenceCI(aRows, bRows);
 
+      const [aComparableScores, bComparableScores] = comparableCompletedScorePairs(aRows, bRows);
       const pooledSd = Math.sqrt(
-        (stddev(aRows.map((r) => r.status === "failed" ? 0 : r.finalScore)) ** 2 +
-          stddev(bRows.map((r) => r.status === "failed" ? 0 : r.finalScore)) ** 2) /
-          2,
+        (stddev(aComparableScores) ** 2 + stddev(bComparableScores) ** 2) / 2,
       );
       const diff = a.meanFinalScore - b.meanFinalScore;
       const d = pooledSd > 0 ? diff / pooledSd : 0;
@@ -766,7 +785,7 @@ const computeSuggestedRepetitions = (
     return { count: 3, rationale: "No completed results to estimate variance." };
   }
   const pooledStderr = mean(reliable.map((c) => c.stderr));
-  const sampleSizes = reliable.map((c) => c.completedCount + c.failedCount);
+  const sampleSizes = reliable.map((c) => c.completedCount);
   const avgN = mean(sampleSizes);
   const estimatedSd = pooledStderr * Math.sqrt(avgN);
   if (estimatedSd <= 0) {
@@ -795,9 +814,9 @@ const computeExclusionReasons = (
     if (rankedKeys.has(c.candidateKey)) continue;
     if (c.completedCount === 0) {
       reasons[c.candidateKey] = "No completed results — all runs failed.";
-    } else if (c.failureRate > MAX_FAILURE_RATE_FOR_RECOMMENDATION) {
+    } else if (c.operationalIssueRate > MAX_FAILURE_RATE_FOR_RECOMMENDATION) {
       reasons[c.candidateKey] =
-        `Failure rate ${(c.failureRate * 100).toFixed(1)}% exceeds ` +
+        `Operational issue rate ${(c.operationalIssueRate * 100).toFixed(1)}% exceeds ` +
         `${(MAX_FAILURE_RATE_FOR_RECOMMENDATION * 100).toFixed(0)}% reliability threshold.`;
     }
   }
@@ -855,18 +874,17 @@ export const computeAnalysis = (
   const baselineKey = baseline ? baseline.candidateKey : null;
 
   const ranking = computeCompositeRanking(candidates);
-  // Recommendation order: (1) clear score floor, (2) failure rate below
-  // threshold, (3) highest composite, (4) tie-break on CI overlap by cheaper
-  // mean cost. The failure gate makes reliability a precondition rather than
-  // just another weighted term; CI-overlap tie-break prevents picking a
-  // marginally-higher-composite candidate when the difference is within
-  // sampling noise.
+  // Recommendation order: (1) clear score floor, (2) operational issue rate
+  // below threshold, (3) highest composite, (4) tie-break on CI overlap by
+  // cheaper mean cost. Reliability remains a hard precondition for "best",
+  // but the composite already applies a soft penalty below this threshold so
+  // mildly less reliable candidates do not tie perfectly with clean ones.
   const eligibleKeys = new Set(
     completed
       .filter(
         (c) =>
           c.meanFinalScore >= scoreFloor &&
-          c.failureRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION,
+          c.operationalIssueRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION,
       )
       .map((c) => c.candidateKey),
   );
@@ -946,9 +964,10 @@ const pairedDifferenceCI = (
   const diffs = sharedKeys.map((key) => {
     const l = left.get(key);
     const r = right.get(key);
-    return (l?.status === "failed" ? 0 : l?.finalScore ?? 0) -
-      (r?.status === "failed" ? 0 : r?.finalScore ?? 0);
-  });
+    if (!l || !r || l.status !== "completed" || r.status !== "completed") return null;
+    return l.finalScore - r.finalScore;
+  }).filter((diff): diff is number => diff !== null);
+  if (diffs.length < 2) return null;
   const rng = mulberry32(hashString(sharedKeys.join("|")));
   return bootstrapCI(diffs, rng);
 };
@@ -1038,8 +1057,34 @@ const buildRecommendationReasoning = (s: CandidateStats, composite: number): str
   `Consistency ${(s.consistencyScore * 100).toFixed(1)}%, ` +
   `CI95 [${s.ci95Low.toFixed(3)}, ${s.ci95High.toFixed(3)}], ` +
   `Failure rate ${(s.failureRate * 100).toFixed(1)}%, ` +
+  `Operational issues ${(s.operationalIssueRate * 100).toFixed(1)}%, ` +
   `Latency ${Math.round(s.meanLatencyMs)} ms, ` +
   `Cost $${s.meanCostUsd.toFixed(4)}/test.`;
+
+const countsAsOperationalIssue = (row: BenchmarkResult): boolean => {
+  if (row.status === "failed") {
+    return row.failureKind !== "budget_exceeded";
+  }
+  return row.judgeFailureCount > 0;
+};
+
+const comparableCompletedScorePairs = (
+  leftRows: readonly BenchmarkResult[],
+  rightRows: readonly BenchmarkResult[],
+): [number[], number[]] => {
+  const left = new Map(leftRows.map((r) => [resultSampleKey(r), r] as const));
+  const right = new Map(rightRows.map((r) => [resultSampleKey(r), r] as const));
+  const leftScores: number[] = [];
+  const rightScores: number[] = [];
+  for (const key of left.keys()) {
+    const l = left.get(key);
+    const r = right.get(key);
+    if (!l || !r || l.status !== "completed" || r.status !== "completed") continue;
+    leftScores.push(l.finalScore);
+    rightScores.push(r.finalScore);
+  }
+  return [leftScores, rightScores];
+};
 
 export class BenchmarkAnalyzer {
   constructor(private readonly providers: IAIProviderFactory) {}

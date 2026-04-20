@@ -152,6 +152,7 @@ describe("BenchmarkRunner.run", () => {
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.status === "completed")).toBe(true);
     expect(rows.every((r) => r.finalScore > 0)).toBe(true);
+    expect(rows.every((r) => r.judgeFailureCount === 0)).toBe(true);
 
     const final = await benchmarks.findById(bm.id);
     expect(final?.status).toBe("completed");
@@ -474,6 +475,7 @@ describe("BenchmarkRunner.run", () => {
     const [onlyRow] = await results.listByBenchmark(bm.id);
     expect(onlyRow?.status).toBe("completed");
     expect(onlyRow?.judgeVotes).toHaveLength(1);
+    expect(onlyRow?.judgeFailureCount).toBe(1);
     expect(onlyRow?.judgeCostUsd).toBeGreaterThan(0);
     expect(onlyRow?.error).toContain("Partial judge failure");
   });
@@ -813,8 +815,10 @@ describe("BenchmarkRunner.run", () => {
       judgeOutputTokens: 0,
       judgeCostUsd: 0,
       totalCostUsd: 0.019,
+      judgeFailureCount: 0,
       latencyMs: 1,
       status: "completed",
+      failureKind: null,
       error: null,
     });
 

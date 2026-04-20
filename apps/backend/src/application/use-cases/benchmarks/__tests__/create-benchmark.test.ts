@@ -166,7 +166,7 @@ describe("CreateBenchmarkUseCase", () => {
     ).rejects.toThrow(/expected 5/);
   });
 
-  it("defaults multi-version benchmarks to diff-seeking generation mode", async () => {
+  it("defaults multi-version benchmarks to hybrid generation mode", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
     const versions = new InMemoryPromptVersionRepository();
     const v1 = await versions.create({
@@ -192,9 +192,10 @@ describe("CreateBenchmarkUseCase", () => {
       promptVersionIds: [v1.id, v2.id],
     });
 
-    expect(bm.testGenerationMode).toBe("diff-seeking");
+    expect(bm.testGenerationMode).toBe("hybrid");
     const prompt = String(seen[0]?.messages[0]?.content ?? "");
-    expect(prompt).toContain("expose differences between versions");
+    expect(prompt).toContain("balanced benchmark mix");
+    expect(prompt).toContain("70% shared-core coverage and 30% diff-seeking coverage");
     // Anonymous version labels — no chronological hints leak to the generator.
     expect(prompt).toContain("VERSION A");
     expect(prompt).toContain("VERSION B");

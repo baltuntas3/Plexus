@@ -16,6 +16,7 @@ import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 // explicit generation mode:
 // - shared-core: probe behaviour common to all versions.
 // - diff-seeking: prefer cases that expose behavioural differences.
+// - hybrid: mix shared-core traffic with targeted difference-seeking probes.
 // This keeps the generation policy explicit rather than baking one benchmark
 // philosophy into the generator.
 //
@@ -83,6 +84,14 @@ export const buildEvaluationSpec = (
   if (mode === "diff-seeking") {
     return [
       "The system under test has multiple prompt versions being benchmarked against each other. Generate test cases that expose differences between versions where possible: changed constraints, expanded capabilities, tighter refusals, edge cases, and regressions. Prefer realistic requests where at least one version is likely to behave materially differently from another.",
+      "",
+      sections.join("\n\n"),
+    ].join("\n");
+  }
+  if (mode === "hybrid") {
+    return [
+      "The system under test has multiple prompt versions being benchmarked against each other. Generate a balanced benchmark mix: most cases should represent realistic shared traffic common to all versions, but include a meaningful minority of targeted probes that can expose behavioural differences, regressions, or changed constraints when those differences matter.",
+      "Aim for roughly 70% shared-core coverage and 30% diff-seeking coverage. Do not turn the whole benchmark into edge-case hunting; preserve ordinary user traffic as the majority.",
       "",
       sections.join("\n\n"),
     ].join("\n");

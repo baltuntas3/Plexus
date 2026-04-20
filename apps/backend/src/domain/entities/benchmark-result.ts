@@ -13,6 +13,12 @@
 // (accuracy, coherence, instruction) is kept on the row for fast analysis.
 
 export type BenchmarkResultStatus = "completed" | "failed";
+export type BenchmarkFailureKind =
+  | "budget_exceeded"
+  | "timeout"
+  | "solver_error"
+  | "judge_error"
+  | "unknown";
 
 export interface JudgeVote {
   model: string;
@@ -55,9 +61,11 @@ export interface BenchmarkResult {
   judgeOutputTokens: number;
   judgeCostUsd: number;
   totalCostUsd: number;
+  judgeFailureCount: number;
 
   latencyMs: number;
   status: BenchmarkResultStatus;
+  failureKind: BenchmarkFailureKind | null;
   error: string | null;
   createdAt: Date;
 }

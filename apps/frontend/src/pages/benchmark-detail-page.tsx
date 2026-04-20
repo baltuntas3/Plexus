@@ -248,7 +248,7 @@ export const BenchmarkDetailPage = () => {
           </Text>
           {benchmark.costForecast && (
             <Text size="sm" c="dimmed">
-              Task type: {benchmark.taskType} · Estimated run cost: $
+              Task type: {benchmark.taskType} · Heuristic run cost estimate: $
               {benchmark.costForecast.estimatedTotalCostUsd.toFixed(4)} for{" "}
               {benchmark.costForecast.estimatedMatrixCells} cells
             </Text>
@@ -781,7 +781,7 @@ const ResultsTable = ({
           </Table.Tbody>
         </Table>
         <Text size="xs" c="dimmed">
-          Accuracy averages treat failed runs as 0 so this summary stays aligned with the score and failure columns.
+          Quality averages use completed runs only. Failure counts and total cost still include failed runs.
         </Text>
       </Stack>
     </Card>
@@ -845,6 +845,14 @@ const AnalysisPanel = ({
 
   if (!analysis) return null;
 
+  const candidateLabel = (candidateKey: string): string => {
+    const candidate = analysis.candidates.find((entry) => entry.candidateKey === candidateKey);
+    if (!candidate) return candidateKey;
+    const versionLabel =
+      versionLabels[candidate.promptVersionId] ?? candidate.promptVersionId.slice(-6);
+    return `${versionLabel} · ${candidate.solverModel}`;
+  };
+
   return (
     <Stack gap="md">
       {analysis.recommendedKey && (
@@ -855,7 +863,7 @@ const AnalysisPanel = ({
             </ThemeIcon>
             <Stack gap={2}>
               <Text fw={600} size="sm">Recommended setup</Text>
-              <Text size="sm">{analysis.recommendedKey}</Text>
+              <Text size="sm">{candidateLabel(analysis.recommendedKey)}</Text>
               {analysis.recommendationDecision.mode === "paired_cost_tie_break" && (
                 <Group gap="xs">
                   <Badge color="blue" variant="light" size="xs">

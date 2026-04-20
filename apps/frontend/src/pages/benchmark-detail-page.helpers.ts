@@ -110,7 +110,7 @@ export const aggregateBenchmarkResults = (
       versionLabels[result.promptVersionId] ?? result.promptVersionId.slice(-6);
     const existing = rows.get(key);
     if (existing) {
-      existing.finalScore += result.finalScore;
+      existing.finalScore += result.status === "completed" ? result.finalScore : 0;
       existing.accuracyAllRuns += result.status === "completed" ? result.judgeAccuracy : 0;
       existing.costUsd += result.totalCostUsd;
       existing.totalRuns += 1;
@@ -124,7 +124,7 @@ export const aggregateBenchmarkResults = (
       versionId: result.promptVersionId,
       versionLabel,
       solverModel: result.solverModel,
-      finalScore: result.finalScore,
+      finalScore: result.status === "completed" ? result.finalScore : 0,
       accuracyAllRuns: result.status === "completed" ? result.judgeAccuracy : 0,
       costUsd: result.totalCostUsd,
       totalRuns: 1,
@@ -134,8 +134,9 @@ export const aggregateBenchmarkResults = (
   }
 
   for (const row of rows.values()) {
-    row.finalScore = row.totalRuns === 0 ? 0 : row.finalScore / row.totalRuns;
-    row.accuracyAllRuns = row.totalRuns === 0 ? 0 : row.accuracyAllRuns / row.totalRuns;
+    const completedRuns = row.totalRuns - row.failedRuns;
+    row.finalScore = completedRuns <= 0 ? 0 : row.finalScore / completedRuns;
+    row.accuracyAllRuns = completedRuns <= 0 ? 0 : row.accuracyAllRuns / completedRuns;
     row.failureRate = row.totalRuns === 0 ? 0 : row.failedRuns / row.totalRuns;
   }
 

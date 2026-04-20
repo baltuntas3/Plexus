@@ -1,6 +1,7 @@
 import type { HydratedDocument, Types } from "mongoose";
 import {
   benchmarkResultKey,
+  type BenchmarkFailureKind,
   type BenchmarkResult,
   type BenchmarkResultStatus,
   type JudgeVote,
@@ -37,8 +38,10 @@ type BenchmarkResultDoc = HydratedDocument<{
   judgeOutputTokens: number;
   judgeCostUsd: number;
   totalCostUsd: number;
+  judgeFailureCount: number;
   latencyMs: number;
   status: BenchmarkResultStatus;
+  failureKind: BenchmarkFailureKind | null;
   error: string | null;
   createdAt: Date;
 }>;
@@ -68,8 +71,10 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   judgeOutputTokens: doc.judgeOutputTokens,
   judgeCostUsd: doc.judgeCostUsd,
   totalCostUsd: doc.totalCostUsd,
+  judgeFailureCount: doc.judgeFailureCount ?? 0,
   latencyMs: doc.latencyMs,
   status: doc.status,
+  failureKind: doc.failureKind ?? null,
   error: doc.error,
   createdAt: doc.createdAt,
 });

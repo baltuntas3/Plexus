@@ -61,8 +61,10 @@ export const toBenchmarkResultDto = (r: BenchmarkResult): BenchmarkResultDto => 
   judgeOutputTokens: r.judgeOutputTokens,
   judgeCostUsd: r.judgeCostUsd,
   totalCostUsd: r.totalCostUsd,
+  judgeFailureCount: r.judgeFailureCount,
   latencyMs: r.latencyMs,
   status: r.status,
+  failureKind: r.failureKind,
   error: r.error,
   createdAt: r.createdAt.toISOString(),
 });
@@ -88,6 +90,8 @@ export const toBenchmarkAnalysisDto = (
     completedCount: c.completedCount,
     failedCount: c.failedCount,
     failureRate: c.failureRate,
+    operationalIssueCount: c.operationalIssueCount,
+    operationalIssueRate: c.operationalIssueRate,
   })),
   categoryBreakdown: analysis.categoryBreakdown.map((row) => ({
     candidateKey: row.candidateKey,
@@ -103,6 +107,8 @@ export const toBenchmarkAnalysisDto = (
     completedCount: row.completedCount,
     failedCount: row.failedCount,
     failureRate: row.failureRate,
+    operationalIssueCount: row.operationalIssueCount,
+    operationalIssueRate: row.operationalIssueRate,
   })),
   paretoFrontierKeys: analysis.paretoFrontierKeys,
   baselineKey: analysis.baselineKey,

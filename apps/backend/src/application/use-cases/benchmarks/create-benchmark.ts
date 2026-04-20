@@ -71,7 +71,7 @@ export class CreateBenchmarkUseCase {
     const analysisModel = judgeModels[0] ?? null;
     const testGenerationMode =
       command.testGenerationMode ??
-      (resolvedVersions.length > 1 ? "diff-seeking" : "shared-core");
+      (resolvedVersions.length > 1 ? "hybrid" : "shared-core");
     const seed = command.seed ?? generateSeed();
     const taskType = await this.resolveTaskType(resolvedVersions);
 

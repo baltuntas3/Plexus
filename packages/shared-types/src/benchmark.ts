@@ -3,6 +3,12 @@ import type { TaskType } from "./prompt.js";
 
 export type BenchmarkStatus = "draft" | "queued" | "running" | "completed" | "failed";
 export type BenchmarkResultStatus = "completed" | "failed";
+export type BenchmarkFailureKind =
+  | "budget_exceeded"
+  | "timeout"
+  | "solver_error"
+  | "judge_error"
+  | "unknown";
 
 export interface BenchmarkProgressDto {
   completed: number;
@@ -21,7 +27,7 @@ export interface BenchmarkDto {
   solverModels: string[];
   judgeModels: string[];
   generatorModel: string;
-  testGenerationMode: "shared-core" | "diff-seeking";
+  testGenerationMode: "shared-core" | "diff-seeking" | "hybrid";
   analysisModel: string | null;
   taskType: TaskType;
   costForecast: BenchmarkCostForecastDto | null;
@@ -90,8 +96,10 @@ export interface BenchmarkResultDto {
   judgeOutputTokens: number;
   judgeCostUsd: number;
   totalCostUsd: number;
+  judgeFailureCount: number;
   latencyMs: number;
   status: BenchmarkResultStatus;
+  failureKind: BenchmarkFailureKind | null;
   error: string | null;
   createdAt: ISODateString;
 }
@@ -177,6 +185,8 @@ export interface CandidateStatsDto {
   completedCount: number;
   failedCount: number;
   failureRate: number;
+  operationalIssueCount: number;
+  operationalIssueRate: number;
 }
 
 export type BenchmarkCategoryKey = TestCaseCategory | "manual" | "uncategorized";
@@ -195,6 +205,8 @@ export interface CategoryBreakdownRowDto {
   completedCount: number;
   failedCount: number;
   failureRate: number;
+  operationalIssueCount: number;
+  operationalIssueRate: number;
 }
 
 export interface PPDRowDto {

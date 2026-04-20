@@ -54,7 +54,7 @@ export const TEST_CASE_CATEGORIES = [
 export type TestCaseCategory = (typeof TEST_CASE_CATEGORIES)[number];
 
 export type TestCaseSource = "generated" | "manual";
-export type TestGenerationMode = "shared-core" | "diff-seeking";
+export type TestGenerationMode = "shared-core" | "diff-seeking" | "hybrid";
 
 export interface BenchmarkTestCase {
   id: string;

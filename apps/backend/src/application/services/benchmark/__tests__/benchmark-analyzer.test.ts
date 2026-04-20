@@ -33,8 +33,10 @@ const row = (overrides: Partial<BenchmarkResult>): BenchmarkResult => ({
   judgeOutputTokens: 0,
   judgeCostUsd: 0,
   totalCostUsd: 0,
+  judgeFailureCount: 0,
   latencyMs: 0,
   status: "completed",
+  failureKind: null,
   error: null,
   createdAt: new Date(),
   ...overrides,
@@ -64,6 +66,7 @@ describe("aggregateResults", () => {
       row({
         testCaseId: "b",
         status: "failed",
+        failureKind: "solver_error",
         finalScore: 0,
         totalCostUsd: 0.02,
         latencyMs: 150,
@@ -74,8 +77,8 @@ describe("aggregateResults", () => {
     const c = candidates[0]!;
     expect(c.completedCount).toBe(1);
     expect(c.failedCount).toBe(1);
-    expect(c.meanFinalScore).toBeCloseTo(0.4, 6);
-    expect(c.meanAccuracy).toBeCloseTo(2.5, 6);
+    expect(c.meanFinalScore).toBeCloseTo(0.8, 6);
+    expect(c.meanAccuracy).toBeCloseTo(5, 6);
     expect(c.totalCostUsd).toBeCloseTo(0.03, 6);
     expect(c.meanLatencyMs).toBeCloseTo(75, 6);
   });
@@ -85,6 +88,7 @@ describe("aggregateResults", () => {
       row({
         testCaseId: "a",
         status: "failed",
+        failureKind: "timeout",
         finalScore: 0,
         totalCostUsd: 0.02,
         latencyMs: 100,
@@ -94,6 +98,7 @@ describe("aggregateResults", () => {
     expect(stats?.completedCount).toBe(0);
     expect(stats?.failedCount).toBe(1);
     expect(stats?.failureRate).toBe(1);
+    expect(stats?.operationalIssueRate).toBe(1);
   });
 
   it("produces a deterministic 95% CI whose width shrinks as sample size grows", () => {
@@ -160,7 +165,13 @@ describe("computeParetoFrontier", () => {
   it("excludes candidates with no completed cells", () => {
     const candidates = aggregateResults([
       row({ promptVersionId: "vA", finalScore: 0.9, totalCostUsd: 1 }),
-      row({ promptVersionId: "vB", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+      row({
+        promptVersionId: "vB",
+        status: "failed",
+        failureKind: "solver_error",
+        finalScore: 0,
+        totalCostUsd: 0,
+      }),
     ]);
     const frontier = computeParetoFrontier(candidates);
     expect(frontier).toHaveLength(1);
@@ -173,7 +184,14 @@ describe("computeParetoFrontier", () => {
         row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.8, totalCostUsd: 0.5 }),
         row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.82, totalCostUsd: 0.5 }),
         row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 1, totalCostUsd: 0.1 }),
-        row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+        row({
+          promptVersionId: "vFlaky",
+          testCaseId: "b",
+          status: "failed",
+          failureKind: "solver_error",
+          finalScore: 0,
+          totalCostUsd: 0,
+        }),
       ]),
     );
     expect(frontier.map((candidate) => candidate.promptVersionId)).toEqual(["vSteady"]);
@@ -224,7 +242,7 @@ describe("computeAnalysis", () => {
 
   it("returns empty PPD/ranking when there are no completed rows", () => {
     const analysis = computeAnalysis([
-      row({ status: "failed", finalScore: 0, totalCostUsd: 0 }),
+      row({ status: "failed", failureKind: "solver_error", finalScore: 0, totalCostUsd: 0 }),
     ]);
     expect(analysis.ppd).toEqual([]);
     expect(analysis.ranking).toEqual([]);
@@ -248,7 +266,14 @@ describe("computeAnalysis", () => {
       row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.8, totalCostUsd: 0.2 }),
       row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.82, totalCostUsd: 0.2 }),
       row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 0.99, totalCostUsd: 0.05 }),
-      row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+      row({
+        promptVersionId: "vFlaky",
+        testCaseId: "b",
+        status: "failed",
+        failureKind: "solver_error",
+        finalScore: 0,
+        totalCostUsd: 0,
+      }),
     ]);
 
     expect(analysis.ranking.map((entry) => entry.candidateKey)).toEqual([
@@ -262,15 +287,87 @@ describe("computeAnalysis", () => {
     // composite.
     const analysis = computeAnalysis([
       row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 1.0, totalCostUsd: 0.01 }),
-      row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+      row({
+        promptVersionId: "vFlaky",
+        testCaseId: "b",
+        status: "failed",
+        failureKind: "solver_error",
+        finalScore: 0,
+        totalCostUsd: 0,
+      }),
       row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.85, judgeAccuracy: 4, judgeCoherence: 4, judgeInstruction: 4, totalCostUsd: 0.02 }),
       row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.9, judgeAccuracy: 4, judgeCoherence: 4, judgeInstruction: 4, totalCostUsd: 0.02 }),
     ]);
     expect(analysis.recommendedKey).toContain("vSteady");
     const flaky = analysis.candidates.find((c) => c.promptVersionId === "vFlaky");
     expect(flaky?.failureRate).toBeCloseTo(0.5, 6);
+    expect(flaky?.operationalIssueRate).toBeCloseTo(0.5, 6);
     expect(analysis.paretoFrontierKeys.some((key) => key.includes("vFlaky"))).toBe(false);
     expect(analysis.ppd.some((row) => row.candidateKey.includes("vFlaky"))).toBe(false);
+  });
+
+  it("does not disqualify a candidate solely for budget-truncated rows", () => {
+    const analysis = computeAnalysis([
+      row({ promptVersionId: "vBudgeted", testCaseId: "a", finalScore: 0.9, totalCostUsd: 0.05 }),
+      row({
+        promptVersionId: "vBudgeted",
+        testCaseId: "b",
+        status: "failed",
+        failureKind: "budget_exceeded",
+        totalCostUsd: 0,
+      }),
+      row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.85, totalCostUsd: 0.08 }),
+      row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.84, totalCostUsd: 0.08 }),
+    ]);
+
+    const budgeted = analysis.candidates.find((c) => c.promptVersionId === "vBudgeted");
+    expect(budgeted?.failureRate).toBeCloseTo(0.5, 6);
+    expect(budgeted?.operationalIssueRate).toBe(0);
+    expect(analysis.ranking.some((entry) => entry.candidateKey.includes("vBudgeted"))).toBe(true);
+  });
+
+  it("treats partial judge outages as operational issues for reliability", () => {
+    const analysis = computeAnalysis([
+      row({
+        promptVersionId: "vPartial",
+        testCaseId: "a",
+        finalScore: 0.95,
+        judgeFailureCount: 1,
+      }),
+      row({
+        promptVersionId: "vPartial",
+        testCaseId: "b",
+        finalScore: 0.94,
+        judgeFailureCount: 1,
+      }),
+      row({ promptVersionId: "vClean", testCaseId: "a", finalScore: 0.9 }),
+      row({ promptVersionId: "vClean", testCaseId: "b", finalScore: 0.91 }),
+    ]);
+
+    const partial = analysis.candidates.find((c) => c.promptVersionId === "vPartial");
+    expect(partial?.failureRate).toBe(0);
+    expect(partial?.operationalIssueRate).toBe(1);
+    expect(analysis.ranking.some((entry) => entry.candidateKey.includes("vPartial"))).toBe(false);
+  });
+
+  it("applies a soft ranking penalty before the reliability gate is hit", () => {
+    const analysis = computeAnalysis([
+      ...Array.from({ length: 10 }, (_, i) =>
+        row({ promptVersionId: "vClean", testCaseId: `clean-${i}`, finalScore: 0.9 }),
+      ),
+      ...Array.from({ length: 10 }, (_, i) =>
+        row({
+          promptVersionId: "vMostlyClean",
+          testCaseId: `mostly-clean-${i}`,
+          finalScore: 0.9,
+          judgeFailureCount: i === 0 ? 1 : 0,
+        }),
+      ),
+    ]);
+
+    expect(analysis.ranking[0]?.candidateKey).toContain("vClean");
+    const mostlyClean = analysis.candidates.find((c) => c.promptVersionId === "vMostlyClean");
+    expect(mostlyClean?.operationalIssueRate).toBeCloseTo(0.1, 6);
   });
 
   it("prefers the cheaper candidate when CIs overlap", () => {
@@ -434,10 +531,17 @@ describe("computeAnalysis", () => {
       row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.8, totalCostUsd: 0.5 }),
       row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.82, totalCostUsd: 0.5 }),
       row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 1, totalCostUsd: 0.1 }),
-      row({ promptVersionId: "vFlaky", testCaseId: "b", status: "failed", finalScore: 0, totalCostUsd: 0 }),
+      row({
+        promptVersionId: "vFlaky",
+        testCaseId: "b",
+        status: "failed",
+        failureKind: "solver_error",
+        finalScore: 0,
+        totalCostUsd: 0,
+      }),
     ]);
     const flakyKey = candidateKey({ promptVersionId: "vFlaky", solverModel: "llama-3.3-70b-versatile" });
-    expect(analysis.exclusionReasons[flakyKey]).toContain("Failure rate");
+    expect(analysis.exclusionReasons[flakyKey]).toContain("Operational issue rate");
   });
 
   it("uses a gentler consistency ceiling of 0.4", () => {
@@ -481,6 +585,8 @@ describe("computeAnalysis", () => {
           completedCount: 5,
           failedCount: 0,
           failureRate: 0,
+          operationalIssueCount: 0,
+          operationalIssueRate: 0,
         },
         {
           candidateKey: middleKey,
@@ -500,6 +606,8 @@ describe("computeAnalysis", () => {
           completedCount: 5,
           failedCount: 0,
           failureRate: 0,
+          operationalIssueCount: 0,
+          operationalIssueRate: 0,
         },
         {
           candidateKey: cheapKey,
@@ -519,6 +627,8 @@ describe("computeAnalysis", () => {
           completedCount: 5,
           failedCount: 0,
           failureRate: 0,
+          operationalIssueCount: 0,
+          operationalIssueRate: 0,
         },
       ],
       [

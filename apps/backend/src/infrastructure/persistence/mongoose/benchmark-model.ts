@@ -12,7 +12,7 @@ const TEST_CASE_CATEGORIES = [
   "stress",
 ] as const;
 const TEST_CASE_SOURCES = ["generated", "manual"] as const;
-const TEST_GENERATION_MODES = ["shared-core", "diff-seeking"] as const;
+const TEST_GENERATION_MODES = ["shared-core", "diff-seeking", "hybrid"] as const;
 const benchmarkSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },

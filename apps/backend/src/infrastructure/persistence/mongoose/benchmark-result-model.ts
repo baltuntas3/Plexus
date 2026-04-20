@@ -1,6 +1,13 @@
 import { Schema, model } from "mongoose";
 
 const RESULT_STATUSES = ["completed", "failed"] as const;
+const FAILURE_KINDS = [
+  "budget_exceeded",
+  "timeout",
+  "solver_error",
+  "judge_error",
+  "unknown",
+] as const;
 
 // One row per (benchmarkId × testCaseId × promptVersionId × solverModel ×
 // runIndex). The compound unique index is the idempotency contract that lets
@@ -60,9 +67,11 @@ const benchmarkResultSchema = new Schema(
     judgeOutputTokens: { type: Number, required: true, default: 0 },
     judgeCostUsd: { type: Number, required: true, default: 0 },
     totalCostUsd: { type: Number, required: true, default: 0 },
+    judgeFailureCount: { type: Number, required: true, default: 0, min: 0 },
 
     latencyMs: { type: Number, required: true, default: 0 },
     status: { type: String, enum: RESULT_STATUSES, required: true },
+    failureKind: { type: String, enum: FAILURE_KINDS, default: null },
     error: { type: String, default: null },
   },
   { timestamps: { createdAt: true, updatedAt: false } },

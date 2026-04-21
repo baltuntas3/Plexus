@@ -306,7 +306,7 @@ describe("computeAnalysis", () => {
     expect(analysis.ppd.some((row) => row.candidateKey.includes("vFlaky"))).toBe(false);
   });
 
-  it("does not disqualify a candidate solely for budget-truncated rows", () => {
+  it("excludes budget-truncated candidates from ranking when coverage is unequal", () => {
     const analysis = computeAnalysis([
       row({ promptVersionId: "vBudgeted", testCaseId: "a", finalScore: 0.9, totalCostUsd: 0.05 }),
       row({
@@ -323,7 +323,47 @@ describe("computeAnalysis", () => {
     const budgeted = analysis.candidates.find((c) => c.promptVersionId === "vBudgeted");
     expect(budgeted?.failureRate).toBeCloseTo(0.5, 6);
     expect(budgeted?.operationalIssueRate).toBe(0);
-    expect(analysis.ranking.some((entry) => entry.candidateKey.includes("vBudgeted"))).toBe(true);
+    expect(analysis.ranking.some((entry) => entry.candidateKey.includes("vBudgeted"))).toBe(false);
+    expect(analysis.recommendedKey).toBeNull();
+  });
+
+  it("suppresses recommendation when reliable candidates have unequal completed coverage", () => {
+    const analysis = computeAnalysis([
+      row({ promptVersionId: "vA", testCaseId: "a", runIndex: 0, finalScore: 0.91 }),
+      row({ promptVersionId: "vA", testCaseId: "b", runIndex: 0, finalScore: 0.9 }),
+      row({ promptVersionId: "vB", testCaseId: "a", runIndex: 0, finalScore: 0.89 }),
+    ]);
+
+    expect(analysis.recommendedKey).toBeNull();
+    expect(analysis.exclusionReasons).toEqual(
+      expect.objectContaining({
+        [candidateKey({ promptVersionId: "vB", solverModel: "llama-3.3-70b-versatile" })]:
+          expect.stringContaining("Completed-sample coverage differs"),
+      }),
+    );
+  });
+
+  it("derives the score floor from reliable candidates when available", () => {
+    const analysis = computeAnalysis([
+      row({ promptVersionId: "vReliable", testCaseId: "a", finalScore: 0.84 }),
+      row({ promptVersionId: "vReliable", testCaseId: "b", finalScore: 0.85 }),
+      row({
+        promptVersionId: "vUnreliableHigh",
+        testCaseId: "a",
+        finalScore: 1.0,
+      }),
+      row({
+        promptVersionId: "vUnreliableHigh",
+        testCaseId: "b",
+        finalScore: 1.0,
+        judgeVotes: [
+          { model: "judge-a", accuracy: 5, coherence: 5, instruction: 5, reasoning: "", inputTokens: 1, outputTokens: 1, costUsd: 0 },
+        ],
+        judgeFailureCount: 1,
+      }),
+    ]);
+
+    expect(analysis.recommendedKey).toContain("vReliable");
   });
 
   it("treats partial judge outages as operational issues for reliability", () => {

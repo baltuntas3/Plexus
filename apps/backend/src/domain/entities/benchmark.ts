@@ -21,7 +21,13 @@ import type { TaskType } from "@plexus/shared-types";
 // There is no separate "mode" dimension — the version itself determines which
 // prompt format is active.
 
-export type BenchmarkStatus = "draft" | "queued" | "running" | "completed" | "failed";
+export type BenchmarkStatus =
+  | "draft"
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_budget_cap"
+  | "failed";
 
 export interface BenchmarkProgress {
   completed: number;

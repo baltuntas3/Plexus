@@ -60,6 +60,12 @@ interface Cell {
   runIndex: number;
 }
 
+interface CellSlice {
+  sampleKey: string;
+  runIndex: number;
+  cells: Cell[];
+}
+
 export interface BenchmarkRunnerDeps {
   benchmarks: IBenchmarkRepository;
   results: IBenchmarkResultRepository;
@@ -84,26 +90,27 @@ export class BenchmarkRunner {
     });
 
     try {
-      const cells = this.shuffleCells(await this.buildMatrix(bm), bm.seed);
+      const cells = await this.buildMatrix(bm);
       const estimatedCellCostUsd = estimateCellCostUsd(bm, cells.length);
-      const existingKeys = await this.deps.results.findExistingKeys(benchmarkId);
       const existingRows = await this.deps.results.listByBenchmark(benchmarkId);
+      const existingByKey = new Map(existingRows.map((row) => [resultKey(row), row] as const));
       const total = cells.length;
-      let completed = 0;
-      for (const cell of cells) {
-        if (existingKeys.has(cellKey(cell))) completed += 1;
-      }
+      let completed = cells.reduce((sum, cell) => {
+        const row = existingByKey.get(cellKey(cell));
+        return sum + (row?.status === "completed" ? 1 : 0);
+      }, 0);
 
       await this.report(benchmarkId, ctx, completed, total);
 
-      const pending = cells.filter((c) => !existingKeys.has(cellKey(c)));
+      const pending = cells.filter((cell) => existingByKey.get(cellKey(cell))?.status !== "completed");
+      const slices = this.buildSlices(pending, bm.seed);
       const judges = this.buildJudges(bm.judgeModels, bm.taskType);
       const cellTimeout = bm.cellTimeoutMs ?? DEFAULT_CELL_TIMEOUT_MS;
       const budget = bm.budgetUsd ?? DEFAULT_BUDGET_USD;
       let spentUsd = existingRows.reduce((sum, row) => sum + row.totalCostUsd, 0);
-      let reservedUsd = 0;
       let observedCellCosts = 0;
       let observedCellCount = 0;
+      let cappedByBudget = false;
       for (const row of existingRows) {
         observedCellCosts += row.totalCostUsd;
         observedCellCount += 1;
@@ -116,19 +123,13 @@ export class BenchmarkRunner {
         return estimatedCellCostUsd;
       };
 
-      await mapConcurrent(pending, Math.max(1, bm.concurrency), async (cell) => {
-        const reservedForCell = reservePerCellUsd();
-        if (spentUsd + reservedUsd + reservedForCell > budget) {
-          const row = buildFailedRow(bm.id, cell, new BudgetExceededError(spentUsd, budget), {
-            failureKind: "budget_exceeded",
-          });
-          await this.deps.results.upsert(row);
-          completed += 1;
-          await this.report(benchmarkId, ctx, completed, total);
-          return;
+      for (const slice of slices) {
+        const estimatedSliceCostUsd = reservePerCellUsd() * slice.cells.length;
+        if (spentUsd + estimatedSliceCostUsd > budget) {
+          cappedByBudget = true;
+          break;
         }
-        reservedUsd += reservedForCell;
-        try {
+        await mapConcurrent(slice.cells, Math.max(1, bm.concurrency), async (cell) => {
           const row = await withTimeout(
             this.runCell(bm, cell, judges),
             cellTimeout,
@@ -137,17 +138,24 @@ export class BenchmarkRunner {
           observedCellCosts += row.totalCostUsd;
           observedCellCount += 1;
           await this.deps.results.upsert(row);
-          completed += 1;
+          completed += row.status === "completed" ? 1 : 0;
           await this.report(benchmarkId, ctx, completed, total);
-        } finally {
-          reservedUsd -= reservedForCell;
-        }
-      });
+        });
+      }
 
-      await this.deps.benchmarks.updateStatus(benchmarkId, {
-        status: "completed",
-        completedAt: new Date(),
-      });
+      await this.deps.benchmarks.updateStatus(benchmarkId, cappedByBudget
+        ? {
+            status: "completed_with_budget_cap",
+            completedAt: new Date(),
+            error:
+              `Stopped at the $${budget.toFixed(2)} budget cap after completing ` +
+              `${completed}/${total} cells with balanced coverage.`,
+          }
+        : {
+            status: "completed",
+            completedAt: new Date(),
+            error: null,
+          });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await this.deps.benchmarks.updateStatus(benchmarkId, {
@@ -408,24 +416,48 @@ export class BenchmarkRunner {
     await ctx.reportProgress({ completed, total });
   }
 
-  private shuffleCells(cells: readonly Cell[], seed: number): Cell[] {
-    const shuffled = [...cells];
+  private buildSlices(cells: readonly Cell[], seed: number): CellSlice[] {
+    const bySample = new Map<string, CellSlice>();
+    for (const cell of cells) {
+      const key = sampleKey(cell);
+      const existing = bySample.get(key);
+      if (existing) {
+        existing.cells.push(cell);
+        continue;
+      }
+      bySample.set(key, {
+        sampleKey: key,
+        runIndex: cell.runIndex,
+        cells: [cell],
+      });
+    }
+
+    const runBuckets = new Map<number, CellSlice[]>();
+    for (const slice of bySample.values()) {
+      runBuckets.set(slice.runIndex, [...(runBuckets.get(slice.runIndex) ?? []), slice]);
+    }
+
+    return [...runBuckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .flatMap(([runIndex, slices]) =>
+        this.shuffleItems(slices, hashSeed(seed, `run:${runIndex}`)).map((slice) => ({
+          ...slice,
+          cells: this.shuffleItems(slice.cells, hashSeed(seed, slice.sampleKey)),
+        })),
+      );
+  }
+
+  private shuffleItems<T>(items: readonly T[], seed: number): T[] {
+    const shuffled = [...items];
     let state = seed >>> 0;
     for (let i = shuffled.length - 1; i > 0; i -= 1) {
       state = nextShuffleState(state);
       const j = state % (i + 1);
       const tmp = shuffled[i];
-      shuffled[i] = shuffled[j] as Cell;
-      shuffled[j] = tmp as Cell;
+      shuffled[i] = shuffled[j] as T;
+      shuffled[j] = tmp as T;
     }
     return shuffled;
-  }
-}
-
-class BudgetExceededError extends Error {
-  constructor(spent: number, budget: number) {
-    super(`Budget exceeded: $${spent.toFixed(4)} spent of $${budget.toFixed(2)} limit`);
-    this.name = "BudgetExceededError";
   }
 }
 
@@ -453,6 +485,18 @@ const cellKey = (cell: Cell): string =>
     cell.version.id,
     cell.solverModel,
     cell.runIndex,
+  );
+
+const sampleKey = (cell: Cell): string => `${cell.testCase.id}::${cell.runIndex}`;
+
+const resultKey = (
+  row: Pick<UpsertBenchmarkResultInput, "testCaseId" | "promptVersionId" | "solverModel" | "runIndex">,
+): string =>
+  benchmarkResultKey(
+    row.testCaseId,
+    row.promptVersionId,
+    row.solverModel,
+    row.runIndex,
   );
 
 const buildFailedRow = (
@@ -505,7 +549,6 @@ const buildFailedRow = (
 };
 
 const classifyFailureKind = (err: unknown): BenchmarkFailureKind => {
-  if (err instanceof BudgetExceededError) return "budget_exceeded";
   if (err instanceof CellTimeoutError) return "timeout";
   if (err instanceof JudgeExecutionError) return "judge_error";
   if (err instanceof Error) return "unknown";
@@ -541,6 +584,15 @@ const nextShuffleState = (state: number): number => {
   x ^= x >>> 17;
   x ^= x << 5;
   return x >>> 0;
+};
+
+const hashSeed = (seed: number, value: string): number => {
+  let h = seed >>> 0;
+  for (let i = 0; i < value.length; i += 1) {
+    h = (h ^ value.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
 };
 
 // Deterministic 32-bit seed derivation: a stable fold of the benchmark seed

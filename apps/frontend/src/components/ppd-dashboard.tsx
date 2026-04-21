@@ -1,4 +1,5 @@
 import {
+  Alert,
   Badge,
   Card,
   Group,
@@ -56,23 +57,30 @@ export const PPDDashboard = ({ analysis, loading = false, versionLabels }: Props
     return <Text c="dimmed" size="sm">All cells failed — no data for analysis.</Text>;
   }
   const visibleCandidates = reliableCandidates(completedCandidates);
-  const chartCandidates =
-    visibleCandidates.length > 0 ? visibleCandidates : completedCandidates;
 
   return (
     <Stack>
       <VersionComparisonPanel analysis={analysis} versionLabels={versionLabels} />
       <RecommendationBanner analysis={analysis} versionLabels={versionLabels} />
-      <GoldenQuadrantChart
-        analysis={analysis}
-        candidates={chartCandidates}
-        versionLabels={versionLabels}
-      />
-      <PPDTable
-        analysis={analysis}
-        candidates={chartCandidates}
-        versionLabels={versionLabels}
-      />
+      {visibleCandidates.length === 0 ? (
+        <Alert color="yellow" variant="light" title="No reliable setups">
+          All completed candidates exceeded the operational issue threshold, so PPD and
+          frontier views are hidden until a reliable run is available.
+        </Alert>
+      ) : (
+        <>
+          <GoldenQuadrantChart
+            analysis={analysis}
+            candidates={visibleCandidates}
+            versionLabels={versionLabels}
+          />
+          <PPDTable
+            analysis={analysis}
+            candidates={visibleCandidates}
+            versionLabels={versionLabels}
+          />
+        </>
+      )}
     </Stack>
   );
 };
@@ -104,10 +112,7 @@ const VersionComparisonPanel = ({
     const completed = analysis.candidates.filter(
       (c) => c.promptVersionId === vId && c.completedCount > 0,
     );
-    const vCandidates = (() => {
-      const reliable = reliableCandidates(completed);
-      return reliable.length > 0 ? reliable : completed;
-    })();
+    const vCandidates = reliableCandidates(completed);
     if (vCandidates.length === 0) return [];
 
     const bestScore = vCandidates.reduce((a, b) =>
@@ -135,6 +140,10 @@ const VersionComparisonPanel = ({
   });
 
   if (summaries.length < 2) return null;
+
+  summaries.sort((left, right) =>
+    left.versionLabel.localeCompare(right.versionLabel, undefined, { numeric: true }),
+  );
 
   const baseline = summaries[0]!;
 

@@ -35,6 +35,7 @@ const DEFAULT_JUDGE_COUNT = 2;
 const DEFAULT_REPETITIONS = 3;
 const DEFAULT_SOLVER_TEMPERATURE = 0.7;
 const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_BUDGET_USD = 50;
 
 export type CreateBenchmarkCommand = CreateBenchmarkDto & {
   ownerId: string;
@@ -94,6 +95,12 @@ export class CreateBenchmarkUseCase {
       judgeModels,
       repetitions: command.repetitions ?? DEFAULT_REPETITIONS,
     });
+    const budgetUsd = command.budgetUsd ?? DEFAULT_BUDGET_USD;
+    if (costForecast.estimatedTotalCostUsd > budgetUsd) {
+      throw ValidationError(
+        `Estimated benchmark cost $${costForecast.estimatedTotalCostUsd.toFixed(4)} exceeds the $${budgetUsd.toFixed(2)} cap. Reduce test count, solver count, or repetitions.`,
+      );
+    }
 
     const benchmark = await this.benchmarks.create({
       name: command.name,
@@ -119,7 +126,7 @@ export class CreateBenchmarkUseCase {
       })),
       concurrency: command.concurrency ?? DEFAULT_CONCURRENCY,
       cellTimeoutMs: command.cellTimeoutMs ?? null,
-      budgetUsd: command.budgetUsd ?? null,
+      budgetUsd,
     });
 
     const versionLabels: Record<string, string> = {};

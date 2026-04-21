@@ -38,7 +38,7 @@ const SCORE_FLOOR_FRACTION = 0.8;
 // A candidate whose operational-issue rate exceeds this threshold is not
 // eligible to be the recommendation — reliability is a precondition for
 // "best", not a knob to trade against a high mean score.
-const MAX_FAILURE_RATE_FOR_RECOMMENDATION = 0.1;
+const MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION = 0.1;
 
 // finalScore is in [0,1]; stddev 0.25 is the practical ceiling for real LLM
 // benchmark runs (scores alternating near 0 and 1), so anything above it
@@ -418,7 +418,66 @@ const normaliseRubricMean = (value: number): number => {
 
 const isReliableForComparativeViews = (candidate: CandidateStats): boolean =>
   candidate.completedCount > 0 &&
-  candidate.operationalIssueRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION;
+  candidate.operationalIssueRate <= MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION;
+
+const completedSampleKey = (
+  row: Pick<BenchmarkResult, "testCaseId" | "runIndex">,
+): string => `${row.testCaseId}::${row.runIndex}`;
+
+const coverageSignature = (
+  rows: readonly BenchmarkResult[],
+): string =>
+  rows
+    .filter((row) => row.status === "completed")
+    .map((row) => completedSampleKey(row))
+    .sort()
+    .join("|");
+
+const pickComparableCoverageKeys = (
+  candidates: readonly CandidateStats[],
+  results: readonly BenchmarkResult[],
+): Set<string> => {
+  const reliableKeys = new Set(
+    candidates
+      .filter(isReliableForComparativeViews)
+      .map((candidate) => candidate.candidateKey),
+  );
+  if (reliableKeys.size === 0) return new Set();
+
+  const buckets = new Map<
+    string,
+    { candidateKeys: string[]; completedSamples: number }
+  >();
+  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
+  for (const row of results) {
+    const key = candidateKey(row);
+    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
+  }
+
+  for (const candidate of candidates) {
+    if (!reliableKeys.has(candidate.candidateKey)) continue;
+    const rows = rowsByCandidate.get(candidate.candidateKey) ?? [];
+    const signature = coverageSignature(rows);
+    const bucket = buckets.get(signature) ?? {
+      candidateKeys: [],
+      completedSamples: rows.filter((row) => row.status === "completed").length,
+    };
+    bucket.candidateKeys.push(candidate.candidateKey);
+    buckets.set(signature, bucket);
+  }
+
+  const best = [...buckets.entries()]
+    .sort((a, b) => {
+      if (b[1].completedSamples !== a[1].completedSamples) {
+        return b[1].completedSamples - a[1].completedSamples;
+      }
+      if (b[1].candidateKeys.length !== a[1].candidateKeys.length) {
+        return b[1].candidateKeys.length - a[1].candidateKeys.length;
+      }
+      return a[0].localeCompare(b[0]);
+    })[0];
+  return new Set(best?.[1].candidateKeys ?? []);
+};
 
 export interface AnalyzerOptions {
   minScoreFraction?: number;
@@ -807,6 +866,7 @@ const computeSuggestedRepetitions = (
 const computeExclusionReasons = (
   candidates: readonly CandidateStats[],
   ranking: readonly CompositeRanking[],
+  comparableCoverageKeys: ReadonlySet<string>,
 ): Record<string, string> => {
   const rankedKeys = new Set(ranking.map((r) => r.candidateKey));
   const reasons: Record<string, string> = {};
@@ -814,10 +874,13 @@ const computeExclusionReasons = (
     if (rankedKeys.has(c.candidateKey)) continue;
     if (c.completedCount === 0) {
       reasons[c.candidateKey] = "No completed results — all runs failed.";
-    } else if (c.operationalIssueRate > MAX_FAILURE_RATE_FOR_RECOMMENDATION) {
+    } else if (c.operationalIssueRate > MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION) {
       reasons[c.candidateKey] =
         `Operational issue rate ${(c.operationalIssueRate * 100).toFixed(1)}% exceeds ` +
-        `${(MAX_FAILURE_RATE_FOR_RECOMMENDATION * 100).toFixed(0)}% reliability threshold.`;
+        `${(MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION * 100).toFixed(0)}% reliability threshold.`;
+    } else if (!comparableCoverageKeys.has(c.candidateKey)) {
+      reasons[c.candidateKey] =
+        "Completed-sample coverage differs from the comparable candidate set, so ranking would be unfair.";
     }
   }
   return reasons;
@@ -835,7 +898,11 @@ export const computeAnalysis = (
     results,
     options.testCasesById ?? {},
   );
-  const paretoFrontierKeys = computeParetoFrontier(candidates).map((c) => c.candidateKey);
+  const comparableCoverageKeys = pickComparableCoverageKeys(candidates, results);
+  const comparableCandidates = candidates.filter((candidate) =>
+    comparableCoverageKeys.has(candidate.candidateKey),
+  );
+  const paretoFrontierKeys = computeParetoFrontier(comparableCandidates).map((c) => c.candidateKey);
 
   const completed = candidates.filter((c) => c.completedCount > 0);
   if (completed.length === 0) {
@@ -860,54 +927,65 @@ export const computeAnalysis = (
       judgeAgreement: [],
       judgeBias: [],
       varianceDecomposition: { totalVariance: 0, withinRunVariance: 0, acrossTestCaseVariance: 0 },
-      exclusionReasons: computeExclusionReasons(candidates, []),
+      exclusionReasons: computeExclusionReasons(candidates, [], comparableCoverageKeys),
       suggestedRepetitions: 3,
       suggestedRepetitionsRationale: "No completed results to estimate variance.",
     };
   }
 
-  const bestScore = Math.max(...completed.map((c) => c.meanFinalScore));
+  const reliableCompleted = completed.filter(isReliableForComparativeViews);
+  const scoreFloorPool = reliableCompleted.length > 0 ? reliableCompleted : completed;
+  const bestScore = Math.max(...scoreFloorPool.map((c) => c.meanFinalScore));
   const fraction = options.minScoreFraction ?? SCORE_FLOOR_FRACTION;
   const scoreFloor = bestScore * fraction;
 
-  const baseline = pickBaseline(candidates, scoreFloor);
+  const baseline = pickBaseline(comparableCandidates, scoreFloor);
   const baselineKey = baseline ? baseline.candidateKey : null;
 
-  const ranking = computeCompositeRanking(candidates);
+  const ranking = computeCompositeRanking(comparableCandidates);
   // Recommendation order: (1) clear score floor, (2) operational issue rate
   // below threshold, (3) highest composite, (4) tie-break on CI overlap by
   // cheaper mean cost. Reliability remains a hard precondition for "best",
   // but the composite already applies a soft penalty below this threshold so
   // mildly less reliable candidates do not tie perfectly with clean ones.
   const eligibleKeys = new Set(
-    completed
+    comparableCandidates
       .filter(
         (c) =>
           c.meanFinalScore >= scoreFloor &&
-          c.operationalIssueRate <= MAX_FAILURE_RATE_FOR_RECOMMENDATION,
+          c.operationalIssueRate <= MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION,
       )
       .map((c) => c.candidateKey),
   );
   const eligibleRanking = ranking.filter((r) => eligibleKeys.has(r.candidateKey));
-  const recommended = pickWithPairedSignificanceTieBreak(
-    eligibleRanking,
-    completed,
-    results,
-  );
+  const hasCoverageMismatch =
+    comparableCoverageKeys.size > 0 &&
+    comparableCoverageKeys.size !== reliableCompleted.length;
+  const recommended = hasCoverageMismatch
+    ? null
+    : pickWithPairedSignificanceTieBreak(
+        eligibleRanking,
+        reliableCompleted.filter((candidate) => comparableCoverageKeys.has(candidate.candidateKey)),
+        results,
+      );
   const recommendedKey = recommended?.rank.candidateKey ?? null;
   const recommendedStats = recommendedKey
-    ? completed.find((c) => c.candidateKey === recommendedKey) ?? null
+    ? reliableCompleted.find((c) => c.candidateKey === recommendedKey) ?? null
     : null;
 
   const ppd =
     baseline && baseline.totalCostUsd > 0 && baseline.meanFinalScore > 0
-      ? computePPD(candidates, baseline)
+      ? computePPD(comparableCandidates, baseline)
       : [];
 
   const pairwiseComparisons = computePairwiseComparisons(candidates, results);
   const judgeDiagnostics = computeJudgeDiagnostics(results);
   const varianceDecomposition = computeVarianceDecomposition(results);
-  const exclusionReasons = computeExclusionReasons(candidates, ranking);
+  const exclusionReasons = computeExclusionReasons(
+    candidates,
+    ranking,
+    comparableCoverageKeys,
+  );
   const power = computeSuggestedRepetitions(candidates);
 
   return {
@@ -932,7 +1010,7 @@ export const computeAnalysis = (
         }
       : {
           mode: "top_composite",
-          topCompositeKey: eligibleRanking[0]?.candidateKey ?? null,
+          topCompositeKey: hasCoverageMismatch ? null : eligibleRanking[0]?.candidateKey ?? null,
           selectedKey: null,
           comparedAgainstKey: null,
           pairedDiffCiLow: null,

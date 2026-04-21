@@ -480,7 +480,7 @@ describe("BenchmarkRunner.run", () => {
     expect(onlyRow?.error).toContain("Partial judge failure");
   });
 
-  it("does not retry previously failed rows on resume", async () => {
+  it("retries previously failed rows on resume", async () => {
     const { benchmarks, results, versions } = await buildScaffold();
     let callIdx = 0;
     const provider = new RecordingProvider(() => {
@@ -502,10 +502,11 @@ describe("BenchmarkRunner.run", () => {
     expect(provider.calls).toHaveLength(2);
 
     await runner.run(bm.id, buildContext().ctx);
-    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls).toHaveLength(3);
 
     const rows = await results.listByBenchmark(bm.id);
-    expect(rows.filter((row) => row.status === "failed")).toHaveLength(1);
+    expect(rows.filter((row) => row.status === "failed")).toHaveLength(0);
+    expect(rows.filter((row) => row.status === "completed")).toHaveLength(2);
   });
 
   it("captures per-cell errors as failed rows without aborting the benchmark", async () => {
@@ -740,7 +741,7 @@ describe("BenchmarkRunner.run", () => {
     expect(row?.judgeCostUsd).toBeGreaterThan(0);
   });
 
-  it("marks remaining cells as failed when budget is exceeded", async () => {
+  it("stops at a balanced budget boundary without writing budget-failure rows", async () => {
     const { benchmarks, results, versions } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
@@ -757,16 +758,43 @@ describe("BenchmarkRunner.run", () => {
     });
 
     const bm = await queueBenchmark(benchmarks, {
-      budgetUsd: 0.0001,
+      budgetUsd: 0.005,
       repetitions: 3,
       concurrency: 1,
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+      promptVersionIds: [
+        "1",
+        (await versions.create({
+          promptId: "p1",
+          version: "v2",
+          classicalPrompt: "Answer with extra detail.",
+        })).id,
+      ],
     });
     await runner.run(bm.id, buildContext().ctx);
+
+    const final = await benchmarks.findById(bm.id);
     const rows = await results.listByBenchmark(bm.id);
-    const budgetErrors = rows.filter(
-      (r) => r.status === "failed" && r.error?.includes("Budget exceeded"),
-    );
-    expect(budgetErrors.length).toBeGreaterThan(0);
+    expect(final?.status).toBe("completed_with_budget_cap");
+    expect(rows.every((row) => row.failureKind !== "budget_exceeded")).toBe(true);
+    expect(rows).toHaveLength(2);
+
+    const completedByVersion = new Map<string, number>();
+    for (const row of rows) {
+      completedByVersion.set(
+        row.promptVersionId,
+        (completedByVersion.get(row.promptVersionId) ?? 0) + (row.status === "completed" ? 1 : 0),
+      );
+    }
+    expect([...completedByVersion.values()]).toEqual([1, 1]);
   });
 
   it("counts existing spend before resuming a budget-limited benchmark", async () => {
@@ -823,11 +851,10 @@ describe("BenchmarkRunner.run", () => {
     });
 
     await runner.run(bm.id, buildContext().ctx);
+    const final = await benchmarks.findById(bm.id);
     const rows = await results.listByBenchmark(bm.id);
-    const budgetErrors = rows.filter(
-      (r) => r.status === "failed" && r.error?.includes("Budget exceeded"),
-    );
-    expect(budgetErrors.length).toBeGreaterThan(0);
+    expect(final?.status).toBe("completed_with_budget_cap");
+    expect(rows).toHaveLength(1);
   });
 
   it("marks the benchmark failed when it has no test cases", async () => {

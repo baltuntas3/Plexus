@@ -196,11 +196,6 @@ Use category values from this set only: typical, complex, ambiguous, adversarial
 
 Return only the JSON object, no other text.`;
 
-// Category plan remains advisory beyond minimum coverage, but we do require
-// the generator to cover every category that the plan assigns at least once.
-// Without that guard, a benchmark can silently miss whole failure modes
-// (e.g. no adversarial or ambiguous cases) even though the prompt asked for
-// them explicitly.
 const buildCategoryPlan = (count: number): Map<TestCaseCategory, number> => {
   const plan = new Map<TestCaseCategory, number>(
     TEST_CASE_CATEGORIES.map((category) => [category, 0]),
@@ -212,30 +207,13 @@ const buildCategoryPlan = (count: number): Map<TestCaseCategory, number> => {
   return plan;
 };
 
-const validateCategoryCoverage = (
-  testCases: readonly Pick<GeneratedTestCase, "category">[],
-  count: number,
-): void => {
-  if (count < TEST_CASE_CATEGORIES.length) return;
-  const required = buildCategoryPlan(count);
-  const actual = new Map<TestCaseCategory, number>(
-    TEST_CASE_CATEGORIES.map((category) => [category, 0]),
-  );
-  for (const testCase of testCases) {
-    actual.set(testCase.category, (actual.get(testCase.category) ?? 0) + 1);
-  }
-  const missing = TEST_CASE_CATEGORIES.filter((category) => {
-    const target = required.get(category) ?? 0;
-    return target > 0 && (actual.get(category) ?? 0) === 0;
-  });
-  if (missing.length > 0) {
-    throw ValidationError(
-      `Generator missed required category coverage: ${missing.join(", ")}`,
-    );
-  }
-};
-
 const formatCategoryPlan = (count: number): string => {
+  if (count < TEST_CASE_CATEGORIES.length) {
+    return [
+      "- Small benchmark: prioritize realistic and representative traffic over full category spread.",
+      "- Cover the most informative categories for this prompt; do not force one case per category.",
+    ].join("\n");
+  }
   const plan = buildCategoryPlan(count);
   return TEST_CASE_CATEGORIES.map((category) => {
     const target = plan.get(category) ?? 0;
@@ -351,6 +329,5 @@ const finaliseTestCases = (
       `Test case generator returned ${testCases.length} unique cases, expected ${count}`,
     );
   }
-  validateCategoryCoverage(testCases, count);
   return testCases;
 };

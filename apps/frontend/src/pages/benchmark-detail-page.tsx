@@ -67,6 +67,7 @@ const STATUS_COLOR: Record<BenchmarkStatus, string> = {
   queued: "gray",
   running: "blue",
   completed: "green",
+  completed_with_budget_cap: "orange",
   failed: "red",
 };
 
@@ -131,6 +132,7 @@ export const BenchmarkDetailPage = () => {
     if (!id || !tokens || !benchmark) return;
     if (
       benchmark.status === "completed" ||
+      benchmark.status === "completed_with_budget_cap" ||
       benchmark.status === "failed" ||
       benchmark.status === "draft"
     )
@@ -185,7 +187,15 @@ export const BenchmarkDetailPage = () => {
 
   // Auto-load analysis once the benchmark completes.
   useEffect(() => {
-    if (!id || benchmark?.status !== "completed" || analysis || analysisLoading) return;
+    if (
+      !id ||
+      (benchmark?.status !== "completed" &&
+        benchmark?.status !== "completed_with_budget_cap") ||
+      analysis ||
+      analysisLoading
+    ) {
+      return;
+    }
     void handleLoadAnalysis();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [benchmark?.status, id]);
@@ -272,9 +282,15 @@ export const BenchmarkDetailPage = () => {
               Start Benchmark
             </Button>
           )}
-          {(benchmark.status === "queued" || benchmark.status === "failed") && (
+          {(
+            benchmark.status === "queued" ||
+            benchmark.status === "failed" ||
+            benchmark.status === "completed_with_budget_cap"
+          ) && (
             <Button onClick={handleStart} loading={starting}>
-              {benchmark.status === "failed" ? "Resume" : "Start"}
+              {benchmark.status === "failed" || benchmark.status === "completed_with_budget_cap"
+                ? "Resume"
+                : "Start"}
             </Button>
           )}
         </Group>
@@ -314,13 +330,21 @@ export const BenchmarkDetailPage = () => {
           </Tabs.Tab>
           <Tabs.Tab
             value="ppd"
-            disabled={benchmark.status !== "completed" || benchmark.results.length === 0}
+            disabled={
+              (benchmark.status !== "completed" &&
+                benchmark.status !== "completed_with_budget_cap") ||
+              benchmark.results.length === 0
+            }
           >
             PPD / Golden Quadrant
           </Tabs.Tab>
           <Tabs.Tab
             value="judge-analysis"
-            disabled={benchmark.status !== "completed" || benchmark.results.length === 0}
+            disabled={
+              (benchmark.status !== "completed" &&
+                benchmark.status !== "completed_with_budget_cap") ||
+              benchmark.results.length === 0
+            }
           >
             AI Analysis
           </Tabs.Tab>
@@ -379,7 +403,9 @@ export const BenchmarkDetailPage = () => {
         </Tabs.Panel>
 
         <Tabs.Panel value="ppd" pt="md">
-          {id && benchmark.status === "completed" && (
+          {id &&
+            (benchmark.status === "completed" ||
+              benchmark.status === "completed_with_budget_cap") && (
             <PPDDashboard
               analysis={analysis}
               loading={analysisLoading}
@@ -732,7 +758,9 @@ const ResultsTable = ({
       <Stack gap="xs">
         <Group gap="xs">
           <Text fw={600}>Aggregated results</Text>
-          <Text size="xs" c="dimmed">Mean score and total cost per version × solver</Text>
+          <Text size="xs" c="dimmed">
+            Mean completed-run score and observed total cost per version × solver
+          </Text>
         </Group>
         <Table striped highlightOnHover>
           <Table.Thead>
@@ -741,7 +769,7 @@ const ResultsTable = ({
               <Table.Th>Solver</Table.Th>
               <Table.Th>Avg Score</Table.Th>
               <Table.Th>Accuracy</Table.Th>
-              <Table.Th>Total Cost</Table.Th>
+              <Table.Th>Observed Cost</Table.Th>
               <Table.Th>Runs</Table.Th>
               <Table.Th>Failures</Table.Th>
               <Table.Th>Ops Issues</Table.Th>
@@ -790,7 +818,7 @@ const ResultsTable = ({
           </Table.Tbody>
         </Table>
         <Text size="xs" c="dimmed">
-          Quality averages use completed runs only. `Failures` counts hard failed rows; `Ops Issues` also includes partial judge degradation and excludes budget truncation.
+          Quality averages use completed runs only. `Observed Cost` includes spend from all runs, including failed ones when usage was known. `Failures` counts hard failed rows; `Ops Issues` also includes partial judge degradation and excludes budget truncation.
         </Text>
       </Stack>
     </Card>

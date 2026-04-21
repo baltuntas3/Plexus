@@ -1,7 +1,13 @@
 import type { ISODateString, Paginated } from "./common.js";
 import type { TaskType } from "./prompt.js";
 
-export type BenchmarkStatus = "draft" | "queued" | "running" | "completed" | "failed";
+export type BenchmarkStatus =
+  | "draft"
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_budget_cap"
+  | "failed";
 export type BenchmarkResultStatus = "completed" | "failed";
 export type BenchmarkFailureKind =
   | "budget_exceeded"

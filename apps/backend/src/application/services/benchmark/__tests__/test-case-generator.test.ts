@@ -22,7 +22,7 @@ const makeFactory = (text: string): IAIProviderFactory => ({
 });
 
 describe("TestCaseGenerator", () => {
-  it("rejects runs that miss required category coverage", async () => {
+  it("does not force full category coverage when realism calls for repetition", async () => {
     const generator = new TestCaseGenerator(
       makeFactory(
         JSON.stringify({
@@ -36,7 +36,7 @@ describe("TestCaseGenerator", () => {
 
     await expect(
       generator.generate("system", 7, "openai/gpt-oss-20b", 123),
-    ).rejects.toThrow(/category coverage/);
+    ).resolves.toHaveLength(7);
   });
 
   it("does not enforce full category coverage when test count is smaller than the category set", async () => {

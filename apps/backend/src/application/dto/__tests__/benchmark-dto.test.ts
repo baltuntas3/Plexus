@@ -31,8 +31,13 @@ describe("createBenchmarkSchema", () => {
     expect(result.error?.issues[0]?.message).toMatch(/solverModels/);
   });
 
-  it("rejects testCount outside 1..100", () => {
+  it("rejects testCount outside 1..50", () => {
     expect(createBenchmarkSchema.safeParse({ ...baseInput, testCount: 0 }).success).toBe(false);
-    expect(createBenchmarkSchema.safeParse({ ...baseInput, testCount: 101 }).success).toBe(false);
+    expect(createBenchmarkSchema.safeParse({ ...baseInput, testCount: 51 }).success).toBe(false);
+  });
+
+  it("rejects budgetUsd above the hard $50 cap", () => {
+    expect(createBenchmarkSchema.safeParse({ ...baseInput, budgetUsd: 50 }).success).toBe(true);
+    expect(createBenchmarkSchema.safeParse({ ...baseInput, budgetUsd: 50.01 }).success).toBe(false);
   });
 });

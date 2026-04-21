@@ -313,11 +313,11 @@ const EvaluatePanel = ({
       });
       return;
     }
-    if (!Number.isFinite(testCount) || testCount < 1 || testCount > 100) {
+    if (!Number.isFinite(testCount) || testCount < 1 || testCount > 50) {
       notifications.show({
         color: "yellow",
         title: "Invalid test count",
-        message: "Test case count must be between 1 and 100",
+        message: "Test case count must be between 1 and 50",
       });
       return;
     }
@@ -402,7 +402,7 @@ const EvaluatePanel = ({
             label="Test Case Count"
             description="The generator creates this many shared evaluation cases before you review/edit them."
             min={1}
-            max={100}
+            max={50}
             value={testCount}
             onChange={(value) => setTestCount(typeof value === "number" ? value : DEFAULT_TEST_COUNT)}
           />

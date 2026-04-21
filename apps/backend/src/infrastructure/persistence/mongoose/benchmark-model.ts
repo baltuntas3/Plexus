@@ -1,7 +1,14 @@
 import { TASK_TYPES } from "@plexus/shared-types";
 import { Schema, model } from "mongoose";
 
-const BENCHMARK_STATUSES = ["draft", "queued", "running", "completed", "failed"] as const;
+const BENCHMARK_STATUSES = [
+  "draft",
+  "queued",
+  "running",
+  "completed",
+  "completed_with_budget_cap",
+  "failed",
+] as const;
 const TEST_CASE_CATEGORIES = [
   "typical",
   "complex",
@@ -50,7 +57,7 @@ const benchmarkSchema = new Schema(
       },
       default: null,
     },
-    testCount: { type: Number, required: true, min: 1, max: 100 },
+    testCount: { type: Number, required: true, min: 1, max: 50 },
     repetitions: { type: Number, required: true, min: 1, max: 20, default: 3 },
     solverTemperature: { type: Number, required: true, default: 0.7 },
     seed: { type: Number, required: true, default: 0 },
@@ -77,7 +84,7 @@ const benchmarkSchema = new Schema(
     },
     concurrency: { type: Number, required: true, min: 1, max: 16 },
     cellTimeoutMs: { type: Number, default: null, min: 1000 },
-    budgetUsd: { type: Number, default: null, min: 0.01 },
+    budgetUsd: { type: Number, default: 50, min: 0.01, max: 50 },
     status: {
       type: String,
       enum: BENCHMARK_STATUSES,

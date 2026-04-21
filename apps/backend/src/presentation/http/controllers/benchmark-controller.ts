@@ -115,7 +115,12 @@ export class BenchmarkController {
     );
 
     const bm = snapshot.benchmark;
-    if (bm.status === "completed" || bm.status === "failed" || bm.status === "draft") {
+    if (
+      bm.status === "completed" ||
+      bm.status === "completed_with_budget_cap" ||
+      bm.status === "failed" ||
+      bm.status === "draft"
+    ) {
       send("done", { status: bm.status });
       res.end();
       return;
@@ -140,6 +145,7 @@ export class BenchmarkController {
         });
         if (
           latest.benchmark.status === "completed" ||
+          latest.benchmark.status === "completed_with_budget_cap" ||
           latest.benchmark.status === "failed"
         ) {
           send(

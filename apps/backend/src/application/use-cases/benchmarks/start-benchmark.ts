@@ -37,6 +37,14 @@ export class StartBenchmarkUseCase {
     if (bm.status === "queued") {
       throw ValidationError("Benchmark is already queued");
     }
+    if (
+      bm.costForecast &&
+      bm.costForecast.estimatedTotalCostUsd > (bm.budgetUsd ?? 50)
+    ) {
+      throw ValidationError(
+        `Estimated benchmark cost $${bm.costForecast.estimatedTotalCostUsd.toFixed(4)} exceeds the $${(bm.budgetUsd ?? 50).toFixed(2)} cap. Reduce test count, solver count, or repetitions.`,
+      );
+    }
 
     const payload: BenchmarkJobPayload = { benchmarkId: bm.id };
     const jobId = await this.queue.enqueue<BenchmarkJobPayload>(BENCHMARK_JOB_NAME, payload);

@@ -4,8 +4,6 @@ import { InMemoryPromptRepository } from "../../../../__tests__/fakes/in-memory-
 import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
 import type { GenerateRequest, IAIProvider, IAIProviderFactory } from "../../../services/ai-provider.js";
 
-// Mirror the round-robin category plan the generator enforces so the stub
-// satisfies validateCategoryCoverage without hitting a real provider.
 const CATEGORY_CYCLE = [
   "typical",
   "complex",
@@ -92,6 +90,7 @@ describe("CreateBenchmarkUseCase", () => {
     expect(bm.costForecast?.estimatedTotalCostUsd ?? 0).toBeGreaterThan(0);
     expect(bm.repetitions).toBeGreaterThanOrEqual(1);
     expect(bm.concurrency).toBeGreaterThanOrEqual(1);
+    expect(bm.budgetUsd).toBe(50);
     expect(bm.testCount).toBe(5);
     expect(bm.testCases).toHaveLength(5);
     expect(bm.testCases[0]).toMatchObject({ input: expect.any(String), expectedOutput: null });
@@ -201,5 +200,34 @@ describe("CreateBenchmarkUseCase", () => {
     expect(prompt).toContain("VERSION B");
     expect(prompt).not.toContain("VERSION 1");
     expect(prompt).not.toContain("VERSION 2");
+  });
+
+  it("rejects benchmarks whose estimated cost exceeds the budget cap", async () => {
+    const { benchmarks, versions, version } = await buildScaffold();
+    const expensiveProvider: IAIProvider = {
+      generate: async (req: GenerateRequest) => ({
+        text: JSON.stringify({
+          testCases: Array.from({ length: 50 }, (_, i) => ({
+            input: `very long question ${i + 1} `.repeat(200),
+            category: CATEGORY_CYCLE[i % CATEGORY_CYCLE.length],
+          })),
+        }),
+        usage: { inputTokens: 10, outputTokens: 20 },
+        model: req.model,
+      }),
+    };
+    const useCase = new CreateBenchmarkUseCase(benchmarks, versions, {
+      forModel: () => expensiveProvider,
+    });
+
+    await expect(
+      useCase.execute({
+        ...baseCommand(version.id),
+        testCount: 50,
+        solverModels: ["llama-3.3-70b-versatile", "openai/gpt-oss-20b"],
+        repetitions: 10,
+        budgetUsd: 1,
+      }),
+    ).rejects.toThrow(/exceeds the \$1\.00 cap/);
   });
 });

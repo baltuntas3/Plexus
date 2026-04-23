@@ -2,7 +2,7 @@ import type { BenchmarkAnalysis } from "../../services/benchmark/benchmark-analy
 import type { BenchmarkAnalyzer } from "../../services/benchmark/benchmark-analyzer.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
+import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
 // Loads the raw rows for a benchmark and hands them to the unified analyzer.
@@ -25,7 +25,7 @@ export class GetBenchmarkAnalysisUseCase {
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly results: IBenchmarkResultRepository,
-    private readonly versions: IPromptVersionRepository,
+    private readonly promptQueries: IPromptQueryService,
     private readonly analyzer: BenchmarkAnalyzer,
   ) {}
 
@@ -37,7 +37,7 @@ export class GetBenchmarkAnalysisUseCase {
     );
     const results = await this.results.listByBenchmark(benchmark.id);
     const versionLabels = await buildVersionLabels(
-      this.versions,
+      this.promptQueries,
       benchmark.promptVersionIds,
     );
     const testCasesById = Object.fromEntries(
@@ -55,13 +55,13 @@ export class GetBenchmarkAnalysisUseCase {
 }
 
 export const buildVersionLabels = async (
-  versions: IPromptVersionRepository,
+  queries: IPromptQueryService,
   ids: readonly string[],
 ): Promise<Record<string, string>> => {
-  const resolved = await Promise.all(ids.map((id) => versions.findById(id)));
+  const versions = await queries.findVersionsByIds(ids);
   const labels: Record<string, string> = {};
   ids.forEach((id, i) => {
-    const v = resolved[i];
+    const v = versions.get(id);
     labels[id] = v?.name?.trim() || v?.version || `v${i + 1}`;
   });
   return labels;

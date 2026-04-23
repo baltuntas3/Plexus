@@ -4,8 +4,8 @@ import type {
 } from "../../../domain/entities/benchmark.js";
 import type { TaskType } from "@plexus/shared-types";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
-import type { IPromptRepository } from "../../../domain/repositories/prompt-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
+import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
+import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import { NotFoundError, ValidationError } from "../../../domain/errors/domain-error.js";
 import type { CreateBenchmarkDto } from "../../dto/benchmark-dto.js";
 import {
@@ -49,9 +49,8 @@ export interface CreateBenchmarkResult {
 export class CreateBenchmarkUseCase {
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
-    private readonly versions: IPromptVersionRepository,
+    private readonly promptQueries: IPromptQueryService,
     private readonly providers: IAIProviderFactory,
-    private readonly prompts?: IPromptRepository,
   ) {}
 
   async execute(command: CreateBenchmarkCommand): Promise<CreateBenchmarkResult> {
@@ -136,17 +135,14 @@ export class CreateBenchmarkUseCase {
     return { benchmark, versionLabels };
   }
 
-  private async resolveTaskType(
-    versions: Awaited<ReturnType<CreateBenchmarkUseCase["loadVersions"]>>,
-  ): Promise<TaskType> {
-    if (!this.prompts) return "general";
+  private async resolveTaskType(versions: PromptVersion[]): Promise<TaskType> {
     const promptIds = [...new Set(versions.map((version) => version.promptId))];
-    const prompts = await Promise.all(promptIds.map((id) => this.prompts?.findById(id)));
-    const missing = promptIds.filter((_, index) => !prompts[index]);
+    const summaries = await this.promptQueries.findPromptSummariesByIds(promptIds);
+    const missing = promptIds.filter((id) => !summaries.has(id));
     if (missing.length > 0) {
       throw NotFoundError(`Prompt(s) not found: ${missing.join(", ")}`);
     }
-    const taskTypes = [...new Set(prompts.map((prompt) => prompt?.taskType ?? "general"))];
+    const taskTypes = [...new Set([...summaries.values()].map((s) => s.taskType))];
     if (taskTypes.length > 1) {
       throw ValidationError(
         `Benchmark versions span multiple task types (${taskTypes.join(", ")}); compare prompts with the same task type`,
@@ -155,12 +151,12 @@ export class CreateBenchmarkUseCase {
     return (taskTypes[0] ?? "general") as TaskType;
   }
 
-  private async loadVersions(ids: string[]) {
-    const resolved = await Promise.all(ids.map((id) => this.versions.findById(id)));
-    for (let i = 0; i < ids.length; i++) {
-      if (!resolved[i]) throw NotFoundError(`PromptVersion ${ids[i]} not found`);
+  private async loadVersions(ids: string[]): Promise<PromptVersion[]> {
+    const resolved = await this.promptQueries.findVersionsByIds(ids);
+    for (const id of ids) {
+      if (!resolved.has(id)) throw NotFoundError(`PromptVersion ${id} not found`);
     }
-    return resolved as NonNullable<(typeof resolved)[number]>[];
+    return ids.map((id) => resolved.get(id) as PromptVersion);
   }
 }
 
@@ -172,15 +168,13 @@ const estimateTokenCount = (text: string): number => {
 };
 
 export const estimateBenchmarkCost = (input: {
-  versions: Awaited<ReturnType<CreateBenchmarkUseCase["loadVersions"]>>;
+  versions: readonly PromptVersion[];
   generatedInputs: readonly string[];
   solverModels: readonly string[];
   judgeModels: readonly string[];
   repetitions: number;
 }): BenchmarkCostForecast => {
-  const versionPrompts = input.versions.map((version) =>
-    version.braidGraph?.trim() ? version.braidGraph : version.classicalPrompt,
-  );
+  const versionPrompts = input.versions.map((version) => version.executablePrompt);
   const avgSystemPromptTokens = average(versionPrompts.map(estimateTokenCount));
   const avgUserInputTokens = average(input.generatedInputs.map(estimateTokenCount));
   const avgCandidateOutputTokens = Math.max(

@@ -8,7 +8,7 @@ import type { ICacheStore } from "../cache-store.js";
 import { BraidAgentExecutor } from "./braid-agent-executor.js";
 
 export interface BraidGenerationInput {
-  classicalPrompt: string;
+  sourcePrompt: string;
   taskType: TaskType;
   generatorModel: string;
   forceRegenerate?: boolean;
@@ -51,7 +51,7 @@ export class BraidGenerator {
 
     const provider = this.providers.forModel(input.generatorModel);
     const executor = new BraidAgentExecutor(provider, input.generatorModel);
-    const agentResult = await executor.execute(input.classicalPrompt, input.taskType);
+    const agentResult = await executor.execute(input.sourcePrompt, input.taskType);
 
     const mermaidCode = agentResult.mermaidCode;
     // Validate via parser; throws ValidationError on bad output.
@@ -80,7 +80,7 @@ export class BraidGenerator {
 
   private cacheKey(input: BraidGenerationInput): string {
     const hash = createHash("sha256");
-    hash.update(input.classicalPrompt);
+    hash.update(input.sourcePrompt);
     hash.update("|");
     hash.update(input.taskType);
     hash.update("|");

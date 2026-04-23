@@ -6,8 +6,5 @@ import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
 // instructions, otherwise one prompt family receives hidden assistance that
 // the others do not.
 export const buildEvaluationPrompt = (version: PromptVersion): string => {
-  if (version.braidGraph) {
-    return version.braidGraph;
-  }
-  return version.classicalPrompt;
+  return version.executablePrompt;
 };

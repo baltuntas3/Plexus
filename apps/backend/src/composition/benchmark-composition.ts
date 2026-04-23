@@ -3,6 +3,7 @@ import { BenchmarkRunner } from "../application/services/benchmark/benchmark-run
 import { registerBenchmarkJob } from "../application/services/benchmark/benchmark-job.js";
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
 import type { IJobQueue } from "../application/services/job-queue.js";
+import type { IPromptQueryService } from "../application/queries/prompt-query-service.js";
 import { CreateBenchmarkUseCase } from "../application/use-cases/benchmarks/create-benchmark.js";
 import { GetBenchmarkUseCase } from "../application/use-cases/benchmarks/get-benchmark.js";
 import { GetBenchmarkAnalysisUseCase } from "../application/use-cases/benchmarks/get-benchmark-analysis.js";
@@ -11,8 +12,6 @@ import { StartBenchmarkUseCase } from "../application/use-cases/benchmarks/start
 import { UpdateTestCasesUseCase } from "../application/use-cases/benchmarks/update-test-cases.js";
 import { MongoBenchmarkRepository } from "../infrastructure/persistence/mongoose/mongo-benchmark-repository.js";
 import { MongoBenchmarkResultRepository } from "../infrastructure/persistence/mongoose/mongo-benchmark-result-repository.js";
-import { MongoPromptRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-repository.js";
-import { MongoPromptVersionRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-version-repository.js";
 
 export interface BenchmarkComposition {
   createBenchmark: CreateBenchmarkUseCase;
@@ -27,16 +26,15 @@ export interface BenchmarkComposition {
 export const createBenchmarkComposition = (
   aiFactory: IAIProviderFactory,
   queue: IJobQueue,
+  promptQueries: IPromptQueryService,
 ): BenchmarkComposition => {
   const benchmarks = new MongoBenchmarkRepository();
   const results = new MongoBenchmarkResultRepository();
-  const prompts = new MongoPromptRepository();
-  const versions = new MongoPromptVersionRepository();
 
   const runner = new BenchmarkRunner({
     benchmarks,
     results,
-    versions,
+    promptQueries,
     providers: aiFactory,
   });
   registerBenchmarkJob(queue, runner);
@@ -44,12 +42,12 @@ export const createBenchmarkComposition = (
   const analyzer = new BenchmarkAnalyzer(aiFactory);
 
   return {
-    createBenchmark: new CreateBenchmarkUseCase(benchmarks, versions, aiFactory, prompts),
-    startBenchmark: new StartBenchmarkUseCase(benchmarks, versions, queue),
+    createBenchmark: new CreateBenchmarkUseCase(benchmarks, promptQueries, aiFactory),
+    startBenchmark: new StartBenchmarkUseCase(benchmarks, promptQueries, queue),
     listBenchmarks: new ListBenchmarksUseCase(benchmarks),
-    getBenchmark: new GetBenchmarkUseCase(benchmarks, results, versions),
-    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results, versions, analyzer),
-    updateTestCases: new UpdateTestCasesUseCase(benchmarks, versions),
+    getBenchmark: new GetBenchmarkUseCase(benchmarks, results, promptQueries),
+    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results, promptQueries, analyzer),
+    updateTestCases: new UpdateTestCasesUseCase(benchmarks, promptQueries),
     queue,
   };
 };

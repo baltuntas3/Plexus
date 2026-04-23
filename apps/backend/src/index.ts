@@ -22,7 +22,7 @@ const bootstrap = async (): Promise<void> => {
       logger.error({ jobId, jobName, err }, "job failed");
     },
   });
-  const benchmarks = createBenchmarkComposition(ai.factory, queue);
+  const benchmarks = createBenchmarkComposition(ai.factory, queue, prompts.promptQueryService);
   const app = createApp({ auth, prompts, benchmarks });
 
   const server = app.listen(env.PORT, () => {

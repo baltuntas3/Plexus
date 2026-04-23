@@ -1,6 +1,6 @@
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
+import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import type { IJobQueue } from "../../services/job-queue.js";
 import { BENCHMARK_JOB_NAME, type BenchmarkJobPayload } from "../../services/benchmark/benchmark-job.js";
 import { estimateBenchmarkCost } from "./create-benchmark.js";
@@ -24,7 +24,7 @@ export interface StartBenchmarkResult {
 export class StartBenchmarkUseCase {
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
-    private readonly versions: IPromptVersionRepository,
+    private readonly promptQueries: IPromptQueryService,
     private readonly queue: IJobQueue,
   ) {}
 
@@ -40,15 +40,14 @@ export class StartBenchmarkUseCase {
     if (bm.status === "queued") {
       throw ValidationError("Benchmark is already queued");
     }
-    const versions = await Promise.all(
-      bm.promptVersionIds.map((id) => this.versions.findById(id)),
-    );
-    const missing = bm.promptVersionIds.filter((_, index) => !versions[index]);
+    const versionsById = await this.promptQueries.findVersionsByIds(bm.promptVersionIds);
+    const missing = bm.promptVersionIds.filter((id) => !versionsById.has(id));
     if (missing.length > 0) {
       throw ValidationError(`PromptVersion(s) not found: ${missing.join(", ")}`);
     }
+    const versions = bm.promptVersionIds.map((id) => versionsById.get(id)!);
     const costForecast = estimateBenchmarkCost({
-      versions: versions as NonNullable<(typeof versions)[number]>[],
+      versions,
       generatedInputs: bm.testCases.map((testCase) => testCase.input),
       solverModels: bm.solverModels,
       judgeModels: bm.judgeModels,

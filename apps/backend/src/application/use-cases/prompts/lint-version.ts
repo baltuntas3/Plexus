@@ -1,10 +1,8 @@
-import type { IPromptRepository } from "../../../domain/repositories/prompt-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
-import { NotFoundError, ValidationError } from "../../../domain/errors/domain-error.js";
-import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
+import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
+import { ValidationError } from "../../../domain/errors/domain-error.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
-import { ensurePromptAccess } from "./ensure-prompt-access.js";
+import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
 export interface LintVersionCommand {
   promptId: string;
@@ -14,24 +12,16 @@ export interface LintVersionCommand {
 
 export class LintVersionUseCase {
   constructor(
-    private readonly prompts: IPromptRepository,
-    private readonly versions: IPromptVersionRepository,
+    private readonly prompts: IPromptAggregateRepository,
     private readonly linter: GraphLinter,
   ) {}
 
   async execute(command: LintVersionCommand): Promise<GraphQualityScore> {
-    await ensurePromptAccess(this.prompts, command.promptId, command.ownerId);
-    const version = await this.versions.findByPromptAndVersion(
-      command.promptId,
-      command.version,
-    );
-    if (!version) {
-      throw NotFoundError("Version not found");
-    }
+    const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
+    const version = prompt.getVersionOrThrow(command.version);
     if (!version.braidGraph) {
       throw ValidationError("Version has no BRAID graph to lint. Generate one first.");
     }
-    const graph = BraidGraph.parse(version.braidGraph);
-    return this.linter.lint(graph);
+    return this.linter.lint(version.braidGraph);
   }
 }

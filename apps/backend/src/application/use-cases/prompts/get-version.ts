@@ -1,8 +1,6 @@
-import type { IPromptRepository } from "../../../domain/repositories/prompt-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
+import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
-import { NotFoundError } from "../../../domain/errors/domain-error.js";
-import { ensurePromptAccess } from "./ensure-prompt-access.js";
+import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
 export interface GetVersionCommand {
   promptId: string;
@@ -11,17 +9,10 @@ export interface GetVersionCommand {
 }
 
 export class GetVersionUseCase {
-  constructor(
-    private readonly prompts: IPromptRepository,
-    private readonly versions: IPromptVersionRepository,
-  ) {}
+  constructor(private readonly prompts: IPromptAggregateRepository) {}
 
   async execute(command: GetVersionCommand): Promise<PromptVersion> {
-    await ensurePromptAccess(this.prompts, command.promptId, command.ownerId);
-    const version = await this.versions.findByPromptAndVersion(command.promptId, command.version);
-    if (!version) {
-      throw NotFoundError("Version not found");
-    }
-    return version;
+    const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
+    return prompt.getVersionOrThrow(command.version);
   }
 }

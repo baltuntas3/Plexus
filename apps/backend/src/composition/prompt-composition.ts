@@ -1,5 +1,7 @@
-import { MongoPromptRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-repository.js";
-import { MongoPromptVersionRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-version-repository.js";
+import { MongoPromptAggregateRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-aggregate-repository.js";
+import { MongoPromptQueryService } from "../infrastructure/persistence/mongoose/mongo-prompt-query-service.js";
+import type { IPromptQueryService } from "../application/queries/prompt-query-service.js";
+import type { IPromptAggregateRepository } from "../domain/repositories/prompt-aggregate-repository.js";
 import { CreatePromptUseCase } from "../application/use-cases/prompts/create-prompt.js";
 import { ListPromptsUseCase } from "../application/use-cases/prompts/list-prompts.js";
 import { GetPromptUseCase } from "../application/use-cases/prompts/get-prompt.js";
@@ -29,6 +31,8 @@ export interface PromptComposition {
   lintVersion: LintVersionUseCase;
   updateBraidGraph: UpdateBraidGraphUseCase;
   chatBraid: ChatBraidUseCase;
+  promptAggregateRepository: IPromptAggregateRepository;
+  promptQueryService: IPromptQueryService;
 }
 
 export const createPromptComposition = (
@@ -36,21 +40,23 @@ export const createPromptComposition = (
   providers: IAIProviderFactory,
   linter: GraphLinter,
 ): PromptComposition => {
-  const prompts = new MongoPromptRepository();
-  const versions = new MongoPromptVersionRepository();
+  const prompts = new MongoPromptAggregateRepository();
+  const queries = new MongoPromptQueryService();
 
   return {
-    createPrompt: new CreatePromptUseCase(prompts, versions),
-    listPrompts: new ListPromptsUseCase(prompts),
+    createPrompt: new CreatePromptUseCase(prompts),
+    listPrompts: new ListPromptsUseCase(queries),
     getPrompt: new GetPromptUseCase(prompts),
-    createVersion: new CreateVersionUseCase(prompts, versions),
-    listVersions: new ListVersionsUseCase(prompts, versions),
-    getVersion: new GetVersionUseCase(prompts, versions),
-    promoteVersion: new PromoteVersionUseCase(prompts, versions),
-    updateVersionName: new UpdateVersionNameUseCase(prompts, versions),
-    generateBraid: new GenerateBraidUseCase(prompts, versions, generator, linter),
-    lintVersion: new LintVersionUseCase(prompts, versions, linter),
-    updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter),
-    chatBraid: new ChatBraidUseCase(prompts, versions, providers, linter),
+    createVersion: new CreateVersionUseCase(prompts),
+    listVersions: new ListVersionsUseCase(prompts),
+    getVersion: new GetVersionUseCase(prompts),
+    promoteVersion: new PromoteVersionUseCase(prompts),
+    updateVersionName: new UpdateVersionNameUseCase(prompts),
+    generateBraid: new GenerateBraidUseCase(prompts, generator, linter),
+    lintVersion: new LintVersionUseCase(prompts, linter),
+    updateBraidGraph: new UpdateBraidGraphUseCase(prompts, linter),
+    chatBraid: new ChatBraidUseCase(prompts, providers, linter),
+    promptAggregateRepository: prompts,
+    promptQueryService: queries,
   };
 };

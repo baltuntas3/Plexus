@@ -58,7 +58,7 @@ const EditorView = ({ promptId }: EditorViewProps) => {
       .then((d) => {
         if (cancelled) return;
         const latest = d.versions[0];
-        const baseContent = latest?.classicalPrompt ?? "";
+        const baseContent = latest?.sourcePrompt ?? "";
         initDraft({ promptId, baseContent });
       })
       .catch((err: unknown) => {
@@ -88,7 +88,7 @@ const EditorView = ({ promptId }: EditorViewProps) => {
     try {
       const version = await createVersion({
         promptId,
-        input: { classicalPrompt: draft.current },
+        input: { sourcePrompt: draft.current },
       });
       notifications.show({ color: "green", title: "Saved", message: `Created ${version.version}` });
       clearDraft(promptId);

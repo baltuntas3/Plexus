@@ -17,7 +17,7 @@ import type { TaskType } from "@plexus/shared-types";
 // `seed ⊕ hash(cell, runIndex)`.
 //
 // Each PromptVersion uses its own prompt for evaluation: if the version has a
-// braidGraph, that graph is the prompt; otherwise the classicalPrompt is used.
+// braid representation, that graph is the prompt; otherwise sourcePrompt is used.
 // There is no separate "mode" dimension — the version itself determines which
 // prompt format is active.
 

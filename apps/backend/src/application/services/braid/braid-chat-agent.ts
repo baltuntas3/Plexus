@@ -24,7 +24,7 @@ export interface ChatOutput {
 }
 
 export interface ChatInput {
-  classicalPrompt: string;
+  sourcePrompt: string;
   taskType: TaskType;
   userMessage: string;
   currentMermaid?: string;
@@ -88,17 +88,17 @@ export class BraidChatAgent {
 
   async chat(input: ChatInput): Promise<ChatOutput> {
     if (input.currentMermaid) {
-      return this.refine(input.currentMermaid, input.classicalPrompt, input.userMessage);
+      return this.refine(input.currentMermaid, input.sourcePrompt, input.userMessage);
     }
-    return this.generate(input.classicalPrompt, input.userMessage);
+    return this.generate(input.sourcePrompt, input.userMessage);
   }
 
   // ── Initial generation ───────────────────────────────────────────────────
 
-  private async generate(classicalPrompt: string, userMessage: string): Promise<ChatOutput> {
+  private async generate(sourcePrompt: string, userMessage: string): Promise<ChatOutput> {
     const taskDescription = userMessage
-      ? `${classicalPrompt}\n\nUser instruction: ${userMessage}`
-      : classicalPrompt;
+      ? `${sourcePrompt}\n\nUser instruction: ${userMessage}`
+      : sourcePrompt;
 
     const systemPrompt = [
       "You are an expert BRAID graph designer working interactively with a user.",
@@ -127,7 +127,7 @@ export class BraidChatAgent {
 
   private async refine(
     currentMermaid: string,
-    classicalPrompt: string,
+    sourcePrompt: string,
     userMessage: string,
   ): Promise<ChatOutput> {
     const systemPrompt = [
@@ -160,7 +160,7 @@ export class BraidChatAgent {
           content: [
             "Original task (classical prompt):",
             "---",
-            classicalPrompt,
+            sourcePrompt,
             "---",
             "",
             "Current BRAID graph:",

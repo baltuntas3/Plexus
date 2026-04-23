@@ -1,12 +1,10 @@
 import { CreatePromptUseCase } from "../create-prompt.js";
 import { CreateVersionUseCase } from "../create-version.js";
 import { PromoteVersionUseCase } from "../promote-version.js";
-import { InMemoryPromptRepository } from "../../../../__tests__/fakes/in-memory-prompt-repository.js";
-import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
+import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
 
 describe("PromoteVersionUseCase", () => {
-  let prompts: InMemoryPromptRepository;
-  let versions: InMemoryPromptVersionRepository;
+  let prompts: InMemoryPromptAggregateRepository;
   let createPrompt: CreatePromptUseCase;
   let createVersion: CreateVersionUseCase;
   let promoteVersion: PromoteVersionUseCase;
@@ -14,11 +12,10 @@ describe("PromoteVersionUseCase", () => {
   const ownerId = "user-1";
 
   beforeEach(async () => {
-    prompts = new InMemoryPromptRepository();
-    versions = new InMemoryPromptVersionRepository();
-    createPrompt = new CreatePromptUseCase(prompts, versions);
-    createVersion = new CreateVersionUseCase(prompts, versions);
-    promoteVersion = new PromoteVersionUseCase(prompts, versions);
+    prompts = new InMemoryPromptAggregateRepository();
+    createPrompt = new CreatePromptUseCase(prompts);
+    createVersion = new CreateVersionUseCase(prompts);
+    promoteVersion = new PromoteVersionUseCase(prompts);
 
     const { prompt } = await createPrompt.execute({
       ownerId,
@@ -62,7 +59,7 @@ describe("PromoteVersionUseCase", () => {
     await createVersion.execute({
       promptId,
       ownerId,
-      classicalPrompt: "Updated prompt",
+      sourcePrompt: "Updated prompt",
     });
     await promoteVersion.execute({
       promptId,
@@ -71,9 +68,9 @@ describe("PromoteVersionUseCase", () => {
       targetStatus: "production",
     });
 
-    const v1 = await versions.findByPromptAndVersion(promptId, "v1");
-    const v2 = await versions.findByPromptAndVersion(promptId, "v2");
     const prompt = await prompts.findById(promptId);
+    const v1 = prompt?.getVersion("v1");
+    const v2 = prompt?.getVersion("v2");
 
     expect(v1?.status).toBe("staging");
     expect(v2?.status).toBe("production");

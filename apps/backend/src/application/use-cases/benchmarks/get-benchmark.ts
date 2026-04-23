@@ -2,7 +2,7 @@ import type { Benchmark } from "../../../domain/entities/benchmark.js";
 import type { BenchmarkResult } from "../../../domain/entities/benchmark-result.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
+import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 import { buildVersionLabels } from "./get-benchmark-analysis.js";
 
@@ -24,7 +24,7 @@ export class GetBenchmarkUseCase {
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly results: IBenchmarkResultRepository,
-    private readonly versions: IPromptVersionRepository,
+    private readonly promptQueries: IPromptQueryService,
   ) {}
 
   async execute(command: GetBenchmarkCommand): Promise<GetBenchmarkResult> {
@@ -35,7 +35,7 @@ export class GetBenchmarkUseCase {
     );
     const [results, versionLabels] = await Promise.all([
       this.results.listByBenchmark(benchmark.id),
-      buildVersionLabels(this.versions, benchmark.promptVersionIds),
+      buildVersionLabels(this.promptQueries, benchmark.promptVersionIds),
     ]);
     return { benchmark, results, versionLabels };
   }

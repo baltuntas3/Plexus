@@ -57,7 +57,7 @@ describe("prompt-builder defaults", () => {
 
   it("enhanced builder produces a two-message chat with system + user", () => {
     const messages = enhancedBuilder({
-      classicalPrompt: "Summarize the article",
+      sourcePrompt: "Summarize the article",
       conversationText: "Summarize the article",
     });
     expect(messages).toHaveLength(2);
@@ -68,7 +68,7 @@ describe("prompt-builder defaults", () => {
 
   it("a1 builder is still reachable as a baseline (paper-pure)", () => {
     const messages = a1Builder({
-      classicalPrompt: "Summarize",
+      sourcePrompt: "Summarize",
       conversationText: "Summarize",
     });
     expect(messages).toHaveLength(2);

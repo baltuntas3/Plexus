@@ -1,7 +1,7 @@
 import type {
-  IPromptRepository,
-  PromptListResult,
-} from "../../../domain/repositories/prompt-repository.js";
+  IPromptQueryService,
+  PromptSummaryListResult,
+} from "../../queries/prompt-query-service.js";
 import type { ListPromptsQueryDto } from "../../dto/prompt-dto.js";
 
 export interface ListPromptsCommand extends ListPromptsQueryDto {
@@ -9,10 +9,10 @@ export interface ListPromptsCommand extends ListPromptsQueryDto {
 }
 
 export class ListPromptsUseCase {
-  constructor(private readonly prompts: IPromptRepository) {}
+  constructor(private readonly queries: IPromptQueryService) {}
 
-  async execute(command: ListPromptsCommand): Promise<PromptListResult> {
-    return this.prompts.list({
+  async execute(command: ListPromptsCommand): Promise<PromptSummaryListResult> {
+    return this.queries.listPromptSummaries({
       ownerId: command.ownerId,
       page: command.page,
       pageSize: command.pageSize,

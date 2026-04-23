@@ -22,7 +22,7 @@ export interface AgentExecutionResult {
 }
 
 interface AgentState {
-  classicalPrompt: string;
+  sourcePrompt: string;
   taskType: TaskType;
   analysisContext: string;
   structurePlan: string;
@@ -80,12 +80,12 @@ export class BraidAgentExecutor {
     this.metaGraph = BraidGraph.parse(BRAID_AGENT_MERMAID);
   }
 
-  async execute(classicalPrompt: string, taskType: TaskType): Promise<AgentExecutionResult> {
+  async execute(sourcePrompt: string, taskType: TaskType): Promise<AgentExecutionResult> {
     const adj = buildAdjacency(this.metaGraph);
     const nodeMap = new Map(this.metaGraph.nodes.map((n) => [n.id, n.label]));
 
     const state: AgentState = {
-      classicalPrompt,
+      sourcePrompt,
       taskType,
       analysisContext: "",
       structurePlan: "",
@@ -200,7 +200,7 @@ export class BraidAgentExecutor {
           role: "user",
           content: [
             `Step: ${nodeLabel}`,
-            `\nClassical prompt:\n${state.classicalPrompt}`,
+            `\nClassical prompt:\n${state.sourcePrompt}`,
             `\nTask type: ${state.taskType}`,
             `\nPrevious analysis:\n${state.analysisContext || "(none)"}`,
           ].join(""),
@@ -226,7 +226,7 @@ export class BraidAgentExecutor {
         },
         {
           role: "user",
-          content: `Design task: ${nodeLabel}\n\nClassical prompt:\n${state.classicalPrompt}\n\nAnalysis:\n${state.analysisContext}`,
+          content: `Design task: ${nodeLabel}\n\nClassical prompt:\n${state.sourcePrompt}\n\nAnalysis:\n${state.analysisContext}`,
         },
       ],
     });
@@ -240,7 +240,7 @@ export class BraidAgentExecutor {
     // Reuse the full enhanced generation prompt for the initial draft.
     // The executor's analysis and structure plan are appended as context.
     const conversationText = [
-      state.classicalPrompt,
+      state.sourcePrompt,
       state.analysisContext ? `\n\nAnalysis context:\n${state.analysisContext}` : "",
       state.structurePlan ? `\n\nStructure plan:\n${state.structurePlan}` : "",
     ].join("");
@@ -291,7 +291,7 @@ export class BraidAgentExecutor {
         { role: "system", content: "Answer with 'yes' or 'no' only." },
         {
           role: "user",
-          content: `Question: ${nodeLabel}\n\nClassical prompt:\n${state.classicalPrompt}\n\nAnalysis:\n${state.analysisContext}`,
+          content: `Question: ${nodeLabel}\n\nClassical prompt:\n${state.sourcePrompt}\n\nAnalysis:\n${state.analysisContext}`,
         },
       ],
     });

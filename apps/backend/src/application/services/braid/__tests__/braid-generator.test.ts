@@ -30,7 +30,7 @@ describe.skip("BraidGenerator", () => {
     );
 
     const result = await generator.generate({
-      classicalPrompt: "Summarize the text",
+      sourcePrompt: "Summarize the text",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
@@ -50,7 +50,7 @@ describe.skip("BraidGenerator", () => {
     );
 
     const result = await generator.generate({
-      classicalPrompt: "Summarize the text",
+      sourcePrompt: "Summarize the text",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
@@ -65,12 +65,12 @@ describe.skip("BraidGenerator", () => {
     );
 
     await generator.generate({
-      classicalPrompt: "Summarize",
+      sourcePrompt: "Summarize",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
     const second = await generator.generate({
-      classicalPrompt: "Summarize",
+      sourcePrompt: "Summarize",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
@@ -87,12 +87,12 @@ describe.skip("BraidGenerator", () => {
     );
 
     await generator.generate({
-      classicalPrompt: "Summarize",
+      sourcePrompt: "Summarize",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
     await generator.generate({
-      classicalPrompt: "Summarize",
+      sourcePrompt: "Summarize",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
       forceRegenerate: true,
@@ -101,7 +101,7 @@ describe.skip("BraidGenerator", () => {
     expect(provider.calls).toBe(2);
   });
 
-  it("re-fetches when classicalPrompt changes", async () => {
+  it("re-fetches when sourcePrompt changes", async () => {
     const provider = makeProvider(VALID_GRAPH);
     const generator = new BraidGenerator(
       new FakeAIProviderFactory(provider),
@@ -109,12 +109,12 @@ describe.skip("BraidGenerator", () => {
     );
 
     await generator.generate({
-      classicalPrompt: "Summarize A",
+      sourcePrompt: "Summarize A",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
     await generator.generate({
-      classicalPrompt: "Summarize B",
+      sourcePrompt: "Summarize B",
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
@@ -131,7 +131,7 @@ describe.skip("BraidGenerator", () => {
 
     await expect(
       generator.generate({
-        classicalPrompt: "Summarize",
+        sourcePrompt: "Summarize",
         taskType: "general",
         generatorModel: "openai/gpt-oss-20b",
       }),
@@ -147,7 +147,7 @@ describe.skip("BraidGenerator", () => {
 
     await expect(
       generator.generate({
-        classicalPrompt: "Summarize",
+        sourcePrompt: "Summarize",
         taskType: "general",
         generatorModel: "openai/gpt-oss-20b",
       }),
@@ -163,7 +163,7 @@ describe.skip("BraidGenerator", () => {
 
     await expect(
       generator.generate({
-        classicalPrompt: "Summarize",
+        sourcePrompt: "Summarize",
         taskType: "general",
         generatorModel: "openai/gpt-oss-20b",
       }),
@@ -171,7 +171,7 @@ describe.skip("BraidGenerator", () => {
 
     await expect(
       generator.generate({
-        classicalPrompt: "Summarize",
+        sourcePrompt: "Summarize",
         taskType: "general",
         generatorModel: "openai/gpt-oss-20b",
       }),

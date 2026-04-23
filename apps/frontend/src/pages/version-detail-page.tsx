@@ -482,7 +482,7 @@ export const VersionDetailPage = () => {
         setPrompt(d.prompt);
         const found = d.versions.find((v) => v.version === version) ?? null;
         setCurrent(found);
-        setDraftContent(found?.classicalPrompt ?? "");
+        setDraftContent(found?.sourcePrompt ?? "");
         setBraidDraft(found?.braidGraph ?? "");
         setLiveMermaid(found?.braidGraph ?? null);
         if (found?.braidGraph) {
@@ -507,7 +507,7 @@ export const VersionDetailPage = () => {
     try {
       const newVersion = await createVersion({
         promptId: id,
-        input: { classicalPrompt: draftContent },
+        input: { sourcePrompt: draftContent },
       });
       notifications.show({
         color: "green",
@@ -525,7 +525,7 @@ export const VersionDetailPage = () => {
   };
 
   const handleCancelEdit = () => {
-    setDraftContent(current?.classicalPrompt ?? "");
+    setDraftContent(current?.sourcePrompt ?? "");
     setEditing(false);
   };
 
@@ -709,7 +709,7 @@ export const VersionDetailPage = () => {
                   <Button
                     loading={saving}
                     onClick={handleSaveAsNewVersion}
-                    disabled={draftContent === current.classicalPrompt}
+                    disabled={draftContent === current.sourcePrompt}
                   >
                     Save as new version
                   </Button>
@@ -720,8 +720,8 @@ export const VersionDetailPage = () => {
               {compareVersion && !editing ? (
                 <DiffEditor
                   height="60vh"
-                  original={compareVersion.classicalPrompt}
-                  modified={current.classicalPrompt}
+                  original={compareVersion.sourcePrompt}
+                  modified={current.sourcePrompt}
                   language="markdown"
                   theme="vs-dark"
                   options={{ readOnly: true, minimap: { enabled: false }, renderSideBySide: true }}
@@ -731,7 +731,7 @@ export const VersionDetailPage = () => {
                   key={editing ? "edit-mode" : "view-mode"}
                   height="60vh"
                   defaultLanguage="markdown"
-                  value={editing ? draftContent : current.classicalPrompt}
+                  value={editing ? draftContent : current.sourcePrompt}
                   onChange={editing ? (v) => setDraftContent(v ?? "") : undefined}
                   theme="vs-dark"
                   options={{

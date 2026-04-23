@@ -24,7 +24,7 @@ export interface PromptVersionDto {
   // User-friendly label for this version. Null means the user has not named
   // it; UIs should fall back to `version` (e.g. "v1") in that case.
   name: string | null;
-  classicalPrompt: string;
+  sourcePrompt: string;
   braidGraph: string | null;
   generatorModel: string | null;
   solverModel: string | null;
@@ -41,7 +41,7 @@ export interface CreatePromptRequest {
 }
 
 export interface CreateVersionRequest {
-  classicalPrompt: string;
+  sourcePrompt: string;
   name?: string;
 }
 

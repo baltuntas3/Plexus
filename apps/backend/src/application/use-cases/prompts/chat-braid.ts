@@ -1,6 +1,4 @@
-import type { IPromptRepository } from "../../../domain/repositories/prompt-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
-import { NotFoundError } from "../../../domain/errors/domain-error.js";
+import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import { TokenCost } from "../../../domain/value-objects/token-cost.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
@@ -8,7 +6,7 @@ import type { IAIProviderFactory } from "../../services/ai-provider.js";
 import { calculateCost } from "../../services/model-registry.js";
 import { BraidChatAgent } from "../../services/braid/braid-chat-agent.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
-import { ensurePromptAccess } from "./ensure-prompt-access.js";
+import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
 export interface ChatBraidCommand {
   promptId: string;
@@ -33,28 +31,20 @@ export type ChatBraidResult =
 
 export class ChatBraidUseCase {
   constructor(
-    private readonly prompts: IPromptRepository,
-    private readonly versions: IPromptVersionRepository,
+    private readonly prompts: IPromptAggregateRepository,
     private readonly providers: IAIProviderFactory,
     private readonly linter: GraphLinter,
   ) {}
 
   async execute(command: ChatBraidCommand): Promise<ChatBraidResult> {
-    const prompt = await ensurePromptAccess(this.prompts, command.promptId, command.ownerId);
-
-    const version = await this.versions.findByPromptAndVersion(
-      command.promptId,
-      command.version,
-    );
-    if (!version) {
-      throw NotFoundError("Version not found");
-    }
+    const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
+    const version = prompt.getVersionOrThrow(command.version);
 
     const provider = this.providers.forModel(command.generatorModel);
     const agent = new BraidChatAgent(provider, command.generatorModel);
 
     const chatResult = await agent.chat({
-      classicalPrompt: version.classicalPrompt,
+      sourcePrompt: version.sourcePrompt,
       taskType: prompt.taskType,
       userMessage: command.userMessage,
       currentMermaid: command.currentMermaid,
@@ -76,22 +66,25 @@ export class ChatBraidUseCase {
     const qualityScore = this.linter.lint(graph);
 
     if (command.currentMermaid) {
-      // Refinement — update the existing BRAID version in place.
-      await this.versions.updateBraidGraph(version.id, graph.mermaidCode);
+      prompt.updateBraidGraph(command.version, graph);
+      await this.prompts.save(prompt);
       return { type: "diagram", mermaidCode: graph.mermaidCode, newVersionName: null, qualityScore, cost };
     }
 
-    // Initial generation — create a new version so the classical prompt
-    // and the BRAID version are separate, comparable entries.
-    const count = await this.versions.countByPrompt(command.promptId);
-    const newVersionName = `v${count + 1}`;
-    const newVersion = await this.versions.create({
-      promptId: command.promptId,
-      version: newVersionName,
-      classicalPrompt: version.classicalPrompt,
+    const { version: newVersion } = prompt.attachGeneratedBraid({
+      sourceVersion: command.version,
+      graph,
+      generatorModel: command.generatorModel,
+      newVersionId: await this.prompts.nextVersionId(),
     });
-    await this.versions.setBraidGraph(newVersion.id, graph.mermaidCode, command.generatorModel);
+    await this.prompts.save(prompt);
 
-    return { type: "diagram", mermaidCode: graph.mermaidCode, newVersionName, qualityScore, cost };
+    return {
+      type: "diagram",
+      mermaidCode: graph.mermaidCode,
+      newVersionName: newVersion.version,
+      qualityScore,
+      cost,
+    };
   }
 }

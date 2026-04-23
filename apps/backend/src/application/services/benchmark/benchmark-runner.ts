@@ -14,7 +14,7 @@ import type {
   IBenchmarkResultRepository,
   UpsertBenchmarkResultInput,
 } from "../../../domain/repositories/benchmark-result-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
+import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { mapConcurrent } from "../../utils/map-concurrent.js";
 import type { IAIProviderFactory } from "../ai-provider.js";
@@ -46,9 +46,9 @@ import type { GenerateResponse } from "../ai-provider.js";
 // inside the judge. Reference-free rows are left as judged; we do not apply
 // any benchmark-relative length penalty after the fact.
 //
-// The system prompt for each cell is determined by the PromptVersion: if it
-// has a braidGraph, that graph becomes the system prompt; otherwise
-// classicalPrompt is used. There is no separate mode field and no benchmark-
+// The system prompt for each cell is determined by the PromptVersion: if its
+// representation is braid, that graph becomes the system prompt; otherwise
+// sourcePrompt is used. There is no separate mode field and no benchmark-
 // specific instruction prefix is injected.
 
 const DEFAULT_CELL_TIMEOUT_MS = 120_000;
@@ -69,7 +69,7 @@ interface CellSlice {
 export interface BenchmarkRunnerDeps {
   benchmarks: IBenchmarkRepository;
   results: IBenchmarkResultRepository;
-  versions: IPromptVersionRepository;
+  promptQueries: IPromptQueryService;
   providers: IAIProviderFactory;
   // Seam for tests — production path instantiates LLMJudge per judge model.
   judgeFactory?: (model: string, taskType: Benchmark["taskType"]) => IJudge;
@@ -198,23 +198,12 @@ export class BenchmarkRunner {
   }
 
   private async loadVersions(ids: readonly string[]): Promise<PromptVersion[]> {
-    const found = await Promise.all(
-      ids.map((id) => this.deps.versions.findById(id)),
-    );
-    const missing: string[] = [];
-    const versions: PromptVersion[] = [];
-    for (let i = 0; i < ids.length; i += 1) {
-      const v = found[i];
-      if (!v) {
-        missing.push(ids[i] as string);
-      } else {
-        versions.push(v);
-      }
-    }
+    const found = await this.deps.promptQueries.findVersionsByIds(ids);
+    const missing = ids.filter((id) => !found.has(id));
     if (missing.length > 0) {
       throw NotFoundError(`PromptVersion(s) not found: ${missing.join(", ")}`);
     }
-    return versions;
+    return ids.map((id) => found.get(id) as PromptVersion);
   }
 
   private buildJudges(

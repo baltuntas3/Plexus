@@ -10,7 +10,7 @@ export const createPromptInputSchema = z.object({
 export type CreatePromptInputDto = z.infer<typeof createPromptInputSchema>;
 
 export const createVersionInputSchema = z.object({
-  classicalPrompt: z.string().min(1).max(20_000),
+  sourcePrompt: z.string().min(1).max(20_000),
   name: z.string().trim().min(1).max(80).optional(),
 });
 export type CreateVersionInputDto = z.infer<typeof createVersionInputSchema>;

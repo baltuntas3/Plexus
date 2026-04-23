@@ -7,10 +7,18 @@ import type {
 } from "@plexus/shared-types";
 import type { Prompt } from "../../../domain/entities/prompt.js";
 import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
+import type { PromptSummary } from "../../../application/queries/prompt-query-service.js";
 import type { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 
-export const toPromptDto = (prompt: Prompt): PromptDto => ({
+// Duck-types over both the Prompt aggregate and the PromptSummary read view so
+// list controllers can render without hydrating a full aggregate.
+type PromptLike = Pick<
+  Prompt,
+  "id" | "name" | "description" | "taskType" | "ownerId" | "productionVersion" | "createdAt" | "updatedAt"
+> | PromptSummary;
+
+export const toPromptDto = (prompt: PromptLike): PromptDto => ({
   id: prompt.id,
   name: prompt.name,
   description: prompt.description,
@@ -26,9 +34,10 @@ export const toPromptVersionDto = (version: PromptVersion): PromptVersionDto => 
   promptId: version.promptId,
   version: version.version,
   name: version.name,
-  classicalPrompt: version.classicalPrompt,
-  braidGraph: version.braidGraph,
-  generatorModel: version.generatorModel,
+  sourcePrompt: version.sourcePrompt,
+  braidGraph: version.braidGraph?.mermaidCode ?? null,
+  generatorModel:
+    version.representation.kind === "braid" ? version.representation.generatorModel : null,
   solverModel: version.solverModel,
   status: version.status,
   createdAt: version.createdAt.toISOString(),

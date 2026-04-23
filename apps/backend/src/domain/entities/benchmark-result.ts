@@ -6,7 +6,7 @@
 //
 // The prompt used for each cell is determined by the PromptVersion itself:
 // if braidGraph is set, the BRAID graph is the system prompt; otherwise the
-// classicalPrompt is used. There is no separate mode field.
+// sourcePrompt is used. There is no separate mode field.
 //
 // Each row is graded by every judge in the benchmark's `judgeModels`; the
 // individual votes are stored on `judgeVotes` and the aggregated mean

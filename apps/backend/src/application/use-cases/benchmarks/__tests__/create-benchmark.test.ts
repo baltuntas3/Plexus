@@ -1,7 +1,8 @@
 import { CreateBenchmarkUseCase } from "../create-benchmark.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
-import { InMemoryPromptRepository } from "../../../../__tests__/fakes/in-memory-prompt-repository.js";
-import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
+import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
+import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
+import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
 import type { GenerateRequest, IAIProvider, IAIProviderFactory } from "../../../services/ai-provider.js";
 
 const CATEGORY_CYCLE = [
@@ -37,26 +38,29 @@ const makeProviders = (
 
 const buildScaffold = async () => {
   const benchmarks = new InMemoryBenchmarkRepository();
-  const prompts = new InMemoryPromptRepository();
-  const versions = new InMemoryPromptVersionRepository();
-  const prompt = await prompts.create({
+  const queries = new InMemoryPromptQueryService();
+  const prompts = new InMemoryPromptAggregateRepository(queries);
+
+  const promptId = await prompts.nextPromptId();
+  const versionId = await prompts.nextVersionId();
+  const { Prompt } = await import("../../../../domain/entities/prompt.js");
+  const prompt = Prompt.create({
+    id: promptId,
+    ownerId: "u1",
     name: "Prompt",
     description: "desc",
     taskType: "math",
-    ownerId: "u1",
+    initialVersionId: versionId,
+    initialPrompt: "Answer.",
   });
-
-  const version = await versions.create({
-    promptId: prompt.id,
-    version: "v1",
-    classicalPrompt: "Answer.",
-  });
+  await prompts.save(prompt);
+  const version = prompt.getVersionOrThrow("v1");
 
   return {
-    useCase: new CreateBenchmarkUseCase(benchmarks, versions, makeProviders(), prompts),
+    useCase: new CreateBenchmarkUseCase(benchmarks, queries, makeProviders()),
     benchmarks,
+    queries,
     prompts,
-    versions,
     version,
   };
 };
@@ -76,15 +80,10 @@ describe("CreateBenchmarkUseCase", () => {
     expect(bm.status).toBe("draft");
     expect(bm.progress).toEqual({ completed: 0, total: 0 });
     expect(bm.promptVersionIds).toEqual([version.id]);
-    // Single version → shared-core; derived automatically.
     expect(bm.testGenerationMode).toBe("shared-core");
-    // Judges derived: must exclude the solver itself and prefer models from
-    // a different family. With only 3 models, same-family fallback is used.
     expect(bm.judgeModels.length).toBeGreaterThanOrEqual(1);
     expect(bm.judgeModels).not.toContain("openai/gpt-oss-20b");
-    // Generator must not be in the solver set.
     expect(bm.solverModels).not.toContain(bm.generatorModel);
-    // Analysis model defaults to the first judge.
     expect(bm.analysisModel).toBe(bm.judgeModels[0] ?? null);
     expect(bm.taskType).toBe("math");
     expect(bm.costForecast?.estimatedTotalCostUsd ?? 0).toBeGreaterThan(0);
@@ -94,8 +93,6 @@ describe("CreateBenchmarkUseCase", () => {
     expect(bm.testCount).toBe(5);
     expect(bm.testCases).toHaveLength(5);
     expect(bm.testCases[0]).toMatchObject({ input: expect.any(String), expectedOutput: null });
-    // Version labels fall back to the auto-generated "v1" when the version
-    // has no user-set name yet.
     expect(versionLabels[version.id]).toBe(version.version);
   });
 
@@ -118,23 +115,37 @@ describe("CreateBenchmarkUseCase", () => {
 
   it("builds generation spec from the real evaluation prompt, including braid graphs", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const classical = await versions.create({
-      promptId: "p1",
-      version: "v1",
-      classicalPrompt: "Classical instructions.",
+    const queries = new InMemoryPromptQueryService();
+    const prompts = new InMemoryPromptAggregateRepository(queries);
+
+    const { Prompt } = await import("../../../../domain/entities/prompt.js");
+    const prompt = Prompt.create({
+      id: await prompts.nextPromptId(),
+      ownerId: "u1",
+      name: "Prompt",
+      description: "",
+      taskType: "math",
+      initialVersionId: await prompts.nextVersionId(),
+      initialPrompt: "Classical instructions.",
     });
-    const braid = await versions.create({
-      promptId: "p1",
-      version: "v2",
-      classicalPrompt: "Outdated classical prompt.",
+    prompt.createVersion({
+      id: await prompts.nextVersionId(),
+      sourcePrompt: "Outdated classical prompt.",
     });
-    await versions.setBraidGraph(braid.id, "graph TD\nA-->B", "openai/gpt-oss-120b");
+    // sourceVersion v2 has no braid yet → aggregate forks a new v3 with the braid.
+    const { version: braid } = prompt.attachGeneratedBraid({
+      sourceVersion: "v2",
+      graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
+      generatorModel: "openai/gpt-oss-120b",
+      newVersionId: await prompts.nextVersionId(),
+    });
+    await prompts.save(prompt);
+    const classical = prompt.getVersionOrThrow("v1");
 
     const seen: GenerateRequest[] = [];
     const useCase = new CreateBenchmarkUseCase(
       benchmarks,
-      versions,
+      queries,
       makeProviders(5, (req) => seen.push(req)),
     );
 
@@ -144,21 +155,15 @@ describe("CreateBenchmarkUseCase", () => {
     });
 
     expect(seen).toHaveLength(1);
-    const prompt = String(seen[0]?.messages[0]?.content ?? "");
-    expect(prompt).toContain("Classical instructions.");
-    expect(prompt).toContain("graph TD");
-    expect(prompt).not.toContain("Outdated classical prompt.");
+    const promptText = String(seen[0]?.messages[0]?.content ?? "");
+    expect(promptText).toContain("Classical instructions.");
+    expect(promptText).toContain("graph TD");
+    expect(promptText).not.toContain("Outdated classical prompt.");
   });
 
   it("rejects generator output when fewer test cases are returned than requested", async () => {
-    const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const version = await versions.create({
-      promptId: "p1",
-      version: "v1",
-      classicalPrompt: "Answer.",
-    });
-    const useCase = new CreateBenchmarkUseCase(benchmarks, versions, makeProviders(2));
+    const { benchmarks, queries, version } = await buildScaffold();
+    const useCase = new CreateBenchmarkUseCase(benchmarks, queries, makeProviders(2));
 
     await expect(
       useCase.execute({ ...baseCommand(version.id), testCount: 5 }),
@@ -167,22 +172,31 @@ describe("CreateBenchmarkUseCase", () => {
 
   it("defaults multi-version benchmarks to hybrid generation mode", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const v1 = await versions.create({
-      promptId: "p1",
-      version: "v1",
-      classicalPrompt: "Only answer in English.",
+    const queries = new InMemoryPromptQueryService();
+    const prompts = new InMemoryPromptAggregateRepository(queries);
+
+    const { Prompt } = await import("../../../../domain/entities/prompt.js");
+    const prompt = Prompt.create({
+      id: await prompts.nextPromptId(),
+      ownerId: "u1",
+      name: "Prompt",
+      description: "",
+      taskType: "math",
+      initialVersionId: await prompts.nextVersionId(),
+      initialPrompt: "Only answer in English.",
     });
-    const v2 = await versions.create({
-      promptId: "p1",
-      version: "v2",
-      classicalPrompt: "Answer in Turkish when asked.",
+    prompt.createVersion({
+      id: await prompts.nextVersionId(),
+      sourcePrompt: "Answer in Turkish when asked.",
     });
+    await prompts.save(prompt);
+    const v1 = prompt.getVersionOrThrow("v1");
+    const v2 = prompt.getVersionOrThrow("v2");
 
     const seen: GenerateRequest[] = [];
     const useCase = new CreateBenchmarkUseCase(
       benchmarks,
-      versions,
+      queries,
       makeProviders(5, (req) => seen.push(req)),
     );
 
@@ -192,18 +206,17 @@ describe("CreateBenchmarkUseCase", () => {
     });
 
     expect(bm.testGenerationMode).toBe("hybrid");
-    const prompt = String(seen[0]?.messages[0]?.content ?? "");
-    expect(prompt).toContain("balanced benchmark mix");
-    expect(prompt).toContain("70% shared-core coverage and 30% diff-seeking coverage");
-    // Anonymous version labels — no chronological hints leak to the generator.
-    expect(prompt).toContain("VERSION A");
-    expect(prompt).toContain("VERSION B");
-    expect(prompt).not.toContain("VERSION 1");
-    expect(prompt).not.toContain("VERSION 2");
+    const promptText = String(seen[0]?.messages[0]?.content ?? "");
+    expect(promptText).toContain("balanced benchmark mix");
+    expect(promptText).toContain("70% shared-core coverage and 30% diff-seeking coverage");
+    expect(promptText).toContain("VERSION A");
+    expect(promptText).toContain("VERSION B");
+    expect(promptText).not.toContain("VERSION 1");
+    expect(promptText).not.toContain("VERSION 2");
   });
 
   it("rejects benchmarks whose estimated cost exceeds the budget cap", async () => {
-    const { benchmarks, versions, version } = await buildScaffold();
+    const { benchmarks, queries, version } = await buildScaffold();
     const expensiveProvider: IAIProvider = {
       generate: async (req: GenerateRequest) => ({
         text: JSON.stringify({
@@ -216,7 +229,7 @@ describe("CreateBenchmarkUseCase", () => {
         model: req.model,
       }),
     };
-    const useCase = new CreateBenchmarkUseCase(benchmarks, versions, {
+    const useCase = new CreateBenchmarkUseCase(benchmarks, queries, {
       forModel: () => expensiveProvider,
     });
 

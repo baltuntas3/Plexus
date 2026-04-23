@@ -1,12 +1,37 @@
 # Plexus Platform — Uygulama Geliştirme Raporu
 
+## 0. Mevcut Ürün Özeti ve Tamamlanma Analizi
+
+Plexus, LLM prompt'larını versiyonlayıp karşılaştırmak için yapılmış bir prompt experimentation platformudur. Kullanıcı giriş yapar, bir `Prompt` oluşturur ve bunun birden fazla `PromptVersion`'ını yönetir. Her version klasik prompt içerir; istenirse bundan BRAID graph üretilir veya agent benzeri chat akışıyla mevcut graph refine edilir. Üretilen graph lint edilir, yapısal kalite skoru çıkarılır ve seçilen prompt version'ları seçilen solver modeller üzerinde benchmark'a sokulur.
+
+Benchmark akışında sistem test case üretir, kullanıcı draft aşamasında test case'leri düzenleyebilir, çalıştırma sırasında cevaplar toplanır, judge modellerle puanlanır, token/cost/latency metrikleri kaydedilir. Sonuç ekranı PPD (Performance-per-Dollar), Pareto frontier, confidence interval, composite ranking ve recommendation analizleri gösterir.
+
+Mevcut kod durumuna göre core MVP'nin yaklaşık **%65-75**'i tamamlanmış; tüm uzun vadeli planın yaklaşık **%45-55**'i uygulanmış durumdadır.
+
+**Büyük ölçüde tamamlanan alanlar:**
+- Auth, protected frontend layout, prompt listesi ve prompt detail akışı.
+- Prompt version oluşturma, isimlendirme, draft/staging/production durum geçişleri.
+- BRAID generation, Mermaid parse/validation, graph render, chat ile graph üretme/refine etme.
+- Graph linter ve `GraphQualityScore` paneli.
+- Benchmark oluşturma, generated/manual test case düzenleme, in-process job ile benchmark başlatma, SSE progress stream.
+- LLM judge skorlama, verbosity penalty, cost/latency/token kayıtları.
+- Benchmark analysis: PPD, Pareto frontier, confidence interval, composite ranking ve recommendation.
+
+**Kısmi veya eksik kalan alanlar:**
+- AI provider katmanı mevcut, ancak runtime şu an Groq odaklıdır; OpenAI/Anthropic production adapter hedefi tamamlanmış sayılmaz.
+- Cache ve queue abstraction'ları mevcut, ancak Redis/BullMQ yerine in-memory cache ve in-process queue kullanılır.
+- Ayrı `Dataset` CRUD, CSV/JSON import ve numerical masking helper yok; test case'ler benchmark içinde yönetilir.
+- `packages/sdk` iskeleti var, fakat SDK runtime, `/sdk/execute`, `ExecutionLog` ve production execution runtime yok.
+- Public `Agent` entity/endpoints, API key yönetimi, usage dashboard, shadow mode ve retry/fallback runtime yok.
+- Production traces viewer, periodic improvement suggestions, OpenAPI/Swagger, Playwright E2E, CI/CD ve deploy otomasyonu eksik.
+
 ## 1. Teknoloji Stack'i
 
 **Backend:** Node.js + Express.js + TypeScript, MongoDB (Mongoose), Zod validation, Jest test. Cache şu anlık in-memory (`ICacheStore` abstraction'ı ardında); Redis + BullMQ ilerleyen fazlarda ihtiyaç doğduğunda eklenecek, API değişmeden swap edilecek.
 **Frontend:** React + Vite + TypeScript, Mantine UI, Jotai (state management), React Router, Mermaid.js renderer.
 **SDK:** TypeScript (`@plexus/sdk`).
-**AI Providers:** OpenAI + Anthropic SDK'ları, provider-agnostic adapter katmanı.
-**Infra:** Docker Compose (dev, yalnızca MongoDB), MongoDB Atlas (prod). Redis ileride eklenecek.
+**AI Providers:** Provider-agnostic adapter katmanı. Mevcut runtime Groq provider ile çalışır; OpenAI + Anthropic adapter hedefleri ileriki fazdadır.
+**Infra:** Docker Compose (dev, yalnızca MongoDB), MongoDB Atlas (prod). Redis/BullMQ ileride eklenecek; mevcut cache/queue implementasyonları in-memory/in-process çalışır.
 
 ## 2. Clean Architecture — Katman Yapısı
 

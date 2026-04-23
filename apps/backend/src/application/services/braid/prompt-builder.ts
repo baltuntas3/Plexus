@@ -7,7 +7,7 @@ import {
 } from "./enhanced-generation-prompt.js";
 
 export interface GenerationPromptInput {
-  classicalPrompt: string;
+  sourcePrompt: string;
   conversationText: string;
 }
 

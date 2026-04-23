@@ -10,8 +10,28 @@ import type { JobContext } from "../../job-queue.js";
 import { JudgeScore } from "../../../../domain/value-objects/judge-score.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
 import { InMemoryBenchmarkResultRepository } from "../../../../__tests__/fakes/in-memory-benchmark-result-repository.js";
-import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
+import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
+import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
+import { PromptVersion } from "../../../../domain/entities/prompt-version.js";
 import { BenchmarkRunner } from "../benchmark-runner.js";
+
+let versionCounter = 1;
+const createVersion = (
+  queries: InMemoryPromptQueryService,
+  params: { promptId: string; version: string; sourcePrompt: string; braidGraph?: string; generatorModel?: string },
+): PromptVersion => {
+  const pv = PromptVersion.create({
+    id: String(versionCounter++),
+    promptId: params.promptId,
+    version: params.version,
+    sourcePrompt: params.sourcePrompt,
+  });
+  if (params.braidGraph) {
+    pv.setBraidGraph(BraidGraph.parse(params.braidGraph), params.generatorModel ?? "openai/gpt-oss-120b");
+  }
+  queries.seedVersion(pv);
+  return pv;
+};
 
 class RecordingProvider implements IAIProvider {
   public calls: GenerateRequest[] = [];
@@ -85,15 +105,18 @@ const TEST_CASES = [
 const buildScaffold = async () => {
   const benchmarks = new InMemoryBenchmarkRepository();
   const results = new InMemoryBenchmarkResultRepository();
-  const versions = new InMemoryPromptVersionRepository();
+  const queries = new InMemoryPromptQueryService();
+  // Reset so the first seeded version always has id "1" — matches
+  // queueBenchmark's default versionId.
+  versionCounter = 1;
 
-  const version = await versions.create({
+  const version = createVersion(queries, {
     promptId: "p1",
     version: "v1",
-    classicalPrompt: "Answer concisely.",
+    sourcePrompt: "Answer concisely.",
   });
 
-  return { benchmarks, results, versions, version };
+  return { benchmarks, results, queries, version };
 };
 
 const queueBenchmark = async (
@@ -126,7 +149,7 @@ const queueBenchmark = async (
 
 describe("BenchmarkRunner.run", () => {
   it("executes the full matrix, records results, and marks the benchmark completed", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 100,
@@ -136,7 +159,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -164,7 +187,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("repeats each cell k times with distinct seeds so variance can be measured", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 1,
@@ -174,7 +197,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -202,7 +225,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("passes deterministic judge seeds so reruns are reproducible", async () => {
-    const { benchmarks, versions, results } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const solverProvider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 1,
@@ -224,7 +247,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers,
     });
 
@@ -241,7 +264,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("does not penalize long reference-free rows based on competitor outputs", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider((req) => {
       const text =
         req.messages[1]?.content === "q1?" && req.messages[0]?.content === "Answer concisely."
@@ -253,7 +276,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -264,15 +287,15 @@ describe("BenchmarkRunner.run", () => {
       ],
       promptVersionIds: [
         "1",
-        (await versions.create({
+        (createVersion(queries, {
           promptId: "p1",
           version: "v2",
-          classicalPrompt: "Answer with more detail when useful.",
+          sourcePrompt: "Answer with more detail when useful.",
         })).id,
-        (await versions.create({
+        (createVersion(queries, {
           promptId: "p1",
           version: "v3",
-          classicalPrompt: "Keep answers compact.",
+          sourcePrompt: "Keep answers compact.",
         })).id,
       ],
       concurrency: 1,
@@ -284,7 +307,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("does not penalize short reference-free rows based on competitor outputs", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider((req) => {
       const prompt = String(req.messages[0]?.content ?? "");
       const text = prompt.includes("more detail") ? "detailed answer with enough context" : "ok";
@@ -294,7 +317,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -305,10 +328,10 @@ describe("BenchmarkRunner.run", () => {
       ],
       promptVersionIds: [
         "1",
-        (await versions.create({
+        (createVersion(queries, {
           promptId: "p1",
           version: "v2",
-          classicalPrompt: "Answer with more detail when useful.",
+          sourcePrompt: "Answer with more detail when useful.",
         })).id,
       ],
       concurrency: 1,
@@ -320,7 +343,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("grades every row with every judge in the ensemble and averages their scores", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 1,
@@ -332,7 +355,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: (model) => (model === "openai/gpt-oss-20b" ? judgeA : judgeB),
     });
@@ -364,7 +387,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("passes expected output as reference to the judge when present", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const gradeCalls: { reference?: string }[] = [];
     const judge: IJudge = {
       grade: async (input) => {
@@ -379,7 +402,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(
         new RecordingProvider(() => ({ text: "ans", inputTokens: 5, outputTokens: 5 })),
       ),
@@ -395,7 +418,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("is restart-idempotent: a second run skips already-recorded rows", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 10,
@@ -405,7 +428,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -422,7 +445,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("keeps a row completed when at least one judge succeeds", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 5,
@@ -433,7 +456,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => ({
         grade: async () => {
@@ -481,7 +504,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("retries previously failed rows on resume", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     let callIdx = 0;
     const provider = new RecordingProvider(() => {
       callIdx += 1;
@@ -492,7 +515,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -510,7 +533,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("captures per-cell errors as failed rows without aborting the benchmark", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
 
     let callIdx = 0;
     const provider = new RecordingProvider(() => {
@@ -523,7 +546,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -544,7 +567,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("preserves observed latency and solver cost when a row fails after candidate generation", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
 
     const provider = new RecordingProvider(() => ({
       text: "candidate answer",
@@ -560,7 +583,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -591,7 +614,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("preserves partial judge token usage and cost when judge parsing fails after generation", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "candidate answer",
       inputTokens: 10,
@@ -609,7 +632,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -640,15 +663,16 @@ describe("BenchmarkRunner.run", () => {
     expect(failed?.error).toContain("malformed JSON");
   });
 
-  it("uses braidGraph as system prompt when the version has one, classicalPrompt otherwise", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+  it("uses braidGraph as system prompt when the version has one, sourcePrompt otherwise", async () => {
+    const { benchmarks, results, queries } = await buildScaffold();
 
-    const versionWithBraid = await versions.create({
+    const versionWithBraid = createVersion(queries, {
       promptId: "p1",
       version: "v2",
-      classicalPrompt: "classical",
+      sourcePrompt: "classical",
+      braidGraph: "graph TD\nA[start] --> B[end]",
+      generatorModel: "openai/gpt-oss-120b",
     });
-    await versions.setBraidGraph(versionWithBraid.id, "graph TD\nA-->B", "openai/gpt-oss-120b");
 
     const provider = new RecordingProvider((req) => ({
       text: `seen:${req.messages[0]?.content?.slice(0, 8) ?? ""}`,
@@ -660,7 +684,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -687,7 +711,7 @@ describe("BenchmarkRunner.run", () => {
       (c.messages[0]?.content ?? "").includes("graph TD"),
     );
     expect(braidCall).toBeDefined();
-    expect(braidCall?.messages[0]?.content).toBe("graph TD\nA-->B");
+    expect(braidCall?.messages[0]?.content).toBe("graph TD\nA[start] --> B[end]");
 
     const classicalCall = provider.calls.find((c) =>
       (c.messages[0]?.content ?? "") === "Answer concisely.",
@@ -696,7 +720,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("keeps a row completed when one judge in the ensemble fails", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "candidate answer",
       inputTokens: 3,
@@ -715,7 +739,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: (model) => (model === "judge-a" ? judgeA : judgeB),
     });
@@ -742,7 +766,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("stops at a balanced budget boundary without writing budget-failure rows", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 10000,
@@ -752,7 +776,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -772,10 +796,10 @@ describe("BenchmarkRunner.run", () => {
       ],
       promptVersionIds: [
         "1",
-        (await versions.create({
+        (createVersion(queries, {
           promptId: "p1",
           version: "v2",
-          classicalPrompt: "Answer with extra detail.",
+          sourcePrompt: "Answer with extra detail.",
         })).id,
       ],
     });
@@ -798,7 +822,7 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("counts existing spend before resuming a budget-limited benchmark", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 10000,
@@ -808,7 +832,7 @@ describe("BenchmarkRunner.run", () => {
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () => judge,
     });
@@ -858,11 +882,11 @@ describe("BenchmarkRunner.run", () => {
   });
 
   it("marks the benchmark failed when it has no test cases", async () => {
-    const { benchmarks, results, versions } = await buildScaffold();
+    const { benchmarks, results, queries } = await buildScaffold();
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
-      versions,
+      promptQueries: queries,
       providers: new SingleProviderFactory(
         new RecordingProvider(() => ({ text: "x", inputTokens: 1, outputTokens: 1 })),
       ),

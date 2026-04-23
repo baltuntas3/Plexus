@@ -1,16 +1,25 @@
 import { UpdateTestCasesUseCase } from "../update-test-cases.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
-import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
+import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
+import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
 
 const buildDraftBenchmark = async (
   benchmarks: InMemoryBenchmarkRepository,
-  versions: InMemoryPromptVersionRepository,
+  prompts: InMemoryPromptAggregateRepository,
 ) => {
-  const version = await versions.create({
-    promptId: "p1",
-    version: "v1",
-    classicalPrompt: "Answer.",
+  const { Prompt } = await import("../../../../domain/entities/prompt.js");
+  const prompt = Prompt.create({
+    id: await prompts.nextPromptId(),
+    ownerId: "u1",
+    name: "Prompt",
+    description: "",
+    taskType: "general",
+    initialVersionId: await prompts.nextVersionId(),
+    initialPrompt: "Answer.",
   });
+  await prompts.save(prompt);
+  const version = prompt.getVersionOrThrow("v1");
+
   return benchmarks.create({
     name: "bm",
     ownerId: "u1",
@@ -48,12 +57,18 @@ const buildDraftBenchmark = async (
   });
 };
 
+const buildHarness = async () => {
+  const benchmarks = new InMemoryBenchmarkRepository();
+  const queries = new InMemoryPromptQueryService();
+  const prompts = new InMemoryPromptAggregateRepository(queries);
+  const useCase = new UpdateTestCasesUseCase(benchmarks, queries);
+  const bm = await buildDraftBenchmark(benchmarks, prompts);
+  return { benchmarks, queries, prompts, useCase, bm };
+};
+
 describe("UpdateTestCasesUseCase", () => {
   it("persists expected output annotations on a draft benchmark", async () => {
-    const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
-    const bm = await buildDraftBenchmark(benchmarks, versions);
+    const { benchmarks, useCase, bm } = await buildHarness();
 
     await useCase.execute({
       benchmarkId: bm.id,
@@ -71,10 +86,7 @@ describe("UpdateTestCasesUseCase", () => {
   });
 
   it("persists manual categories for added test cases", async () => {
-    const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
-    const bm = await buildDraftBenchmark(benchmarks, versions);
+    const { benchmarks, useCase, bm } = await buildHarness();
 
     await useCase.execute({
       benchmarkId: bm.id,
@@ -89,10 +101,7 @@ describe("UpdateTestCasesUseCase", () => {
   });
 
   it("refreshes the cost forecast after draft test cases change", async () => {
-    const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
-    const bm = await buildDraftBenchmark(benchmarks, versions);
+    const { benchmarks, useCase, bm } = await buildHarness();
 
     await useCase.execute({
       benchmarkId: bm.id,
@@ -106,10 +115,7 @@ describe("UpdateTestCasesUseCase", () => {
   });
 
   it("rejects updates when the benchmark is not in draft status", async () => {
-    const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
-    const bm = await buildDraftBenchmark(benchmarks, versions);
+    const { benchmarks, useCase, bm } = await buildHarness();
     await benchmarks.updateStatus(bm.id, { status: "queued" });
 
     await expect(
@@ -118,10 +124,7 @@ describe("UpdateTestCasesUseCase", () => {
   });
 
   it("rejects access from a different owner", async () => {
-    const benchmarks = new InMemoryBenchmarkRepository();
-    const versions = new InMemoryPromptVersionRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
-    const bm = await buildDraftBenchmark(benchmarks, versions);
+    const { useCase, bm } = await buildHarness();
 
     await expect(
       useCase.execute({ benchmarkId: bm.id, ownerId: "other", updates: [], additions: [] }),

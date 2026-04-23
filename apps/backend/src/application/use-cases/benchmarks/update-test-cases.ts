@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
-import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
+import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import { estimateBenchmarkCost } from "./create-benchmark.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
@@ -27,7 +27,7 @@ export interface UpdateTestCasesCommand {
 export class UpdateTestCasesUseCase {
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
-    private readonly versions: IPromptVersionRepository,
+    private readonly promptQueries: IPromptQueryService,
   ) {}
 
   async execute(command: UpdateTestCasesCommand): Promise<void> {
@@ -60,15 +60,13 @@ export class UpdateTestCasesUseCase {
         };
       })
       .concat(additions);
-    const versions = await Promise.all(
-      bm.promptVersionIds.map((id) => this.versions.findById(id)),
-    );
-    const missing = bm.promptVersionIds.filter((_, index) => !versions[index]);
+    const versionsById = await this.promptQueries.findVersionsByIds(bm.promptVersionIds);
+    const missing = bm.promptVersionIds.filter((id) => !versionsById.has(id));
     if (missing.length > 0) {
       throw ValidationError(`PromptVersion(s) not found: ${missing.join(", ")}`);
     }
     const costForecast = estimateBenchmarkCost({
-      versions: versions as NonNullable<(typeof versions)[number]>[],
+      versions: bm.promptVersionIds.map((id) => versionsById.get(id)!),
       generatedInputs: nextTestCases.map((testCase) => testCase.input),
       solverModels: bm.solverModels,
       judgeModels: bm.judgeModels,

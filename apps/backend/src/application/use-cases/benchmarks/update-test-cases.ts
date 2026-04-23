@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
+import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
+import { estimateBenchmarkCost } from "./create-benchmark.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
 export interface UpdateTestCasesCommand {
@@ -23,7 +25,10 @@ export interface UpdateTestCasesCommand {
 // Allows the owner to edit test case inputs, annotate expected outputs, and
 // add new cases while the benchmark is still in "draft" status.
 export class UpdateTestCasesUseCase {
-  constructor(private readonly benchmarks: IBenchmarkRepository) {}
+  constructor(
+    private readonly benchmarks: IBenchmarkRepository,
+    private readonly versions: IPromptVersionRepository,
+  ) {}
 
   async execute(command: UpdateTestCasesCommand): Promise<void> {
     const bm = await ensureBenchmarkAccess(
@@ -43,5 +48,32 @@ export class UpdateTestCasesUseCase {
       source: "manual" as const,
     }));
     await this.benchmarks.updateTestCases(command.benchmarkId, command.updates, additions);
+    const nextTestCases = bm.testCases
+      .map((testCase) => {
+        const update = command.updates.find((item) => item.id === testCase.id);
+        if (!update) return testCase;
+        return {
+          ...testCase,
+          input: update.input ?? testCase.input,
+          expectedOutput: update.expectedOutput,
+          category: update.category !== undefined ? update.category : testCase.category,
+        };
+      })
+      .concat(additions);
+    const versions = await Promise.all(
+      bm.promptVersionIds.map((id) => this.versions.findById(id)),
+    );
+    const missing = bm.promptVersionIds.filter((_, index) => !versions[index]);
+    if (missing.length > 0) {
+      throw ValidationError(`PromptVersion(s) not found: ${missing.join(", ")}`);
+    }
+    const costForecast = estimateBenchmarkCost({
+      versions: versions as NonNullable<(typeof versions)[number]>[],
+      generatedInputs: nextTestCases.map((testCase) => testCase.input),
+      solverModels: bm.solverModels,
+      judgeModels: bm.judgeModels,
+      repetitions: bm.repetitions,
+    });
+    await this.benchmarks.updateCostForecast(command.benchmarkId, costForecast);
   }
 }

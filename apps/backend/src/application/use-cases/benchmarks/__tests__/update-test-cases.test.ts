@@ -1,11 +1,20 @@
 import { UpdateTestCasesUseCase } from "../update-test-cases.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
+import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
 
-const buildDraftBenchmark = async (benchmarks: InMemoryBenchmarkRepository) =>
-  benchmarks.create({
+const buildDraftBenchmark = async (
+  benchmarks: InMemoryBenchmarkRepository,
+  versions: InMemoryPromptVersionRepository,
+) => {
+  const version = await versions.create({
+    promptId: "p1",
+    version: "v1",
+    classicalPrompt: "Answer.",
+  });
+  return benchmarks.create({
     name: "bm",
     ownerId: "u1",
-    promptVersionIds: ["v1"],
+    promptVersionIds: [version.id],
     solverModels: ["openai/gpt-oss-20b"],
     judgeModels: ["openai/gpt-oss-20b"],
     generatorModel: "openai/gpt-oss-20b",
@@ -37,12 +46,14 @@ const buildDraftBenchmark = async (benchmarks: InMemoryBenchmarkRepository) =>
     cellTimeoutMs: null,
     budgetUsd: null,
   });
+};
 
 describe("UpdateTestCasesUseCase", () => {
   it("persists expected output annotations on a draft benchmark", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks);
-    const bm = await buildDraftBenchmark(benchmarks);
+    const versions = new InMemoryPromptVersionRepository();
+    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
+    const bm = await buildDraftBenchmark(benchmarks, versions);
 
     await useCase.execute({
       benchmarkId: bm.id,
@@ -61,8 +72,9 @@ describe("UpdateTestCasesUseCase", () => {
 
   it("persists manual categories for added test cases", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks);
-    const bm = await buildDraftBenchmark(benchmarks);
+    const versions = new InMemoryPromptVersionRepository();
+    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
+    const bm = await buildDraftBenchmark(benchmarks, versions);
 
     await useCase.execute({
       benchmarkId: bm.id,
@@ -76,10 +88,28 @@ describe("UpdateTestCasesUseCase", () => {
     expect(updated?.testCases.at(-1)?.source).toBe("manual");
   });
 
+  it("refreshes the cost forecast after draft test cases change", async () => {
+    const benchmarks = new InMemoryBenchmarkRepository();
+    const versions = new InMemoryPromptVersionRepository();
+    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
+    const bm = await buildDraftBenchmark(benchmarks, versions);
+
+    await useCase.execute({
+      benchmarkId: bm.id,
+      ownerId: "u1",
+      updates: [{ id: "tc1", input: "q1? ".repeat(200), expectedOutput: null }],
+      additions: [],
+    });
+
+    const updated = await benchmarks.findById(bm.id);
+    expect(updated?.costForecast?.estimatedTotalCostUsd).toBeGreaterThan(0);
+  });
+
   it("rejects updates when the benchmark is not in draft status", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks);
-    const bm = await buildDraftBenchmark(benchmarks);
+    const versions = new InMemoryPromptVersionRepository();
+    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
+    const bm = await buildDraftBenchmark(benchmarks, versions);
     await benchmarks.updateStatus(bm.id, { status: "queued" });
 
     await expect(
@@ -89,8 +119,9 @@ describe("UpdateTestCasesUseCase", () => {
 
   it("rejects access from a different owner", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
-    const useCase = new UpdateTestCasesUseCase(benchmarks);
-    const bm = await buildDraftBenchmark(benchmarks);
+    const versions = new InMemoryPromptVersionRepository();
+    const useCase = new UpdateTestCasesUseCase(benchmarks, versions);
+    const bm = await buildDraftBenchmark(benchmarks, versions);
 
     await expect(
       useCase.execute({ benchmarkId: bm.id, ownerId: "other", updates: [], additions: [] }),

@@ -181,4 +181,8 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
     }
     await doc.save();
   }
+
+  async updateCostForecast(id: string, costForecast: BenchmarkCostForecast): Promise<void> {
+    await BenchmarkModel.findByIdAndUpdate(id, { $set: { costForecast } });
+  }
 }

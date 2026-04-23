@@ -978,7 +978,7 @@ export const computeAnalysis = (
       ? computePPD(comparableCandidates, baseline)
       : [];
 
-  const pairwiseComparisons = computePairwiseComparisons(candidates, results);
+  const pairwiseComparisons = computePairwiseComparisons(comparableCandidates, results);
   const judgeDiagnostics = computeJudgeDiagnostics(results);
   const varianceDecomposition = computeVarianceDecomposition(results);
   const exclusionReasons = computeExclusionReasons(

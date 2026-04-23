@@ -171,7 +171,7 @@ const estimateTokenCount = (text: string): number => {
   return matches?.length ?? 0;
 };
 
-const estimateBenchmarkCost = (input: {
+export const estimateBenchmarkCost = (input: {
   versions: Awaited<ReturnType<CreateBenchmarkUseCase["loadVersions"]>>;
   generatedInputs: readonly string[];
   solverModels: readonly string[];

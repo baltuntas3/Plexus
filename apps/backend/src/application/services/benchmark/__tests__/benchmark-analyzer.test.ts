@@ -339,8 +339,18 @@ describe("computeAnalysis", () => {
       expect.objectContaining({
         [candidateKey({ promptVersionId: "vB", solverModel: "llama-3.3-70b-versatile" })]:
           expect.stringContaining("Completed-sample coverage differs"),
-      }),
+        }),
     );
+  });
+
+  it("suppresses pairwise comparisons when completed coverage is unequal", () => {
+    const analysis = computeAnalysis([
+      row({ promptVersionId: "vA", testCaseId: "a", runIndex: 0, finalScore: 0.91 }),
+      row({ promptVersionId: "vA", testCaseId: "b", runIndex: 0, finalScore: 0.9 }),
+      row({ promptVersionId: "vB", testCaseId: "a", runIndex: 0, finalScore: 0.89 }),
+    ]);
+
+    expect(analysis.pairwiseComparisons).toEqual([]);
   });
 
   it("derives the score floor from reliable candidates when available", () => {

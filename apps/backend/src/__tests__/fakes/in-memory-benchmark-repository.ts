@@ -6,7 +6,7 @@ import type {
   IBenchmarkRepository,
   ListBenchmarksQuery,
 } from "../../domain/repositories/benchmark-repository.js";
-import type { BenchmarkProgress } from "../../domain/entities/benchmark.js";
+import type { BenchmarkCostForecast, BenchmarkProgress } from "../../domain/entities/benchmark.js";
 
 export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
   private readonly store = new Map<string, Benchmark>();
@@ -105,5 +105,11 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
       };
     });
     this.store.set(id, { ...bm, testCases: [...testCases, ...additions] });
+  }
+
+  async updateCostForecast(id: string, costForecast: BenchmarkCostForecast): Promise<void> {
+    const bm = this.store.get(id);
+    if (!bm) return;
+    this.store.set(id, { ...bm, costForecast });
   }
 }

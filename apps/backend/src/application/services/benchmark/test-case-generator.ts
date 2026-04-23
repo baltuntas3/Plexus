@@ -259,7 +259,7 @@ export class TestCaseGenerator {
           role: "user",
           content:
             "Your previous response could not be parsed as valid JSON. " +
-            `Respond again with ONLY the JSON object in the exact shape requested, containing exactly ${count} test cases and matching the required category counts. No markdown, no prose.`,
+            `Respond again with ONLY the JSON object in the exact shape requested, containing exactly ${count} test cases. No markdown, no prose.`,
         },
       ],
       temperature: 0,

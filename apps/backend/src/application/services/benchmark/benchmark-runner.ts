@@ -95,12 +95,12 @@ export class BenchmarkRunner {
       const existingRows = await this.deps.results.listByBenchmark(benchmarkId);
       const existingByKey = new Map(existingRows.map((row) => [resultKey(row), row] as const));
       const total = cells.length;
-      let completed = cells.reduce((sum, cell) => {
+      let processed = cells.reduce((sum, cell) => {
         const row = existingByKey.get(cellKey(cell));
         return sum + (row?.status === "completed" ? 1 : 0);
       }, 0);
 
-      await this.report(benchmarkId, ctx, completed, total);
+      await this.report(benchmarkId, ctx, processed, total);
 
       const pending = cells.filter((cell) => existingByKey.get(cellKey(cell))?.status !== "completed");
       const slices = this.buildSlices(pending, bm.seed);
@@ -138,8 +138,8 @@ export class BenchmarkRunner {
           observedCellCosts += row.totalCostUsd;
           observedCellCount += 1;
           await this.deps.results.upsert(row);
-          completed += row.status === "completed" ? 1 : 0;
-          await this.report(benchmarkId, ctx, completed, total);
+          processed += 1;
+          await this.report(benchmarkId, ctx, processed, total);
         });
       }
 
@@ -149,7 +149,7 @@ export class BenchmarkRunner {
             completedAt: new Date(),
             error:
               `Stopped at the $${budget.toFixed(2)} budget cap after completing ` +
-              `${completed}/${total} cells with balanced coverage.`,
+              `${processed}/${total} cells with balanced coverage.`,
           }
         : {
             status: "completed",

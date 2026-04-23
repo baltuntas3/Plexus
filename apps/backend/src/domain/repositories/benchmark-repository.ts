@@ -69,4 +69,8 @@ export interface IBenchmarkRepository {
       source: BenchmarkTestCase["source"];
     }>,
   ): Promise<void>;
+  updateCostForecast(
+    id: string,
+    costForecast: BenchmarkCostForecast,
+  ): Promise<void>;
 }

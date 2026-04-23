@@ -40,7 +40,7 @@ export class StartBenchmarkUseCase {
     if (bm.status === "queued") {
       throw ValidationError("Benchmark is already queued");
     }
-    const versionsById = await this.promptQueries.findVersionsByIds(bm.promptVersionIds);
+    const versionsById = await this.promptQueries.findVersionSummariesByIds(bm.promptVersionIds);
     const missing = bm.promptVersionIds.filter((id) => !versionsById.has(id));
     if (missing.length > 0) {
       throw ValidationError(`PromptVersion(s) not found: ${missing.join(", ")}`);

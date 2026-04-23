@@ -4,8 +4,10 @@ import type {
 } from "../../../domain/entities/benchmark.js";
 import type { TaskType } from "@plexus/shared-types";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
-import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
+import type {
+  IPromptQueryService,
+  PromptVersionSummary,
+} from "../../queries/prompt-query-service.js";
 import { NotFoundError, ValidationError } from "../../../domain/errors/domain-error.js";
 import type { CreateBenchmarkDto } from "../../dto/benchmark-dto.js";
 import {
@@ -135,7 +137,7 @@ export class CreateBenchmarkUseCase {
     return { benchmark, versionLabels };
   }
 
-  private async resolveTaskType(versions: PromptVersion[]): Promise<TaskType> {
+  private async resolveTaskType(versions: PromptVersionSummary[]): Promise<TaskType> {
     const promptIds = [...new Set(versions.map((version) => version.promptId))];
     const summaries = await this.promptQueries.findPromptSummariesByIds(promptIds);
     const missing = promptIds.filter((id) => !summaries.has(id));
@@ -151,12 +153,12 @@ export class CreateBenchmarkUseCase {
     return (taskTypes[0] ?? "general") as TaskType;
   }
 
-  private async loadVersions(ids: string[]): Promise<PromptVersion[]> {
-    const resolved = await this.promptQueries.findVersionsByIds(ids);
+  private async loadVersions(ids: string[]): Promise<PromptVersionSummary[]> {
+    const resolved = await this.promptQueries.findVersionSummariesByIds(ids);
     for (const id of ids) {
       if (!resolved.has(id)) throw NotFoundError(`PromptVersion ${id} not found`);
     }
-    return ids.map((id) => resolved.get(id) as PromptVersion);
+    return ids.map((id) => resolved.get(id) as PromptVersionSummary);
   }
 }
 
@@ -168,7 +170,7 @@ const estimateTokenCount = (text: string): number => {
 };
 
 export const estimateBenchmarkCost = (input: {
-  versions: readonly PromptVersion[];
+  versions: readonly PromptVersionSummary[];
   generatedInputs: readonly string[];
   solverModels: readonly string[];
   judgeModels: readonly string[];

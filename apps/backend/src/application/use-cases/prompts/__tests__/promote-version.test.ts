@@ -2,6 +2,7 @@ import { CreatePromptUseCase } from "../create-prompt.js";
 import { CreateVersionUseCase } from "../create-version.js";
 import { PromoteVersionUseCase } from "../promote-version.js";
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
+import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
 
 describe("PromoteVersionUseCase", () => {
   let prompts: InMemoryPromptAggregateRepository;
@@ -13,8 +14,9 @@ describe("PromoteVersionUseCase", () => {
 
   beforeEach(async () => {
     prompts = new InMemoryPromptAggregateRepository();
-    createPrompt = new CreatePromptUseCase(prompts);
-    createVersion = new CreateVersionUseCase(prompts);
+    const ids = new InMemoryIdGenerator();
+    createPrompt = new CreatePromptUseCase(prompts, ids);
+    createVersion = new CreateVersionUseCase(prompts, ids);
     promoteVersion = new PromoteVersionUseCase(prompts);
 
     const { prompt } = await createPrompt.execute({
@@ -85,10 +87,10 @@ describe("PromoteVersionUseCase", () => {
         ownerId: "other-user",
         targetStatus: "staging",
       }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).rejects.toMatchObject({ code: "PROMPT_FORBIDDEN" });
   });
 
-  it("throws NotFoundError for missing version", async () => {
+  it("throws PromptVersionNotFoundError for missing version", async () => {
     await expect(
       promoteVersion.execute({
         promptId,
@@ -96,6 +98,6 @@ describe("PromoteVersionUseCase", () => {
         ownerId,
         targetStatus: "staging",
       }),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    ).rejects.toMatchObject({ code: "PROMPT_VERSION_NOT_FOUND" });
   });
 });

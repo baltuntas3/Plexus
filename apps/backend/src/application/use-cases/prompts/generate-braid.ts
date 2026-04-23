@@ -1,4 +1,5 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
+import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import type { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { TokenCost } from "../../../domain/value-objects/token-cost.js";
@@ -32,6 +33,7 @@ export class GenerateBraidUseCase {
     private readonly prompts: IPromptAggregateRepository,
     private readonly generator: BraidGenerator,
     private readonly linter: GraphLinter,
+    private readonly idGenerator: IIdGenerator,
   ) {}
 
   async execute(command: GenerateBraidCommand): Promise<GenerateBraidResult> {
@@ -46,15 +48,17 @@ export class GenerateBraidUseCase {
     });
 
     const qualityScore = this.linter.lint(result.graph);
-    // The ID is always pre-allocated; the aggregate decides whether to use
-    // it (new version) or discard it (overwrite). Use-case no longer mirrors
-    // the "does this version already have a graph?" branch.
-    const { version: updatedVersion, createdNewVersion } = prompt.attachGeneratedBraid({
-      sourceVersion: command.version,
-      graph: result.graph,
-      generatorModel: result.generatorModel,
-      newVersionId: await this.prompts.nextVersionId(),
-    });
+    // The aggregate decides whether to fork a new version or overwrite; it
+    // only pulls a new id from the generator on the fork branch, so no id is
+    // wasted when the existing version is updated in place.
+    const { version: updatedVersion, createdNewVersion } = prompt.attachGeneratedBraid(
+      {
+        sourceVersion: command.version,
+        graph: result.graph,
+        generatorModel: result.generatorModel,
+      },
+      this.idGenerator,
+    );
     await this.prompts.save(prompt);
 
     return {

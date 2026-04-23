@@ -2,20 +2,21 @@ import { UpdateTestCasesUseCase } from "../update-test-cases.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
 import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
+import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
 
 const buildDraftBenchmark = async (
   benchmarks: InMemoryBenchmarkRepository,
   prompts: InMemoryPromptAggregateRepository,
+  ids: InMemoryIdGenerator,
 ) => {
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
-    id: await prompts.nextPromptId(),
     ownerId: "u1",
     name: "Prompt",
     description: "",
     taskType: "general",
-    initialVersionId: await prompts.nextVersionId(),
     initialPrompt: "Answer.",
+    idGenerator: ids,
   });
   await prompts.save(prompt);
   const version = prompt.getVersionOrThrow("v1");
@@ -61,8 +62,9 @@ const buildHarness = async () => {
   const benchmarks = new InMemoryBenchmarkRepository();
   const queries = new InMemoryPromptQueryService();
   const prompts = new InMemoryPromptAggregateRepository(queries);
+  const ids = new InMemoryIdGenerator();
   const useCase = new UpdateTestCasesUseCase(benchmarks, queries);
-  const bm = await buildDraftBenchmark(benchmarks, prompts);
+  const bm = await buildDraftBenchmark(benchmarks, prompts, ids);
   return { benchmarks, queries, prompts, useCase, bm };
 };
 

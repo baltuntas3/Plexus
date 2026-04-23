@@ -4,7 +4,7 @@ import {
   type BenchmarkFailureKind,
   type JudgeVote,
 } from "../../../domain/entities/benchmark-result.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
+import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import {
   NotFoundError,
   ValidationError,
@@ -55,7 +55,7 @@ const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 const DEFAULT_BUDGET_USD = 50;
 interface Cell {
   testCase: BenchmarkTestCase;
-  version: PromptVersion;
+  version: PromptVersionSummary;
   solverModel: string;
   runIndex: number;
 }
@@ -197,13 +197,13 @@ export class BenchmarkRunner {
     return cells;
   }
 
-  private async loadVersions(ids: readonly string[]): Promise<PromptVersion[]> {
-    const found = await this.deps.promptQueries.findVersionsByIds(ids);
+  private async loadVersions(ids: readonly string[]): Promise<PromptVersionSummary[]> {
+    const found = await this.deps.promptQueries.findVersionSummariesByIds(ids);
     const missing = ids.filter((id) => !found.has(id));
     if (missing.length > 0) {
       throw NotFoundError(`PromptVersion(s) not found: ${missing.join(", ")}`);
     }
-    return ids.map((id) => found.get(id) as PromptVersion);
+    return ids.map((id) => found.get(id) as PromptVersionSummary);
   }
 
   private buildJudges(

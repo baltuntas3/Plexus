@@ -1,5 +1,10 @@
 import type { TaskType } from "@plexus/shared-types";
-import { ForbiddenError, NotFoundError } from "../errors/domain-error.js";
+import {
+  PromptForbiddenError,
+  PromptVersionNotFoundError,
+  ValidationError,
+} from "../errors/domain-error.js";
+import type { IIdGenerator } from "../services/id-generator.js";
 import type { BraidGraph } from "../value-objects/braid-graph.js";
 import {
   PromptVersion,
@@ -13,20 +18,35 @@ export interface PromptPrimitives {
   taskType: TaskType;
   ownerId: string;
   productionVersion: string | null;
+  // Aggregate revision last seen in the store. Hydrated from persistence,
+  // checked as the "expected" value during save, and advanced by `commit`
+  // after a successful write.
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface CreatePromptParams {
-  id: string;
   ownerId: string;
   name: string;
   description: string;
   taskType: TaskType;
-  initialVersionId: string;
   initialPrompt: string;
+  idGenerator: IIdGenerator;
   createdAt?: Date;
   updatedAt?: Date;
+}
+
+// Snapshot passed to the repository for a single save. Carries both the
+// expected revision (for the optimistic-concurrency filter) and the next
+// revision (what the store should advance to on success) so the repo does
+// not need to compute or remember revision math — it just writes what the
+// aggregate asked it to.
+export interface PromptSnapshot {
+  readonly prompt: PromptPrimitives;
+  readonly versions: readonly PromptVersionPrimitives[];
+  readonly expectedRevision: number;
+  readonly nextRevision: number;
 }
 
 export class Prompt {
@@ -37,9 +57,10 @@ export class Prompt {
 
   static create(params: CreatePromptParams): Prompt {
     const now = params.createdAt ?? new Date();
+    const promptId = params.idGenerator.newId();
     const initialVersion = PromptVersion.create({
-      id: params.initialVersionId,
-      promptId: params.id,
+      id: params.idGenerator.newId(),
+      promptId,
       version: "v1",
       sourcePrompt: params.initialPrompt,
       createdAt: now,
@@ -47,12 +68,13 @@ export class Prompt {
     });
     return new Prompt(
       {
-        id: params.id,
+        id: promptId,
         name: params.name,
         description: params.description,
         taskType: params.taskType,
         ownerId: params.ownerId,
         productionVersion: null,
+        revision: 0,
         createdAt: now,
         updatedAt: params.updatedAt ?? now,
       },
@@ -96,6 +118,10 @@ export class Prompt {
     return this.state.productionVersion;
   }
 
+  get revision(): number {
+    return this.state.revision;
+  }
+
   get createdAt(): Date {
     return this.state.createdAt;
   }
@@ -113,10 +139,10 @@ export class Prompt {
   }
 
   // Guards the aggregate behind an ownership check so callers cannot forget
-  // the rule. Throws ForbiddenError when `userId` does not match `ownerId`.
+  // the rule. Throws PromptForbiddenError when `userId` does not match.
   assertOwnedBy(userId: string): void {
     if (this.state.ownerId !== userId) {
-      throw ForbiddenError("You don't own this prompt");
+      throw PromptForbiddenError();
     }
   }
 
@@ -127,18 +153,20 @@ export class Prompt {
   getVersionOrThrow(version: string): PromptVersion {
     const match = this.getVersion(version);
     if (!match) {
-      throw NotFoundError("Version not found");
+      throw PromptVersionNotFoundError(version);
     }
     return match;
   }
 
-  createVersion(input: {
-    id: string;
-    sourcePrompt: string;
-    name?: string | null;
-  }): PromptVersion {
+  createVersion(
+    input: {
+      sourcePrompt: string;
+      name?: string | null;
+    },
+    idGenerator: IIdGenerator,
+  ): PromptVersion {
     const nextVersion = PromptVersion.create({
-      id: input.id,
+      id: idGenerator.newId(),
       promptId: this.id,
       version: `v${this.versionsState.length + 1}`,
       sourcePrompt: input.sourcePrompt,
@@ -149,7 +177,15 @@ export class Prompt {
     return nextVersion;
   }
 
+  // Promotion rules are business invariants and live here, not in DTO
+  // validation. A version can move to `staging` or `production`; demoting
+  // back to `draft` is forbidden because draft is the initial working state
+  // and would effectively "unpublish" history. Repeated promotion to the
+  // current status is a no-op (still updates aggregate timestamp).
   promoteVersion(version: string, targetStatus: PromptVersion["status"]): PromptVersion {
+    if (targetStatus === "draft") {
+      throw ValidationError("Cannot demote a version back to draft");
+    }
     const target = this.getVersionOrThrow(version);
     if (targetStatus === "production") {
       for (const candidate of this.versionsState) {
@@ -188,15 +224,16 @@ export class Prompt {
   }
 
   // Attaches a generated BRAID graph. If the source version already carries a
-  // graph the aggregate overwrites it; otherwise a new version is forked using
-  // the pre-allocated `newVersionId`. The ID is always required because the
-  // caller cannot know in advance which branch the aggregate will take.
-  attachGeneratedBraid(input: {
-    sourceVersion: string;
-    graph: BraidGraph;
-    generatorModel: string;
-    newVersionId: string;
-  }): { version: PromptVersion; createdNewVersion: boolean } {
+  // graph the aggregate overwrites it; otherwise it forks a new version and
+  // only then pulls an id from `idGenerator` (no wasted ids on overwrite).
+  attachGeneratedBraid(
+    input: {
+      sourceVersion: string;
+      graph: BraidGraph;
+      generatorModel: string;
+    },
+    idGenerator: IIdGenerator,
+  ): { version: PromptVersion; createdNewVersion: boolean } {
     const source = this.getVersionOrThrow(input.sourceVersion);
     if (source.hasBraidRepresentation) {
       source.setBraidGraph(input.graph, input.generatorModel);
@@ -204,19 +241,41 @@ export class Prompt {
       return { version: source, createdNewVersion: false };
     }
 
-    const created = this.createVersion({
-      id: input.newVersionId,
-      sourcePrompt: source.sourcePrompt,
-    });
+    const created = this.createVersion(
+      { sourcePrompt: source.sourcePrompt },
+      idGenerator,
+    );
     created.setBraidGraph(input.graph, input.generatorModel);
     this.touch();
     return { version: created, createdNewVersion: true };
   }
 
-  toPrimitives(): { prompt: PromptPrimitives; versions: PromptVersionPrimitives[] } {
+  // Produces a one-shot save token. The repository writes `nextRevision`
+  // gated on `expectedRevision` and, on success, calls `commit(snapshot)`
+  // so the aggregate's in-memory state advances. Writing this as a snapshot
+  // rather than as "aggregate + markPersisted" means the repo cannot drift
+  // out of sync if it forgets a follow-up call: a stale snapshot passed to
+  // `commit` is rejected explicitly.
+  toSnapshot(): PromptSnapshot {
+    const expectedRevision = this.state.revision;
+    const nextRevision = expectedRevision + 1;
     return {
-      prompt: { ...this.state },
+      prompt: { ...this.state, revision: nextRevision },
       versions: this.versionsState.map((version) => version.toPrimitives()),
+      expectedRevision,
+      nextRevision,
+    };
+  }
+
+  commit(snapshot: PromptSnapshot): void {
+    if (snapshot.expectedRevision !== this.state.revision) {
+      throw ValidationError(
+        "Cannot commit a stale snapshot: aggregate revision advanced since the snapshot was taken",
+      );
+    }
+    this.state = {
+      ...this.state,
+      revision: snapshot.nextRevision,
     };
   }
 

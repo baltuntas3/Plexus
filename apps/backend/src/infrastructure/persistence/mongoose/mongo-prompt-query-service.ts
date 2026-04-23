@@ -3,16 +3,18 @@ import type { TaskType } from "@plexus/shared-types";
 import type {
   IPromptQueryService,
   ListPromptSummariesQuery,
+  ListVersionSummariesQuery,
   PromptSummary,
   PromptSummaryListResult,
+  PromptVersionSummary,
+  VersionSummaryListResult,
 } from "../../../application/queries/prompt-query-service.js";
-import {
-  PromptVersion,
-  type PromptRepresentationPrimitives,
-  type PromptVersionPrimitives,
-} from "../../../domain/entities/prompt-version.js";
 import { PromptModel } from "./prompt-model.js";
 import { PromptVersionModel } from "./prompt-version-model.js";
+import {
+  toVersionSummary,
+  type PromptVersionDocShape,
+} from "./prompt-version-mongo-mapper.js";
 
 interface PromptSummaryDoc {
   _id: Types.ObjectId;
@@ -21,23 +23,6 @@ interface PromptSummaryDoc {
   taskType: TaskType;
   ownerId: Types.ObjectId;
   productionVersion: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-interface VersionDocShape {
-  _id: Types.ObjectId;
-  promptId: Types.ObjectId;
-  version: string;
-  name: string | null;
-  sourcePrompt: string;
-  representation: {
-    kind: "classical" | "braid";
-    graph: string | null;
-    generatorModel: string | null;
-  };
-  solverModel: string | null;
-  status: PromptVersionPrimitives["status"];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,29 +37,6 @@ const toSummary = (doc: PromptSummaryDoc): PromptSummary => ({
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
 });
-
-const toRepresentation = (
-  doc: VersionDocShape["representation"],
-): PromptRepresentationPrimitives => {
-  if (doc.kind === "braid" && doc.graph && doc.generatorModel) {
-    return { kind: "braid", graph: doc.graph, generatorModel: doc.generatorModel };
-  }
-  return { kind: "classical" };
-};
-
-const toDomainVersion = (doc: VersionDocShape): PromptVersion =>
-  PromptVersion.hydrate({
-    id: String(doc._id),
-    promptId: String(doc.promptId),
-    version: doc.version,
-    name: doc.name ?? null,
-    sourcePrompt: doc.sourcePrompt,
-    representation: toRepresentation(doc.representation),
-    solverModel: doc.solverModel,
-    status: doc.status,
-    createdAt: doc.createdAt,
-    updatedAt: doc.updatedAt,
-  });
 
 export class MongoPromptQueryService implements IPromptQueryService {
   async listPromptSummaries(query: ListPromptSummariesQuery): Promise<PromptSummaryListResult> {
@@ -96,6 +58,16 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return { items: docs.map(toSummary), total };
   }
 
+  async findOwnedPromptSummary(
+    promptId: string,
+    ownerId: string,
+  ): Promise<PromptSummary | null> {
+    // Composite filter keeps "missing" and "not yours" indistinguishable at
+    // the storage boundary — a single round trip, no info leak.
+    const doc = await PromptModel.findOne({ _id: promptId, ownerId }).lean<PromptSummaryDoc>();
+    return doc ? toSummary(doc) : null;
+  }
+
   async findPromptSummariesByIds(
     ids: readonly string[],
   ): Promise<Map<string, PromptSummary>> {
@@ -111,20 +83,38 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return map;
   }
 
-  async findVersionById(id: string): Promise<PromptVersion | null> {
-    const doc = await PromptVersionModel.findById(id).lean<VersionDocShape>();
-    return doc ? toDomainVersion(doc) : null;
+  async listVersionSummaries(
+    query: ListVersionSummariesQuery,
+  ): Promise<VersionSummaryListResult> {
+    const filter = { promptId: query.promptId };
+    const skip = (query.page - 1) * query.pageSize;
+    const [docs, total] = await Promise.all([
+      PromptVersionModel.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(query.pageSize)
+        .lean<PromptVersionDocShape[]>(),
+      PromptVersionModel.countDocuments(filter),
+    ]);
+    return { items: docs.map(toVersionSummary), total };
   }
 
-  async findVersionsByIds(ids: readonly string[]): Promise<Map<string, PromptVersion>> {
+  async findVersionSummaryById(id: string): Promise<PromptVersionSummary | null> {
+    const doc = await PromptVersionModel.findById(id).lean<PromptVersionDocShape>();
+    return doc ? toVersionSummary(doc) : null;
+  }
+
+  async findVersionSummariesByIds(
+    ids: readonly string[],
+  ): Promise<Map<string, PromptVersionSummary>> {
     if (ids.length === 0) {
       return new Map();
     }
-    const docs = await PromptVersionModel.find({ _id: { $in: ids } }).lean<VersionDocShape[]>();
-    const map = new Map<string, PromptVersion>();
+    const docs = await PromptVersionModel.find({ _id: { $in: ids } }).lean<PromptVersionDocShape[]>();
+    const map = new Map<string, PromptVersionSummary>();
     for (const doc of docs) {
-      const version = toDomainVersion(doc);
-      map.set(version.id, version);
+      const summary = toVersionSummary(doc);
+      map.set(summary.id, summary);
     }
     return map;
   }

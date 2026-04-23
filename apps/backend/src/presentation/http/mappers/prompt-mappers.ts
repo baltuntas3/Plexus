@@ -7,7 +7,10 @@ import type {
 } from "@plexus/shared-types";
 import type { Prompt } from "../../../domain/entities/prompt.js";
 import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
-import type { PromptSummary } from "../../../application/queries/prompt-query-service.js";
+import type {
+  PromptSummary,
+  PromptVersionSummary,
+} from "../../../application/queries/prompt-query-service.js";
 import type { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 
@@ -29,20 +32,48 @@ export const toPromptDto = (prompt: PromptLike): PromptDto => ({
   updatedAt: prompt.updatedAt.toISOString(),
 });
 
-export const toPromptVersionDto = (version: PromptVersion): PromptVersionDto => ({
-  id: version.id,
-  promptId: version.promptId,
-  version: version.version,
-  name: version.name,
-  sourcePrompt: version.sourcePrompt,
-  braidGraph: version.braidGraph?.mermaidCode ?? null,
-  generatorModel:
-    version.representation.kind === "braid" ? version.representation.generatorModel : null,
-  solverModel: version.solverModel,
-  status: version.status,
-  createdAt: version.createdAt.toISOString(),
-  updatedAt: version.updatedAt.toISOString(),
-});
+// Duck-type over the write-side entity and the read-side summary so list
+// endpoints can render straight from the projection without hydrating a full
+// PromptVersion. `braidGraph`/`generatorModel` come pre-flattened on the
+// summary; on the entity they live inside the representation VO.
+type PromptVersionLike =
+  | PromptVersion
+  | PromptVersionSummary;
+
+const extractBraid = (
+  version: PromptVersionLike,
+): { braidGraph: string | null; generatorModel: string | null } => {
+  if ("representation" in version) {
+    return {
+      braidGraph: version.braidGraph?.mermaidCode ?? null,
+      generatorModel:
+        version.representation.kind === "braid"
+          ? version.representation.generatorModel
+          : null,
+    };
+  }
+  return {
+    braidGraph: version.braidGraph,
+    generatorModel: version.generatorModel,
+  };
+};
+
+export const toPromptVersionDto = (version: PromptVersionLike): PromptVersionDto => {
+  const { braidGraph, generatorModel } = extractBraid(version);
+  return {
+    id: version.id,
+    promptId: version.promptId,
+    version: version.version,
+    name: version.name,
+    sourcePrompt: version.sourcePrompt,
+    braidGraph,
+    generatorModel,
+    solverModel: version.solverModel,
+    status: version.status,
+    createdAt: version.createdAt.toISOString(),
+    updatedAt: version.updatedAt.toISOString(),
+  };
+};
 
 export const toBraidGraphDto = (graph: BraidGraph): BraidGraphDto => ({
   mermaidCode: graph.mermaidCode,

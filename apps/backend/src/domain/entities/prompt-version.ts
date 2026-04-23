@@ -1,5 +1,8 @@
 import type { VersionStatus } from "@plexus/shared-types";
-import { ValidationError } from "../errors/domain-error.js";
+import {
+  PromptBraidGeneratorModelRequiredError,
+  PromptVersionHasNoBraidToUpdateError,
+} from "../errors/domain-error.js";
 import { BraidGraph } from "../value-objects/braid-graph.js";
 import { PromptContent } from "../value-objects/prompt-content.js";
 
@@ -109,7 +112,10 @@ export class PromptVersion {
       promptId: primitives.promptId,
       version: primitives.version,
       name: normalizeVersionName(primitives.name),
-      sourcePrompt: PromptContent.create(primitives.sourcePrompt),
+      // Hydrate bypasses validation: the source was already validated when
+      // created, so rebuild the VO without re-running the empty check.
+      // `create` remains the guarded path for new content.
+      sourcePrompt: PromptContent.fromPersistence(primitives.sourcePrompt),
       representation: hydrateRepresentation(primitives.representation),
       solverModel: primitives.solverModel ?? null,
       status: primitives.status,
@@ -198,7 +204,7 @@ export class PromptVersion {
 
   updateBraidGraph(graph: BraidGraph): void {
     if (this.state.representation.kind !== "braid") {
-      throw ValidationError("Version has no BRAID graph to update");
+      throw PromptVersionHasNoBraidToUpdateError();
     }
     this.state = {
       ...this.state,
@@ -246,7 +252,7 @@ const hydrateRepresentation = (
 const requireGeneratorModel = (generatorModel: string): string => {
   const trimmed = generatorModel.trim();
   if (trimmed.length === 0) {
-    throw ValidationError("generatorModel is required when setting a BRAID graph");
+    throw PromptBraidGeneratorModelRequiredError();
   }
   return trimmed;
 };

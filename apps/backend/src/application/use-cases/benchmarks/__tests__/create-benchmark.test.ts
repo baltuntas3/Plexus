@@ -2,6 +2,7 @@ import { CreateBenchmarkUseCase } from "../create-benchmark.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
 import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
+import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
 import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
 import type { GenerateRequest, IAIProvider, IAIProviderFactory } from "../../../services/ai-provider.js";
 
@@ -40,18 +41,16 @@ const buildScaffold = async () => {
   const benchmarks = new InMemoryBenchmarkRepository();
   const queries = new InMemoryPromptQueryService();
   const prompts = new InMemoryPromptAggregateRepository(queries);
+  const ids = new InMemoryIdGenerator();
 
-  const promptId = await prompts.nextPromptId();
-  const versionId = await prompts.nextVersionId();
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
-    id: promptId,
     ownerId: "u1",
     name: "Prompt",
     description: "desc",
     taskType: "math",
-    initialVersionId: versionId,
     initialPrompt: "Answer.",
+    idGenerator: ids,
   });
   await prompts.save(prompt);
   const version = prompt.getVersionOrThrow("v1");
@@ -61,6 +60,7 @@ const buildScaffold = async () => {
     benchmarks,
     queries,
     prompts,
+    ids,
     version,
   };
 };
@@ -117,28 +117,27 @@ describe("CreateBenchmarkUseCase", () => {
     const benchmarks = new InMemoryBenchmarkRepository();
     const queries = new InMemoryPromptQueryService();
     const prompts = new InMemoryPromptAggregateRepository(queries);
+    const ids = new InMemoryIdGenerator();
 
     const { Prompt } = await import("../../../../domain/entities/prompt.js");
     const prompt = Prompt.create({
-      id: await prompts.nextPromptId(),
       ownerId: "u1",
       name: "Prompt",
       description: "",
       taskType: "math",
-      initialVersionId: await prompts.nextVersionId(),
       initialPrompt: "Classical instructions.",
+      idGenerator: ids,
     });
-    prompt.createVersion({
-      id: await prompts.nextVersionId(),
-      sourcePrompt: "Outdated classical prompt.",
-    });
+    prompt.createVersion({ sourcePrompt: "Outdated classical prompt." }, ids);
     // sourceVersion v2 has no braid yet → aggregate forks a new v3 with the braid.
-    const { version: braid } = prompt.attachGeneratedBraid({
-      sourceVersion: "v2",
-      graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
-      generatorModel: "openai/gpt-oss-120b",
-      newVersionId: await prompts.nextVersionId(),
-    });
+    const { version: braid } = prompt.attachGeneratedBraid(
+      {
+        sourceVersion: "v2",
+        graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
+        generatorModel: "openai/gpt-oss-120b",
+      },
+      ids,
+    );
     await prompts.save(prompt);
     const classical = prompt.getVersionOrThrow("v1");
 
@@ -174,21 +173,18 @@ describe("CreateBenchmarkUseCase", () => {
     const benchmarks = new InMemoryBenchmarkRepository();
     const queries = new InMemoryPromptQueryService();
     const prompts = new InMemoryPromptAggregateRepository(queries);
+    const ids = new InMemoryIdGenerator();
 
     const { Prompt } = await import("../../../../domain/entities/prompt.js");
     const prompt = Prompt.create({
-      id: await prompts.nextPromptId(),
       ownerId: "u1",
       name: "Prompt",
       description: "",
       taskType: "math",
-      initialVersionId: await prompts.nextVersionId(),
       initialPrompt: "Only answer in English.",
+      idGenerator: ids,
     });
-    prompt.createVersion({
-      id: await prompts.nextVersionId(),
-      sourcePrompt: "Answer in Turkish when asked.",
-    });
+    prompt.createVersion({ sourcePrompt: "Answer in Turkish when asked." }, ids);
     await prompts.save(prompt);
     const v1 = prompt.getVersionOrThrow("v1");
     const v2 = prompt.getVersionOrThrow("v2");

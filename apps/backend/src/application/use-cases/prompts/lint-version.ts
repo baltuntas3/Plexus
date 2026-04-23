@@ -1,5 +1,5 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
-import { ValidationError } from "../../../domain/errors/domain-error.js";
+import { PromptVersionHasNoBraidError } from "../../../domain/errors/domain-error.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
 import { loadOwnedPrompt } from "./load-owned-prompt.js";
@@ -20,7 +20,7 @@ export class LintVersionUseCase {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
     const version = prompt.getVersionOrThrow(command.version);
     if (!version.braidGraph) {
-      throw ValidationError("Version has no BRAID graph to lint. Generate one first.");
+      throw PromptVersionHasNoBraidError();
     }
     return this.linter.lint(version.braidGraph);
   }

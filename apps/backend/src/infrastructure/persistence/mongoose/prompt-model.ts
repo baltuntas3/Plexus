@@ -8,6 +8,10 @@ const promptSchema = new Schema(
     taskType: { type: String, required: true, enum: TASK_TYPES },
     ownerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     productionVersion: { type: String, default: null },
+    // Optimistic-concurrency token bumped by the aggregate repository on each
+    // successful save. Filtering by this on update guarantees lost-update
+    // detection for concurrent writers that loaded the same aggregate.
+    revision: { type: Number, required: true, default: 0 },
   },
   { timestamps: true },
 );

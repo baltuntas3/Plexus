@@ -11,26 +11,32 @@ import { JudgeScore } from "../../../../domain/value-objects/judge-score.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
 import { InMemoryBenchmarkResultRepository } from "../../../../__tests__/fakes/in-memory-benchmark-result-repository.js";
 import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
-import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
-import { PromptVersion } from "../../../../domain/entities/prompt-version.js";
+import type { PromptVersionSummary } from "../../../../application/queries/prompt-query-service.js";
 import { BenchmarkRunner } from "../benchmark-runner.js";
 
 let versionCounter = 1;
 const createVersion = (
   queries: InMemoryPromptQueryService,
   params: { promptId: string; version: string; sourcePrompt: string; braidGraph?: string; generatorModel?: string },
-): PromptVersion => {
-  const pv = PromptVersion.create({
+): PromptVersionSummary => {
+  const now = new Date();
+  const braidGraph = params.braidGraph ?? null;
+  const summary: PromptVersionSummary = {
     id: String(versionCounter++),
     promptId: params.promptId,
     version: params.version,
+    name: null,
     sourcePrompt: params.sourcePrompt,
-  });
-  if (params.braidGraph) {
-    pv.setBraidGraph(BraidGraph.parse(params.braidGraph), params.generatorModel ?? "openai/gpt-oss-120b");
-  }
-  queries.seedVersion(pv);
-  return pv;
+    braidGraph,
+    generatorModel: braidGraph ? params.generatorModel ?? "openai/gpt-oss-120b" : null,
+    executablePrompt: braidGraph ?? params.sourcePrompt,
+    solverModel: null,
+    status: "draft",
+    createdAt: now,
+    updatedAt: now,
+  };
+  queries.seedVersionSummary(summary);
+  return summary;
 };
 
 class RecordingProvider implements IAIProvider {

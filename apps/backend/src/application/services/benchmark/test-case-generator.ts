@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
+import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import type { TestGenerationMode } from "../../../domain/entities/benchmark.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import type { IAIProviderFactory } from "../ai-provider.js";
@@ -104,7 +104,7 @@ export const buildEvaluationSpec = (
 };
 
 export const buildEvaluationSpecFromVersions = (
-  versions: readonly PromptVersion[],
+  versions: readonly PromptVersionSummary[],
   mode: TestGenerationMode = "shared-core",
   seed?: number,
 ): string => buildEvaluationSpec(versions.map(buildEvaluationPrompt), mode, seed);

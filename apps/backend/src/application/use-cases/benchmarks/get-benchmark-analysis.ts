@@ -58,7 +58,7 @@ export const buildVersionLabels = async (
   queries: IPromptQueryService,
   ids: readonly string[],
 ): Promise<Record<string, string>> => {
-  const versions = await queries.findVersionsByIds(ids);
+  const versions = await queries.findVersionSummariesByIds(ids);
   const labels: Record<string, string> = {};
   ids.forEach((id, i) => {
     const v = versions.get(id);

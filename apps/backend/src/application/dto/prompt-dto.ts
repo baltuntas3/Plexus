@@ -22,10 +22,10 @@ export const updateVersionInputSchema = z.object({
 });
 export type UpdateVersionInputDto = z.infer<typeof updateVersionInputSchema>;
 
+// Schema just enforces the type is a known status; the "cannot demote to
+// draft" rule is a business invariant and lives on the Prompt aggregate.
 export const promoteVersionInputSchema = z.object({
-  targetStatus: z.enum(VERSION_STATUSES).refine((s) => s !== "draft", {
-    message: "targetStatus cannot be 'draft'",
-  }),
+  targetStatus: z.enum(VERSION_STATUSES),
 });
 export type PromoteVersionInputDto = z.infer<typeof promoteVersionInputSchema>;
 

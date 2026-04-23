@@ -1,4 +1,5 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
+import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import { TokenCost } from "../../../domain/value-objects/token-cost.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
@@ -34,6 +35,7 @@ export class ChatBraidUseCase {
     private readonly prompts: IPromptAggregateRepository,
     private readonly providers: IAIProviderFactory,
     private readonly linter: GraphLinter,
+    private readonly idGenerator: IIdGenerator,
   ) {}
 
   async execute(command: ChatBraidCommand): Promise<ChatBraidResult> {
@@ -71,12 +73,14 @@ export class ChatBraidUseCase {
       return { type: "diagram", mermaidCode: graph.mermaidCode, newVersionName: null, qualityScore, cost };
     }
 
-    const { version: newVersion } = prompt.attachGeneratedBraid({
-      sourceVersion: command.version,
-      graph,
-      generatorModel: command.generatorModel,
-      newVersionId: await this.prompts.nextVersionId(),
-    });
+    const { version: newVersion } = prompt.attachGeneratedBraid(
+      {
+        sourceVersion: command.version,
+        graph,
+        generatorModel: command.generatorModel,
+      },
+      this.idGenerator,
+    );
     await this.prompts.save(prompt);
 
     return {

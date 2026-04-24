@@ -57,7 +57,10 @@ export class CreateBenchmarkUseCase {
   ) {}
 
   async execute(command: CreateBenchmarkCommand): Promise<CreateBenchmarkResult> {
-    const resolvedVersions = await this.loadVersions(command.promptVersionIds);
+    const resolvedVersions = await this.loadVersions(
+      command.promptVersionIds,
+      command.ownerId,
+    );
 
     for (const model of command.solverModels) {
       ModelRegistry.require(model);
@@ -79,7 +82,7 @@ export class CreateBenchmarkUseCase {
       command.seed !== undefined
         ? BenchmarkSeed.of(command.seed).toNumber()
         : BenchmarkSeed.random().toNumber();
-    const taskType = await this.resolveTaskType(resolvedVersions);
+    const taskType = await this.resolveTaskType(resolvedVersions, command.ownerId);
 
     const spec = buildEvaluationSpecFromVersions(
       resolvedVersions,
@@ -144,9 +147,15 @@ export class CreateBenchmarkUseCase {
     return { benchmark, versionLabels };
   }
 
-  private async resolveTaskType(versions: PromptVersionSummary[]): Promise<TaskType> {
+  private async resolveTaskType(
+    versions: PromptVersionSummary[],
+    ownerId: string,
+  ): Promise<TaskType> {
     const promptIds = [...new Set(versions.map((version) => version.promptId))];
-    const summaries = await this.promptQueries.findPromptSummariesByIds(promptIds);
+    const summaries = await this.promptQueries.findOwnedPromptSummariesByIds(
+      promptIds,
+      ownerId,
+    );
     const missing = promptIds.filter((id) => !summaries.has(id));
     if (missing.length > 0) {
       throw NotFoundError(`Prompt(s) not found: ${missing.join(", ")}`);
@@ -160,8 +169,17 @@ export class CreateBenchmarkUseCase {
     return (taskTypes[0] ?? "general") as TaskType;
   }
 
-  private async loadVersions(ids: string[]): Promise<PromptVersionSummary[]> {
-    const resolved = await this.promptQueries.findVersionSummariesByIds(ids);
+  private async loadVersions(
+    ids: string[],
+    ownerId: string,
+  ): Promise<PromptVersionSummary[]> {
+    // Owner-scoped lookup collapses "missing" and "not yours" into a single
+    // 404-shaped response. A caller replaying foreign version ids cannot
+    // tell whether the id exists under a different owner.
+    const resolved = await this.promptQueries.findOwnedVersionSummariesByIds(
+      ids,
+      ownerId,
+    );
     for (const id of ids) {
       if (!resolved.has(id)) throw NotFoundError(`PromptVersion ${id} not found`);
     }

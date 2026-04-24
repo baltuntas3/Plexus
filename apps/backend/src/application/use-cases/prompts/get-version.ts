@@ -1,6 +1,11 @@
-import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
-import { loadOwnedPrompt } from "./load-owned-prompt.js";
+import type {
+  IPromptQueryService,
+  PromptVersionSummary,
+} from "../../queries/prompt-query-service.js";
+import {
+  PromptNotFoundError,
+  PromptVersionNotFoundError,
+} from "../../../domain/errors/domain-error.js";
 
 export interface GetVersionCommand {
   promptId: string;
@@ -8,11 +13,29 @@ export interface GetVersionCommand {
   ownerId: string;
 }
 
+// Read-side use case. Resolves the owning prompt first (so callers cannot
+// probe for foreign version ids by guessing), then finds the requested
+// label among its versions.
 export class GetVersionUseCase {
-  constructor(private readonly prompts: IPromptAggregateRepository) {}
+  constructor(private readonly queries: IPromptQueryService) {}
 
-  async execute(command: GetVersionCommand): Promise<PromptVersion> {
-    const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    return prompt.getVersionOrThrow(command.version);
+  async execute(command: GetVersionCommand): Promise<PromptVersionSummary> {
+    const owner = await this.queries.findOwnedPromptSummary(
+      command.promptId,
+      command.ownerId,
+    );
+    if (!owner) {
+      throw PromptNotFoundError();
+    }
+    const { items } = await this.queries.listVersionSummaries({
+      promptId: command.promptId,
+      page: 1,
+      pageSize: Number.MAX_SAFE_INTEGER,
+    });
+    const match = items.find((item) => item.version === command.version);
+    if (!match) {
+      throw PromptVersionNotFoundError(command.version);
+    }
+    return match;
   }
 }

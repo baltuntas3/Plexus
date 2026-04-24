@@ -1,5 +1,6 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
+import { BraidAuthorship } from "../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import { TokenCost } from "../../../domain/value-objects/token-cost.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
@@ -80,16 +81,12 @@ export class ChatBraidUseCase {
     // Record the model that actually produced this artifact. The agent was
     // built with `command.generatorModel`, the LLM call ran with that model,
     // the cost was calculated against that model — the fork's metadata must
-    // match. Carrying over the parent's model here would mean "v3 was made
-    // by Model A" when in reality Model B produced every token; that is a
-    // provenance lie, and immutable-versions + lineage only work if each
-    // artifact honestly records its producer. `parentVersionId` already
-    // answers "what came before", so there is no need to double-encode it
-    // into generatorModel.
+    // match. `parentVersionId` already answers "what came before", so there
+    // is no need to double-encode lineage into authorship.
     const forked = prompt.upsertBraid({
       version: command.version,
       graph,
-      generatorModel: command.generatorModel,
+      authorship: BraidAuthorship.byModel(command.generatorModel),
       forkVersionId: this.idGenerator.newId(),
     });
     await this.prompts.save(prompt);

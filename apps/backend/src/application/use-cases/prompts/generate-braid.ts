@@ -1,6 +1,6 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
+import { BraidAuthorship } from "../../../domain/value-objects/braid-authorship.js";
 import type { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { TokenCost } from "../../../domain/value-objects/token-cost.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
@@ -8,6 +8,8 @@ import type { BraidGenerator } from "../../services/braid/braid-generator.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
 import type { TokenUsage } from "../../services/ai-provider.js";
 import type { GenerateBraidInputDto } from "../../dto/braid-dto.js";
+import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
+import { versionToSummary } from "../../queries/prompt-projections.js";
 import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
 export interface GenerateBraidCommand extends GenerateBraidInputDto {
@@ -20,7 +22,7 @@ export interface GenerateBraidCommand extends GenerateBraidInputDto {
 // regenerate produces a brand-new version linked via parentVersionId to
 // the source. The returned `version` is always a freshly created record.
 export interface GenerateBraidResult {
-  version: PromptVersion;
+  version: PromptVersionSummary;
   graph: BraidGraph;
   cost: TokenCost;
   usage: TokenUsage;
@@ -51,13 +53,13 @@ export class GenerateBraidUseCase {
     const forked = prompt.upsertBraid({
       version: command.version,
       graph: result.graph,
-      generatorModel: result.generatorModel,
+      authorship: BraidAuthorship.byModel(result.generatorModel),
       forkVersionId: this.idGenerator.newId(),
     });
     await this.prompts.save(prompt);
 
     return {
-      version: forked,
+      version: versionToSummary(forked),
       graph: result.graph,
       cost: result.cost,
       usage: result.usage,

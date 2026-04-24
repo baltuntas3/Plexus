@@ -81,7 +81,10 @@ export class BenchmarkRunner {
 
     try {
       benchmark.assertRunnable();
-      const versions = await this.loadVersions([...benchmark.promptVersionIds]);
+      const versions = await this.loadVersions(
+        [...benchmark.promptVersionIds],
+        benchmark.ownerId,
+      );
       const matrix = BenchmarkMatrix.build({
         testCases: benchmark.testCases,
         versions,
@@ -212,8 +215,12 @@ export class BenchmarkRunner {
 
   private async loadVersions(
     ids: readonly string[],
+    ownerId: string,
   ): Promise<PromptVersionSummary[]> {
-    const found = await this.deps.promptQueries.findVersionSummariesByIds(ids);
+    const found = await this.deps.promptQueries.findOwnedVersionSummariesByIds(
+      ids,
+      ownerId,
+    );
     const missing = ids.filter((id) => !found.has(id));
     if (missing.length > 0) {
       throw NotFoundError(`PromptVersion(s) not found: ${missing.join(", ")}`);

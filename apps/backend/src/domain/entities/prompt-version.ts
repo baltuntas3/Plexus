@@ -1,8 +1,9 @@
 import type { VersionStatus } from "@plexus/shared-types";
+import { PromptSourceEmptyError } from "../errors/domain-error.js";
 import {
-  PromptBraidGeneratorModelRequiredError,
-  PromptSourceEmptyError,
-} from "../errors/domain-error.js";
+  BraidAuthorship,
+  type BraidAuthorshipSnapshot,
+} from "../value-objects/braid-authorship.js";
 import { BraidGraph } from "../value-objects/braid-graph.js";
 import { VersionLabel } from "../value-objects/version-label.js";
 
@@ -26,7 +27,7 @@ export interface ClassicalPromptRepresentationPrimitives {
 export interface BraidPromptRepresentationPrimitives {
   kind: "braid";
   graph: string;
-  generatorModel: string;
+  authorship: BraidAuthorshipSnapshot;
 }
 
 export type PromptRepresentationPrimitives =
@@ -55,8 +56,10 @@ export interface CreatePromptVersionParams {
   parentVersionId?: string | null;
   // When present, the version is born as a braid (fork-on-edit path). When
   // absent, the new version starts classical and a follow-up edit — which
-  // is itself a fork — is required to attach a braid.
-  initialBraid?: { graph: BraidGraph; generatorModel: string };
+  // is itself a fork — is required to attach a braid. Authorship is a VO
+  // rather than a bare model string so manual edits do not masquerade as
+  // LLM-generated content.
+  initialBraid?: { graph: BraidGraph; authorship: BraidAuthorship };
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -74,7 +77,7 @@ export class BraidPromptRepresentation {
 
   constructor(
     public readonly graph: BraidGraph,
-    public readonly generatorModel: string,
+    public readonly authorship: BraidAuthorship,
   ) {}
 
   get executablePrompt(): string {
@@ -85,7 +88,7 @@ export class BraidPromptRepresentation {
     return {
       kind: this.kind,
       graph: this.graph.mermaidCode,
-      generatorModel: this.generatorModel,
+      authorship: this.authorship.toSnapshot(),
     };
   }
 }
@@ -144,7 +147,7 @@ export class PromptVersion {
     const representation: PromptRepresentation = params.initialBraid
       ? new BraidPromptRepresentation(
           params.initialBraid.graph,
-          requireGeneratorModel(params.initialBraid.generatorModel),
+          params.initialBraid.authorship,
         )
       : new ClassicalPromptRepresentation();
     return new PromptVersion({
@@ -217,12 +220,22 @@ export class PromptVersion {
     return this.state.representation.kind === "braid" ? this.state.representation.graph : null;
   }
 
-  // Exposes only the domain facts callers are allowed to observe. The
-  // concrete representation object stays encapsulated so outer layers do not
-  // branch on internal shape and couple themselves to entity internals.
+  // Typed provenance accessor. Null for classical versions; a BraidAuthorship
+  // VO for braid versions so consumers that care about "was this LLM-made
+  // or hand-edited?" can branch on kind.
+  get braidAuthorship(): BraidAuthorship | null {
+    return this.state.representation.kind === "braid"
+      ? this.state.representation.authorship
+      : null;
+  }
+
+  // Legacy convenience getter preserved for DTO/display paths. Returns the
+  // model that actually ran for "model" authorship and the derivedFromModel
+  // for "manual" authorship (null if unknown). Use `braidAuthorship` when
+  // the distinction matters for correctness (audit, filtering, scoring).
   get generatorModel(): string | null {
     return this.state.representation.kind === "braid"
-      ? this.state.representation.generatorModel
+      ? this.state.representation.authorship.displayModel
       : null;
   }
 
@@ -285,14 +298,6 @@ const hydrateRepresentation = (
   }
   return new BraidPromptRepresentation(
     BraidGraph.parse(representation.graph),
-    requireGeneratorModel(representation.generatorModel),
+    BraidAuthorship.fromSnapshot(representation.authorship),
   );
-};
-
-const requireGeneratorModel = (generatorModel: string): string => {
-  const trimmed = generatorModel.trim();
-  if (trimmed.length === 0) {
-    throw PromptBraidGeneratorModelRequiredError();
-  }
-  return trimmed;
 };

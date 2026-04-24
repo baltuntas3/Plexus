@@ -68,13 +68,17 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return doc ? toSummary(doc) : null;
   }
 
-  async findPromptSummariesByIds(
+  async findOwnedPromptSummariesByIds(
     ids: readonly string[],
+    ownerId: string,
   ): Promise<Map<string, PromptSummary>> {
     if (ids.length === 0) {
       return new Map();
     }
-    const docs = await PromptModel.find({ _id: { $in: ids } }).lean<PromptSummaryDoc[]>();
+    const docs = await PromptModel.find({
+      _id: { $in: ids },
+      ownerId,
+    }).lean<PromptSummaryDoc[]>();
     const map = new Map<string, PromptSummary>();
     for (const doc of docs) {
       const summary = toSummary(doc);
@@ -99,20 +103,49 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return { items: docs.map(toVersionSummary), total };
   }
 
-  async findVersionSummaryById(id: string): Promise<PromptVersionSummary | null> {
+  async findOwnedVersionSummary(
+    id: string,
+    ownerId: string,
+  ): Promise<PromptVersionSummary | null> {
     const doc = await PromptVersionModel.findById(id).lean<PromptVersionDocShape>();
-    return doc ? toVersionSummary(doc) : null;
+    if (!doc) return null;
+    const owned = await PromptModel.exists({
+      _id: doc.promptId,
+      ownerId,
+    });
+    if (!owned) return null;
+    return toVersionSummary(doc);
   }
 
-  async findVersionSummariesByIds(
+  async findOwnedVersionSummariesByIds(
     ids: readonly string[],
+    ownerId: string,
   ): Promise<Map<string, PromptVersionSummary>> {
     if (ids.length === 0) {
       return new Map();
     }
-    const docs = await PromptVersionModel.find({ _id: { $in: ids } }).lean<PromptVersionDocShape[]>();
+    const versionDocs = await PromptVersionModel.find({
+      _id: { $in: ids },
+    }).lean<PromptVersionDocShape[]>();
+    if (versionDocs.length === 0) {
+      return new Map();
+    }
+    // Second round trip to filter by ownership. Denormalising ownerId onto
+    // PromptVersion would save this query but drift against the Prompt
+    // aggregate on ownership transfer (there is none today, but the owner
+    // of truth is the Prompt root, and we want one place to change it).
+    const promptIds = [...new Set(versionDocs.map((doc) => String(doc.promptId)))];
+    const ownedPromptDocs = await PromptModel.find({
+      _id: { $in: promptIds },
+      ownerId,
+    })
+      .select({ _id: 1 })
+      .lean<{ _id: Types.ObjectId }[]>();
+    const ownedPromptIds = new Set(ownedPromptDocs.map((doc) => String(doc._id)));
+
     const map = new Map<string, PromptVersionSummary>();
-    for (const doc of docs) {
+    for (const doc of versionDocs) {
+      if (!ownedPromptIds.has(String(doc.promptId))) continue;
       const summary = toVersionSummary(doc);
       map.set(summary.id, summary);
     }

@@ -39,6 +39,7 @@ export class GetBenchmarkAnalysisUseCase {
     const versionLabels = await buildVersionLabels(
       this.promptQueries,
       [...benchmark.promptVersionIds],
+      benchmark.ownerId,
     );
     const testCasesById = Object.fromEntries(
       benchmark.testCases.map((tc) => [
@@ -58,8 +59,9 @@ export class GetBenchmarkAnalysisUseCase {
 export const buildVersionLabels = async (
   queries: IPromptQueryService,
   ids: readonly string[],
+  ownerId: string,
 ): Promise<Record<string, string>> => {
-  const versions = await queries.findVersionSummariesByIds(ids);
+  const versions = await queries.findOwnedVersionSummariesByIds(ids, ownerId);
   const labels: Record<string, string> = {};
   ids.forEach((id, i) => {
     const v = versions.get(id);

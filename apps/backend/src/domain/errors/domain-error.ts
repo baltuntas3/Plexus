@@ -10,7 +10,6 @@ export type DomainErrorCode =
   | "PROMPT_NOT_OWNED"
   | "PROMPT_AGGREGATE_STALE"
   | "PROMPT_SOURCE_EMPTY"
-  | "PROMPT_BRAID_GENERATOR_MODEL_REQUIRED"
   | "PROMPT_VERSION_HAS_NO_BRAID"
   | "PROMPT_INVALID_VERSION_TRANSITION"
   | "BENCHMARK_NOT_FOUND"
@@ -87,13 +86,6 @@ export const PromptAggregateStaleError = (): DomainError =>
 
 export const PromptSourceEmptyError = (): DomainError =>
   new DomainError("PROMPT_SOURCE_EMPTY", "Source prompt is empty", 400);
-
-export const PromptBraidGeneratorModelRequiredError = (): DomainError =>
-  new DomainError(
-    "PROMPT_BRAID_GENERATOR_MODEL_REQUIRED",
-    "generatorModel is required when setting a BRAID graph",
-    400,
-  );
 
 export const PromptVersionHasNoBraidError = (): DomainError =>
   new DomainError(

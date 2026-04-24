@@ -52,10 +52,10 @@ export const createPromptComposition = (
   return {
     createPrompt: new CreatePromptUseCase(prompts, idGenerator),
     listPrompts: new ListPromptsUseCase(queries),
-    getPrompt: new GetPromptUseCase(prompts),
+    getPrompt: new GetPromptUseCase(queries),
     createVersion: new CreateVersionUseCase(prompts, idGenerator),
     listVersions: new ListVersionsUseCase(queries),
-    getVersion: new GetVersionUseCase(prompts),
+    getVersion: new GetVersionUseCase(queries),
     promoteVersion: new PromoteVersionUseCase(prompts),
     updateVersionName: new UpdateVersionNameUseCase(prompts),
     generateBraid: new GenerateBraidUseCase(prompts, generator, linter, idGenerator),

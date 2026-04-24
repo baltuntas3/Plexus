@@ -17,10 +17,34 @@ import { BenchmarkRunner } from "../benchmark-runner.js";
 let versionCounter = 1;
 const createVersion = (
   queries: InMemoryPromptQueryService,
-  params: { promptId: string; version: string; sourcePrompt: string; braidGraph?: string; generatorModel?: string },
+  params: {
+    promptId: string;
+    version: string;
+    sourcePrompt: string;
+    braidGraph?: string;
+    generatorModel?: string;
+    ownerId?: string;
+  },
 ): PromptVersionSummary => {
   const now = new Date();
   const braidGraph = params.braidGraph ?? null;
+  const resolvedGeneratorModel = braidGraph
+    ? params.generatorModel ?? "openai/gpt-oss-120b"
+    : null;
+  const ownerId = params.ownerId ?? "u1";
+  // Seed an owning prompt so owner-scoped lookups succeed. The query
+  // service now joins versions to their prompt to enforce ownership, so
+  // orphan version summaries would be invisible to findOwned*.
+  queries.seedPromptSummary({
+    id: params.promptId,
+    name: params.promptId,
+    description: "",
+    taskType: "general",
+    ownerId,
+    productionVersion: null,
+    createdAt: now,
+    updatedAt: now,
+  });
   const summary: PromptVersionSummary = {
     id: String(versionCounter++),
     promptId: params.promptId,
@@ -29,7 +53,10 @@ const createVersion = (
     parentVersionId: null,
     sourcePrompt: params.sourcePrompt,
     braidGraph,
-    generatorModel: braidGraph ? params.generatorModel ?? "openai/gpt-oss-120b" : null,
+    braidAuthorship: resolvedGeneratorModel
+      ? { kind: "model", model: resolvedGeneratorModel }
+      : null,
+    generatorModel: resolvedGeneratorModel,
     executablePrompt: braidGraph ?? params.sourcePrompt,
     status: "draft",
     createdAt: now,

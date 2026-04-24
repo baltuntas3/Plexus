@@ -17,6 +17,16 @@ export interface PromptDto {
   updatedAt: ISODateString;
 }
 
+// Authorship provenance for a BRAID artifact.
+//
+//   kind "model"  — an LLM ran end-to-end and produced this graph.
+//   kind "manual" — a human edited the mermaid directly; derivedFromModel
+//                   is the model id of the ancestor the edit started from
+//                   (null when no ancestor's model was recorded).
+export type BraidAuthorshipDto =
+  | { kind: "model"; model: string }
+  | { kind: "manual"; derivedFromModel: string | null };
+
 export interface PromptVersionDto {
   id: string;
   promptId: string;
@@ -32,6 +42,13 @@ export interface PromptVersionDto {
   parentVersionId: string | null;
   sourcePrompt: string;
   braidGraph: string | null;
+  // Discriminated provenance. Null when the version has no braid
+  // representation (classical prompt).
+  braidAuthorship: BraidAuthorshipDto | null;
+  // Convenience projection of `braidAuthorship`: the model id for "model"
+  // authorships, the derivedFromModel for "manual" authorships (null if
+  // unknown). Kept alongside the discriminated field so simple UI rows
+  // don't have to branch for the common "show the model name" case.
   generatorModel: string | null;
   status: VersionStatus;
   createdAt: ISODateString;

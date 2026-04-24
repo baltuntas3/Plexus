@@ -1,16 +1,23 @@
 import { Prompt } from "../../../domain/entities/prompt.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { CreatePromptInputDto } from "../../dto/prompt-dto.js";
+import type {
+  PromptSummary,
+  PromptVersionSummary,
+} from "../../queries/prompt-query-service.js";
+import {
+  promptToSummary,
+  versionToSummary,
+} from "../../queries/prompt-projections.js";
 
 export interface CreatePromptCommand extends CreatePromptInputDto {
   ownerId: string;
 }
 
 export interface CreatePromptResult {
-  prompt: Prompt;
-  version: PromptVersion;
+  prompt: PromptSummary;
+  version: PromptVersionSummary;
 }
 
 export class CreatePromptUseCase {
@@ -31,6 +38,9 @@ export class CreatePromptUseCase {
     });
     await this.prompts.save(prompt);
     const version = prompt.getVersionOrThrow("v1");
-    return { prompt, version };
+    return {
+      prompt: promptToSummary(prompt),
+      version: versionToSummary(version),
+    };
   }
 }

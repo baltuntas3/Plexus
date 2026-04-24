@@ -3,6 +3,7 @@ import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memo
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
 import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
 import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
+import { BraidAuthorship } from "../../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
 import type { GenerateRequest, IAIProvider, IAIProviderFactory } from "../../../services/ai-provider.js";
 
@@ -135,7 +136,7 @@ describe("CreateBenchmarkUseCase", () => {
     const braid = prompt.upsertBraid({
       version: "v2",
       graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
-      generatorModel: "openai/gpt-oss-120b",
+      authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: ids.newId(),
     });
     await prompts.save(prompt);

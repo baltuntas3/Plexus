@@ -1,4 +1,5 @@
 import { Prompt } from "../../../../domain/entities/prompt.js";
+import { BraidAuthorship } from "../../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
 
 // Immutability invariant: every graph edit produces a new forked version
@@ -26,7 +27,7 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
     const forked = prompt.upsertBraid({
       version: "v1",
       graph: GRAPH_A,
-      generatorModel: "openai/gpt-oss-120b",
+      authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: "forked-id-1",
     });
     expect(forked.version).toBe("v2");
@@ -43,13 +44,13 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
     const v2 = prompt.upsertBraid({
       version: "v1",
       graph: GRAPH_A,
-      generatorModel: "openai/gpt-oss-120b",
+      authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: "fork-a",
     });
     const v3 = prompt.upsertBraid({
       version: v2.version,
       graph: GRAPH_B,
-      generatorModel: "openai/gpt-oss-120b",
+      authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: "fork-b",
     });
     expect(v3.version).toBe("v3");
@@ -73,17 +74,43 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
     const v2 = prompt.upsertBraid({
       version: "v1",
       graph: GRAPH_A,
-      generatorModel: "model-a",
+      authorship: BraidAuthorship.byModel("model-a"),
       forkVersionId: "fork-a",
     });
     const v3 = prompt.upsertBraid({
       version: v2.version,
       graph: GRAPH_B,
-      generatorModel: "model-b",
+      authorship: BraidAuthorship.byModel("model-b"),
       forkVersionId: "fork-b",
     });
+    expect(v2.braidAuthorship?.kind).toBe("model");
     expect(v2.generatorModel).toBe("model-a");
+    expect(v3.braidAuthorship?.kind).toBe("model");
     expect(v3.generatorModel).toBe("model-b");
     expect(v3.parentVersionId).toBe(v2.id);
+  });
+
+  it("distinguishes manual edits from LLM-authored graphs", () => {
+    // Manual edits do not claim a producing model. Authorship is
+    // `manual`, `derivedFromModel` carries the ancestor's model as a
+    // lineage breadcrumb — but the legacy `generatorModel` convenience
+    // still surfaces something for display paths.
+    const prompt = makePrompt();
+    const v2 = prompt.upsertBraid({
+      version: "v1",
+      graph: GRAPH_A,
+      authorship: BraidAuthorship.byModel("model-a"),
+      forkVersionId: "fork-a",
+    });
+    const v3 = prompt.upsertBraid({
+      version: v2.version,
+      graph: GRAPH_B,
+      authorship: BraidAuthorship.manual(v2.generatorModel),
+      forkVersionId: "fork-b",
+    });
+    expect(v3.braidAuthorship?.kind).toBe("manual");
+    const snap = v3.braidAuthorship?.toSnapshot();
+    expect(snap).toEqual({ kind: "manual", derivedFromModel: "model-a" });
+    expect(v3.generatorModel).toBe("model-a");
   });
 });

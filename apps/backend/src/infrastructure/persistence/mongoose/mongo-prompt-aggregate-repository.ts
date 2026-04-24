@@ -1,6 +1,9 @@
 import mongoose, { Types } from "mongoose";
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
-import { Prompt, type PromptPrimitives } from "../../../domain/entities/prompt.js";
+import {
+  Prompt,
+  type PromptPrimitives,
+} from "../../../domain/entities/prompt.js";
 import { PromptAggregateStaleError } from "../../../domain/errors/domain-error.js";
 import { PromptModel } from "./prompt-model.js";
 import { PromptVersionModel } from "./prompt-version-model.js";
@@ -33,33 +36,25 @@ const toPromptPrimitives = (
   taskType: doc.taskType,
   ownerId: String(doc.ownerId),
   productionVersion: doc.productionVersion,
-  // Older docs predating the counter field fall back to the live version
-  // count — correct while no delete path exists, and self-heals on the next
-  // save when the counter is persisted explicitly.
   versionCounter: doc.versionCounter ?? versionCount,
-  // Older docs predating the concurrency field are treated as revision 0.
   revision: doc.revision ?? 0,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
 });
 
-// Persist a Prompt aggregate atomically with optimistic concurrency. One
-// MongoDB session covers the root and all its versions so a mid-write
-// failure cannot leave the aggregate half-written, and the prompt update is
-// gated on the expected revision so a concurrent writer that advanced the
-// revision first will cause this save to throw PromptAggregateStaleError.
+// Persist a Prompt aggregate atomically with optimistic concurrency. The
+// aggregate tracks which version ids are dirty; this repo drains that set
+// and upserts only those documents, so a prompt with hundreds of immutable
+// historical versions does not pay an O(|versions|) write per edit.
 //
-// Requires a replica-set or mongos deployment (transactions are unsupported
-// on standalone MongoDB). Local dev must use a replica set configuration.
+// Requires a replica-set or mongos deployment — `withTransaction` is not
+// supported on standalone MongoDB. Local dev must run a replica set.
 export class MongoPromptAggregateRepository implements IPromptAggregateRepository {
   async findById(id: string): Promise<Prompt | null> {
     const promptDoc = await PromptModel.findById(id).lean<PromptDocShape>();
     if (!promptDoc) {
       return null;
     }
-    // No sort clause here: Prompt.hydrate enforces creation-order as an
-    // aggregate invariant, so the DB query stays driver-order and saves a
-    // redundant in-memory resort.
     const versionDocs = await PromptVersionModel.find({ promptId: id }).lean<
       PromptVersionDocShape[]
     >();
@@ -70,30 +65,34 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
   }
 
   async save(prompt: Prompt): Promise<void> {
-    const snapshot = prompt.toSnapshot();
-    const { prompt: promptState, versions, expectedRevision, nextRevision } = snapshot;
+    const dirtyVersionIds = new Set(prompt.pullDirtyVersionIds());
+    const rootState = prompt.toPrimitives();
+    const versions = prompt.versionPrimitives();
+    const expectedRevision = rootState.revision;
+    const nextRevision = expectedRevision + 1;
+
+    const versionsToWrite = versions.filter((version) =>
+      dirtyVersionIds.has(version.id),
+    );
 
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
         if (expectedRevision === 0) {
-          // New aggregate — insert fresh. A duplicate-key error here means a
-          // concurrent writer already created the prompt; surface it as
-          // stale rather than a generic mongo error.
           try {
             await PromptModel.create(
               [
                 {
-                  _id: promptState.id,
-                  name: promptState.name,
-                  description: promptState.description,
-                  taskType: promptState.taskType,
-                  ownerId: promptState.ownerId,
-                  productionVersion: promptState.productionVersion,
-                  versionCounter: promptState.versionCounter,
+                  _id: rootState.id,
+                  name: rootState.name,
+                  description: rootState.description,
+                  taskType: rootState.taskType,
+                  ownerId: rootState.ownerId,
+                  productionVersion: rootState.productionVersion,
+                  versionCounter: rootState.versionCounter,
                   revision: nextRevision,
-                  createdAt: promptState.createdAt,
-                  updatedAt: promptState.updatedAt,
+                  createdAt: rootState.createdAt,
+                  updatedAt: rootState.updatedAt,
                 },
               ],
               { session },
@@ -105,21 +104,18 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
             throw err;
           }
         } else {
-          // Existing aggregate — gate the update on the expected revision.
-          // matchedCount === 0 means another writer advanced the aggregate
-          // since we loaded it; reject the write so the caller can reload.
           const result = await PromptModel.updateOne(
-            { _id: promptState.id, revision: expectedRevision },
+            { _id: rootState.id, revision: expectedRevision },
             {
               $set: {
-                name: promptState.name,
-                description: promptState.description,
-                taskType: promptState.taskType,
-                ownerId: promptState.ownerId,
-                productionVersion: promptState.productionVersion,
-                versionCounter: promptState.versionCounter,
+                name: rootState.name,
+                description: rootState.description,
+                taskType: rootState.taskType,
+                ownerId: rootState.ownerId,
+                productionVersion: rootState.productionVersion,
+                versionCounter: rootState.versionCounter,
                 revision: nextRevision,
-                updatedAt: promptState.updatedAt,
+                updatedAt: rootState.updatedAt,
               },
             },
             { session },
@@ -129,7 +125,7 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
           }
         }
 
-        for (const version of versions) {
+        for (const version of versionsToWrite) {
           await PromptVersionModel.updateOne(
             { _id: version.id },
             { $set: toVersionDocSet(version) },
@@ -141,12 +137,7 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
       await session.endSession();
     }
 
-    // Advance the aggregate's loaded revision to match what we just wrote.
-    // Using the snapshot (rather than a plain `markPersisted()` with no
-    // arguments) makes this a typed, single-use token — the commit fails
-    // loudly if it is applied to a different aggregate instance than the
-    // one the snapshot was taken from.
-    prompt.commit(snapshot);
+    prompt.markPersisted(nextRevision);
   }
 }
 

@@ -1,7 +1,8 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import type { CreateVersionInputDto } from "../../dto/prompt-dto.js";
+import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
+import { versionToSummary } from "../../queries/prompt-projections.js";
 import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
 export interface CreateVersionCommand extends CreateVersionInputDto {
@@ -15,7 +16,7 @@ export class CreateVersionUseCase {
     private readonly idGenerator: IIdGenerator,
   ) {}
 
-  async execute(command: CreateVersionCommand): Promise<PromptVersion> {
+  async execute(command: CreateVersionCommand): Promise<PromptVersionSummary> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
     const version = prompt.createVersion({
       id: this.idGenerator.newId(),
@@ -23,6 +24,6 @@ export class CreateVersionUseCase {
       name: command.name,
     });
     await this.prompts.save(prompt);
-    return version;
+    return versionToSummary(version);
   }
 }

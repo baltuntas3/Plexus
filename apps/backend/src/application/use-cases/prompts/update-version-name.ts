@@ -1,6 +1,7 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import type { UpdateVersionInputDto } from "../../dto/prompt-dto.js";
+import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
+import { versionToSummary } from "../../queries/prompt-projections.js";
 import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
 export interface UpdateVersionNameCommand extends UpdateVersionInputDto {
@@ -12,10 +13,10 @@ export interface UpdateVersionNameCommand extends UpdateVersionInputDto {
 export class UpdateVersionNameUseCase {
   constructor(private readonly prompts: IPromptAggregateRepository) {}
 
-  async execute(command: UpdateVersionNameCommand): Promise<PromptVersion> {
+  async execute(command: UpdateVersionNameCommand): Promise<PromptVersionSummary> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
     const updated = prompt.renameVersion(command.version, command.name);
     await this.prompts.save(prompt);
-    return updated;
+    return versionToSummary(updated);
   }
 }

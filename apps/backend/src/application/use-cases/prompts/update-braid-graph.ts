@@ -1,5 +1,6 @@
 import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
+import { BraidAuthorship } from "../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
@@ -34,7 +35,7 @@ export class UpdateBraidGraphUseCase {
   async execute(command: UpdateBraidGraphCommand): Promise<UpdateBraidGraphResult> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
     const source = prompt.getVersionOrThrow(command.version);
-    if (!source.hasBraidRepresentation || source.generatorModel === null) {
+    if (!source.hasBraidRepresentation) {
       // Editing mermaid assumes there was a braid to start from. Callers
       // that want to attach a braid to a classical version must go through
       // the generate/chat flows — those know which model the braid came from.
@@ -43,10 +44,14 @@ export class UpdateBraidGraphUseCase {
       );
     }
     const graph = BraidGraph.parse(command.mermaidCode);
+    // Manual edit: no LLM ran. Record the honest provenance — "manual,
+    // derived from <whichever model produced the parent's content>" —
+    // instead of inheriting the parent's generatorModel as if this text
+    // were its output.
     const forked = prompt.upsertBraid({
       version: command.version,
       graph,
-      generatorModel: source.generatorModel,
+      authorship: BraidAuthorship.manual(source.generatorModel),
       forkVersionId: this.idGenerator.newId(),
     });
     await this.prompts.save(prompt);

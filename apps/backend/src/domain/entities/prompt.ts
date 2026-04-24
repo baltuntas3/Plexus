@@ -3,8 +3,8 @@ import {
   PromptInvalidVersionTransitionError,
   PromptNotOwnedError,
   PromptVersionNotFoundError,
-  ValidationError,
 } from "../errors/domain-error.js";
+import type { BraidAuthorship } from "../value-objects/braid-authorship.js";
 import type { BraidGraph } from "../value-objects/braid-graph.js";
 import { VersionLabel } from "../value-objects/version-label.js";
 import {
@@ -13,15 +13,10 @@ import {
   type PromptVersionPrimitives,
 } from "./prompt-version.js";
 
-// All prompt-edit flows (manual mermaid save, regenerate, chat refinement)
-// produce a brand-new, immutable PromptVersion through this aggregate.
-// PromptVersion never mutates its content after creation — the write-once
-// invariant is what keeps BenchmarkResult ↔ PromptVersion linkage stable
-// across subsequent edits.
+// PromptVersion content is immutable; every graph edit (manual mermaid tweak,
+// regenerate, chat refinement) forks a new version rather than mutating in
+// place. That's what keeps BenchmarkResult ↔ PromptVersion linkage stable.
 
-// Persistence-boundary shape. `productionVersion` is serialized as a plain
-// string; the aggregate's internal state uses VersionLabel so the "v{n}"
-// invariant is type-enforced inside the aggregate.
 export interface PromptPrimitives {
   id: string;
   name: string;
@@ -29,22 +24,17 @@ export interface PromptPrimitives {
   taskType: TaskType;
   ownerId: string;
   productionVersion: string | null;
-  // Monotonic counter that drives version label allocation. Advanced on every
-  // new version (fork or plain create) and never rewound, so labels remain
-  // unique even if a version is deleted in the future — decoupled from
-  // `versions.length` which would collide after a delete.
+  // Monotonic counter driving version label allocation. Never rewound, so
+  // labels remain unique even if a version is deleted in the future —
+  // decoupled from `versions.length` which would collide after a delete.
   versionCounter: number;
-  // Aggregate revision last seen in the store. Hydrated from persistence,
-  // checked as the "expected" value during save, and advanced by `commit`
-  // after a successful write.
+  // Optimistic-concurrency cursor. Hydrated from the store, gated at save
+  // time, advanced by `markPersisted` after a successful write.
   revision: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-// Internal aggregate state. Uses VersionLabel for productionVersion so
-// cross-version identity comparisons (promoteVersion) happen through the VO
-// rather than ad-hoc string equality.
 interface InternalPromptState {
   id: string;
   name: string;
@@ -59,9 +49,6 @@ interface InternalPromptState {
 }
 
 export interface CreatePromptParams {
-  // Identifiers are allocated by the use case (via IIdGenerator) and passed in.
-  // Keeping the aggregate free of that port means Prompt has no infrastructure
-  // dependency and can be constructed in pure unit tests with plain strings.
   promptId: string;
   initialVersionId: string;
   ownerId: string;
@@ -73,19 +60,15 @@ export interface CreatePromptParams {
   updatedAt?: Date;
 }
 
-// Snapshot passed to the repository for a single save. Carries both the
-// expected revision (for the optimistic-concurrency filter) and the next
-// revision (what the store should advance to on success) so the repo does
-// not need to compute or remember revision math — it just writes what the
-// aggregate asked it to.
-export interface PromptSnapshot {
-  readonly prompt: PromptPrimitives;
-  readonly versions: readonly PromptVersionPrimitives[];
-  readonly expectedRevision: number;
-  readonly nextRevision: number;
-}
-
 export class Prompt {
+  // Version ids touched since the last save. Drained by the repository so
+  // it only upserts what actually changed — fork-on-edit grows the version
+  // list monotonically, and paying O(|versions|) writes per edit is the
+  // cost this set exists to avoid. Not a "domain event" because nothing
+  // outside the repository reads it; keeping the shape flat until a real
+  // subscriber appears.
+  private dirtyVersionIds = new Set<string>();
+
   private constructor(
     private state: InternalPromptState,
     private versionsState: PromptVersion[],
@@ -102,7 +85,7 @@ export class Prompt {
       createdAt: now,
       updatedAt: now,
     });
-    return new Prompt(
+    const prompt = new Prompt(
       {
         id: params.promptId,
         name: params.name,
@@ -117,6 +100,8 @@ export class Prompt {
       },
       [initialVersion],
     );
+    prompt.dirtyVersionIds.add(initialVersion.id);
+    return prompt;
   }
 
   static hydrate(
@@ -165,9 +150,6 @@ export class Prompt {
     return this.state.ownerId;
   }
 
-  // External surface stays string-typed (DTO/shared-types contract). The
-  // VersionLabel VO is an aggregate-internal invariant carrier — callers
-  // outside the domain do not need the typed wrapper.
   get productionVersion(): string | null {
     return this.state.productionVersion?.toString() ?? null;
   }
@@ -184,18 +166,12 @@ export class Prompt {
     return this.state.updatedAt;
   }
 
-  // Defensive copy: the `readonly` modifier is shallow in TS, so returning the
-  // live array would still let a caller `push` / `splice` into it at runtime
-  // and silently mutate aggregate state. PromptVersion instances themselves
-  // expose only reader getters — their mutators are symbol-keyed and only
-  // reachable via the aggregate root.
+  // Defensive copy: `readonly` is shallow in TS, so returning the live array
+  // would still let a caller mutate aggregate state at runtime.
   get versions(): readonly PromptVersion[] {
     return [...this.versionsState];
   }
 
-  // Guards the aggregate behind an ownership check so callers cannot forget
-  // the rule. Throws PromptNotOwnedError when `userId` does not match; the
-  // presentation layer decides what HTTP status that maps to.
   assertOwnedBy(userId: string): void {
     if (this.state.ownerId !== userId) {
       throw PromptNotOwnedError();
@@ -219,7 +195,7 @@ export class Prompt {
     sourcePrompt: string;
     name?: string | null;
     parentVersionId?: string | null;
-    initialBraid?: { graph: BraidGraph; generatorModel: string };
+    initialBraid?: { graph: BraidGraph; authorship: BraidAuthorship };
   }): PromptVersion {
     const nextCounter = this.state.versionCounter + 1;
     const nextVersion = PromptVersion.create({
@@ -233,15 +209,15 @@ export class Prompt {
     });
     this.versionsState = [...this.versionsState, nextVersion];
     this.state = { ...this.state, versionCounter: nextCounter };
+    this.dirtyVersionIds.add(nextVersion.id);
     this.touch();
     return nextVersion;
   }
 
-  // Promotion rules are business invariants and live here, not in DTO
-  // validation. A version can move to `staging` or `production`; demoting
-  // back to `draft` is forbidden because draft is the initial working state
-  // and would effectively "unpublish" history. Repeated promotion to the
-  // current status is a no-op (still updates aggregate timestamp).
+  // Promotion rules are business invariants. Demoting to `draft` is
+  // forbidden (draft is the initial working state). Promoting to
+  // `production` demotes whatever previously held that slot to `staging`
+  // so the "one production per prompt" invariant holds.
   promoteVersion(
     version: string,
     targetStatus: PromptVersion["status"],
@@ -254,6 +230,7 @@ export class Prompt {
       for (const candidate of this.versionsState) {
         if (candidate.id !== target.id && candidate.status === "production") {
           candidate[PromptVersionInternal].changeStatus("staging");
+          this.dirtyVersionIds.add(candidate.id);
         }
       }
       this.state = {
@@ -268,6 +245,7 @@ export class Prompt {
     }
 
     target[PromptVersionInternal].changeStatus(targetStatus);
+    this.dirtyVersionIds.add(target.id);
     this.touch();
     return target;
   }
@@ -275,21 +253,18 @@ export class Prompt {
   renameVersion(version: string, name: string | null): PromptVersion {
     const target = this.getVersionOrThrow(version);
     target[PromptVersionInternal].rename(name);
+    this.dirtyVersionIds.add(target.id);
     this.touch();
     return target;
   }
 
-  // Fork a new version carrying the supplied braid graph. Always produces a
-  // new version — PromptVersion content is immutable by design, so every
-  // graph edit (manual mermaid tweak, regenerate, chat refinement) creates
-  // a new record linked to its parent via `parentVersionId`. This is what
-  // keeps the BenchmarkResult → PromptVersion link deterministic: whatever
-  // content the benchmark evaluated stays reachable forever under the id
-  // that benchmark recorded, even if the user keeps iterating on the braid.
+  // Fork-on-edit: every graph edit creates a new version. `authorship` is a
+  // VO so manual edits do not masquerade as LLM output — callers decide
+  // based on what actually produced the graph.
   upsertBraid(input: {
     version: string;
     graph: BraidGraph;
-    generatorModel: string;
+    authorship: BraidAuthorship;
     forkVersionId: string;
   }): PromptVersion {
     const source = this.getVersionOrThrow(input.version);
@@ -297,48 +272,45 @@ export class Prompt {
       id: input.forkVersionId,
       sourcePrompt: source.sourcePrompt,
       parentVersionId: source.id,
-      initialBraid: { graph: input.graph, generatorModel: input.generatorModel },
+      initialBraid: { graph: input.graph, authorship: input.authorship },
     });
   }
 
-  // Produces a one-shot save token. The repository writes `nextRevision`
-  // gated on `expectedRevision` and, on success, calls `commit(snapshot)`
-  // so the aggregate's in-memory state advances. Writing this as a snapshot
-  // rather than as "aggregate + markPersisted" means the repo cannot drift
-  // out of sync if it forgets a follow-up call: a stale snapshot passed to
-  // `commit` is rejected explicitly.
-  toSnapshot(): PromptSnapshot {
-    const expectedRevision = this.state.revision;
-    const nextRevision = expectedRevision + 1;
+  // Primitives for the repository. Root and versions separated so the repo
+  // can write them independently (root row + per-version docs).
+  toPrimitives(): PromptPrimitives {
     return {
-      prompt: {
-        id: this.state.id,
-        name: this.state.name,
-        description: this.state.description,
-        taskType: this.state.taskType,
-        ownerId: this.state.ownerId,
-        productionVersion: this.state.productionVersion?.toString() ?? null,
-        versionCounter: this.state.versionCounter,
-        revision: nextRevision,
-        createdAt: this.state.createdAt,
-        updatedAt: this.state.updatedAt,
-      },
-      versions: this.versionsState.map((version) => version.toPrimitives()),
-      expectedRevision,
-      nextRevision,
+      id: this.state.id,
+      name: this.state.name,
+      description: this.state.description,
+      taskType: this.state.taskType,
+      ownerId: this.state.ownerId,
+      productionVersion: this.state.productionVersion?.toString() ?? null,
+      versionCounter: this.state.versionCounter,
+      revision: this.state.revision,
+      createdAt: this.state.createdAt,
+      updatedAt: this.state.updatedAt,
     };
   }
 
-  commit(snapshot: PromptSnapshot): void {
-    if (snapshot.expectedRevision !== this.state.revision) {
-      throw ValidationError(
-        "Cannot commit a stale snapshot: aggregate revision advanced since the snapshot was taken",
-      );
-    }
-    this.state = {
-      ...this.state,
-      revision: snapshot.nextRevision,
-    };
+  versionPrimitives(): readonly PromptVersionPrimitives[] {
+    return this.versionsState.map((version) => version.toPrimitives());
+  }
+
+  // Drained by the repository at save time. Returning and clearing in one
+  // call prevents double-counting on a retry: if the write fails the
+  // aggregate is already empty, the caller retries from a fresh mutation.
+  pullDirtyVersionIds(): readonly string[] {
+    const ids = [...this.dirtyVersionIds];
+    this.dirtyVersionIds.clear();
+    return ids;
+  }
+
+  // Called by the repository after a successful write. Advances the
+  // optimistic-concurrency cursor so the next save compares against the
+  // just-written revision.
+  markPersisted(revision: number): void {
+    this.state = { ...this.state, revision };
   }
 
   private touch(): void {

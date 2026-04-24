@@ -1,11 +1,23 @@
 import { Schema, model } from "mongoose";
 import { VERSION_STATUSES } from "@plexus/shared-types";
 
+const authorshipSchema = new Schema(
+  {
+    kind: { type: String, required: true, enum: ["model", "manual"] },
+    model: { type: String, default: null },
+    derivedFromModel: { type: String, default: null },
+  },
+  { _id: false },
+);
+
 const representationSchema = new Schema(
   {
     kind: { type: String, required: true, enum: ["classical", "braid"] },
     graph: { type: String, default: null },
-    generatorModel: { type: String, default: null },
+    // Discriminated provenance for braid representations. Classical versions
+    // persist `null` here. Older documents predating authorship (which used
+    // a flat `generatorModel` field) are hydrated defensively in the mapper.
+    authorship: { type: authorshipSchema, default: null },
   },
   { _id: false },
 );
@@ -28,7 +40,7 @@ const promptVersionSchema = new Schema(
     representation: {
       type: representationSchema,
       required: true,
-      default: () => ({ kind: "classical", graph: null, generatorModel: null }),
+      default: () => ({ kind: "classical", graph: null, authorship: null }),
     },
     status: { type: String, required: true, enum: VERSION_STATUSES, default: "draft" },
   },

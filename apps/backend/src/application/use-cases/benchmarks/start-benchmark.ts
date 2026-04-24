@@ -39,8 +39,9 @@ export class StartBenchmarkUseCase {
       command.benchmarkId,
       command.ownerId,
     );
-    const versionsById = await this.promptQueries.findVersionSummariesByIds(
+    const versionsById = await this.promptQueries.findOwnedVersionSummariesByIds(
       benchmark.promptVersionIds,
+      benchmark.ownerId,
     );
     const missing = benchmark.promptVersionIds.filter(
       (id) => !versionsById.has(id),

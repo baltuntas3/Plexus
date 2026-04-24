@@ -1,4 +1,8 @@
-import type { TaskType, VersionStatus } from "@plexus/shared-types";
+import type {
+  BraidAuthorshipDto,
+  TaskType,
+  VersionStatus,
+} from "@plexus/shared-types";
 
 // Read-side contract for the Prompt aggregate. Lives in the application layer
 // because pagination/search/summary projection is read orchestration, not a
@@ -34,6 +38,10 @@ export interface PromptVersionSummary {
   parentVersionId: string | null;
   sourcePrompt: string;
   braidGraph: string | null;
+  braidAuthorship: BraidAuthorshipDto | null;
+  // Convenience projection of `braidAuthorship`. See PromptVersionDto for
+  // the full semantics: model id for "model" authorship, derivedFromModel
+  // for "manual" authorship (null when unknown).
   generatorModel: string | null;
   executablePrompt: string;
   status: VersionStatus;
@@ -74,10 +82,23 @@ export interface IPromptQueryService {
     promptId: string,
     ownerId: string,
   ): Promise<PromptSummary | null>;
-  findPromptSummariesByIds(ids: readonly string[]): Promise<Map<string, PromptSummary>>;
-  listVersionSummaries(query: ListVersionSummariesQuery): Promise<VersionSummaryListResult>;
-  findVersionSummaryById(id: string): Promise<PromptVersionSummary | null>;
-  findVersionSummariesByIds(
+  // Owner-scoped by-id lookups. A caller that cannot prove ownership sees
+  // the prompts/versions as if they do not exist — the presentation layer
+  // can uniformly 404 without leaking "exists but not yours". Critical
+  // where foreign ids would otherwise cross a bounded-context boundary
+  // (e.g. benchmark creation consuming PromptVersion ids from a request
+  // body).
+  findOwnedPromptSummariesByIds(
     ids: readonly string[],
+    ownerId: string,
+  ): Promise<Map<string, PromptSummary>>;
+  listVersionSummaries(query: ListVersionSummariesQuery): Promise<VersionSummaryListResult>;
+  findOwnedVersionSummary(
+    id: string,
+    ownerId: string,
+  ): Promise<PromptVersionSummary | null>;
+  findOwnedVersionSummariesByIds(
+    ids: readonly string[],
+    ownerId: string,
   ): Promise<Map<string, PromptVersionSummary>>;
 }

@@ -37,7 +37,7 @@ export class CreatePromptUseCase {
       initialPrompt: command.initialPrompt,
     });
     await this.prompts.save(prompt);
-    const version = prompt.getVersionOrThrow("v1");
+    const version = prompt.getVersionByLabelOrThrow("v1");
     return {
       prompt: promptToSummary(prompt),
       version: versionToSummary(version),

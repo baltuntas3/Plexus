@@ -50,7 +50,7 @@ export class ChatBraidUseCase {
 
   async execute(command: ChatBraidCommand): Promise<ChatBraidResult> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const version = prompt.getVersionOrThrow(command.version);
+    const version = prompt.getVersionByLabelOrThrow(command.version);
 
     const agent = this.agents.forModel(command.generatorModel);
 
@@ -84,7 +84,7 @@ export class ChatBraidUseCase {
     // match. `parentVersionId` already answers "what came before", so there
     // is no need to double-encode lineage into authorship.
     const forked = prompt.upsertBraid({
-      version: command.version,
+      sourceVersionId: version.id,
       graph,
       authorship: BraidAuthorship.byModel(command.generatorModel),
       forkVersionId: this.idGenerator.newId(),

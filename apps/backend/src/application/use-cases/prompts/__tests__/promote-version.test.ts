@@ -71,15 +71,19 @@ describe("PromoteVersionUseCase", () => {
     });
 
     const prompt = await prompts.findById(promptId);
-    const v1 = prompt?.getVersion("v1");
-    const v2 = prompt?.getVersion("v2");
+    const v1 = prompt?.getVersionByLabel("v1");
+    const v2 = prompt?.getVersionByLabel("v2");
 
     expect(v1?.status).toBe("staging");
     expect(v2?.status).toBe("production");
     expect(prompt?.productionVersion).toBe("v2");
   });
 
-  it("forbids access to other users' prompts", async () => {
+  it("hides other users' prompts behind a not-found response (no existence leak)", async () => {
+    // Unified semantic: a foreign prompt is reported as missing so id
+    // enumeration cannot distinguish "exists but not yours" from "does not
+    // exist". The aggregate-level PromptNotOwnedError is kept as
+    // defense-in-depth but production paths never surface it.
     await expect(
       promoteVersion.execute({
         promptId,
@@ -87,7 +91,7 @@ describe("PromoteVersionUseCase", () => {
         ownerId: "other-user",
         targetStatus: "staging",
       }),
-    ).rejects.toMatchObject({ code: "PROMPT_NOT_OWNED" });
+    ).rejects.toMatchObject({ code: "PROMPT_NOT_FOUND" });
   });
 
   it("throws PromptVersionNotFoundError for missing version", async () => {

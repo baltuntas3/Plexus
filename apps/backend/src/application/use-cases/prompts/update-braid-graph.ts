@@ -34,7 +34,7 @@ export class UpdateBraidGraphUseCase {
 
   async execute(command: UpdateBraidGraphCommand): Promise<UpdateBraidGraphResult> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const source = prompt.getVersionOrThrow(command.version);
+    const source = prompt.getVersionByLabelOrThrow(command.version);
     if (!source.hasBraidRepresentation) {
       // Editing mermaid assumes there was a braid to start from. Callers
       // that want to attach a braid to a classical version must go through
@@ -49,7 +49,7 @@ export class UpdateBraidGraphUseCase {
     // instead of inheriting the parent's generatorModel as if this text
     // were its output.
     const forked = prompt.upsertBraid({
-      version: command.version,
+      sourceVersionId: source.id,
       graph,
       authorship: BraidAuthorship.manual(source.generatorModel),
       forkVersionId: this.idGenerator.newId(),

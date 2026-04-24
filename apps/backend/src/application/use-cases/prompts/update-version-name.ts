@@ -15,7 +15,8 @@ export class UpdateVersionNameUseCase {
 
   async execute(command: UpdateVersionNameCommand): Promise<PromptVersionSummary> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const updated = prompt.renameVersion(command.version, command.name);
+    const target = prompt.getVersionByLabelOrThrow(command.version);
+    const updated = prompt.renameVersion(target.id, command.name);
     await this.prompts.save(prompt);
     return versionToSummary(updated);
   }

@@ -3,10 +3,11 @@ import { Prompt } from "../../domain/entities/prompt.js";
 import { PromptAggregateStaleError } from "../../domain/errors/domain-error.js";
 import type { InMemoryPromptQueryService } from "./in-memory-prompt-query-service.js";
 
-// Test double. Mirrors the Mongo repo's optimistic concurrency and dirty-id
-// drain: save empties the aggregate's dirty set (so a retry does not
-// double-count), gates the write on the expected revision, rewrites the
-// store with a fresh hydrate, and advances the aggregate.
+// Test double. Mirrors the Mongo repo's snapshot/commit protocol: save
+// consumes the aggregate's snapshot, gates on expected revision, rehydrates
+// into storage, and commits the aggregate. No dirty-tracking — the fake
+// rewrites the whole thing; the production repo is the one that diffs for
+// write-volume reasons.
 export class InMemoryPromptAggregateRepository implements IPromptAggregateRepository {
   private readonly prompts = new Map<string, Prompt>();
   private readonly storedRevisions = new Map<string, number>();
@@ -17,21 +18,22 @@ export class InMemoryPromptAggregateRepository implements IPromptAggregateReposi
     return this.prompts.get(id) ?? null;
   }
 
+  async findOwnedById(id: string, ownerId: string): Promise<Prompt | null> {
+    const prompt = this.prompts.get(id);
+    if (!prompt || prompt.ownerId !== ownerId) return null;
+    return prompt;
+  }
+
   async save(prompt: Prompt): Promise<void> {
-    prompt.pullDirtyVersionIds();
-    const expectedRevision = prompt.revision;
+    const snapshot = prompt.toSnapshot();
     const stored = this.storedRevisions.get(prompt.id);
-    if (stored !== undefined && stored !== expectedRevision) {
+    if (stored !== undefined && stored !== snapshot.expectedRevision) {
       throw PromptAggregateStaleError();
     }
-    const nextRevision = expectedRevision + 1;
-    const hydrated = Prompt.hydrate(prompt.toPrimitives(), [
-      ...prompt.versionPrimitives(),
-    ]);
-    hydrated.markPersisted(nextRevision);
+    const hydrated = Prompt.hydrate(snapshot.root, [...snapshot.versions]);
     this.prompts.set(prompt.id, hydrated);
-    this.storedRevisions.set(prompt.id, nextRevision);
+    this.storedRevisions.set(prompt.id, snapshot.nextRevision);
     this.queryService?.seedFromAggregate(hydrated);
-    prompt.markPersisted(nextRevision);
+    prompt.commit(snapshot);
   }
 }

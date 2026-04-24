@@ -24,8 +24,9 @@ const GRAPH_B = BraidGraph.parse("flowchart TD;\nX[begin] --> Y[Verify response]
 describe("Prompt.upsertBraid (fork-on-edit)", () => {
   it("creates a new version on first braid attachment and keeps source classical", () => {
     const prompt = makePrompt();
+    const v1 = prompt.getVersionByLabelOrThrow("v1");
     const forked = prompt.upsertBraid({
-      version: "v1",
+      sourceVersionId: v1.id,
       graph: GRAPH_A,
       authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: "forked-id-1",
@@ -34,21 +35,22 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
     expect(forked.hasBraidRepresentation).toBe(true);
     expect(forked.parentVersionId).toBe("v1-id");
 
-    const v1 = prompt.getVersionOrThrow("v1");
-    expect(v1.hasBraidRepresentation).toBe(false);
-    expect(v1.parentVersionId).toBeNull();
+    const v1Reloaded = prompt.getVersionByLabelOrThrow("v1");
+    expect(v1Reloaded.hasBraidRepresentation).toBe(false);
+    expect(v1Reloaded.parentVersionId).toBeNull();
   });
 
   it("forks again on a subsequent braid edit — source braid stays frozen", () => {
     const prompt = makePrompt();
+    const v1 = prompt.getVersionByLabelOrThrow("v1");
     const v2 = prompt.upsertBraid({
-      version: "v1",
+      sourceVersionId: v1.id,
       graph: GRAPH_A,
       authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: "fork-a",
     });
     const v3 = prompt.upsertBraid({
-      version: v2.version,
+      sourceVersionId: v2.id,
       graph: GRAPH_B,
       authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: "fork-b",
@@ -59,7 +61,7 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
 
     // Source v2 must be exactly what was originally written — no in-place
     // overwrite even though the user "edited" it.
-    const reloadedV2 = prompt.getVersionOrThrow("v2");
+    const reloadedV2 = prompt.getVersionByLabelOrThrow("v2");
     expect(reloadedV2.braidGraph?.mermaidCode).toBe(GRAPH_A.mermaidCode);
     expect(reloadedV2.id).toBe(v2.id);
   });
@@ -71,14 +73,15 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
     // leak into the child's metadata when the child was built by a
     // different model.
     const prompt = makePrompt();
+    const v1 = prompt.getVersionByLabelOrThrow("v1");
     const v2 = prompt.upsertBraid({
-      version: "v1",
+      sourceVersionId: v1.id,
       graph: GRAPH_A,
       authorship: BraidAuthorship.byModel("model-a"),
       forkVersionId: "fork-a",
     });
     const v3 = prompt.upsertBraid({
-      version: v2.version,
+      sourceVersionId: v2.id,
       graph: GRAPH_B,
       authorship: BraidAuthorship.byModel("model-b"),
       forkVersionId: "fork-b",
@@ -96,14 +99,15 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
     // lineage breadcrumb — but the legacy `generatorModel` convenience
     // still surfaces something for display paths.
     const prompt = makePrompt();
+    const v1 = prompt.getVersionByLabelOrThrow("v1");
     const v2 = prompt.upsertBraid({
-      version: "v1",
+      sourceVersionId: v1.id,
       graph: GRAPH_A,
       authorship: BraidAuthorship.byModel("model-a"),
       forkVersionId: "fork-a",
     });
     const v3 = prompt.upsertBraid({
-      version: v2.version,
+      sourceVersionId: v2.id,
       graph: GRAPH_B,
       authorship: BraidAuthorship.manual(v2.generatorModel),
       forkVersionId: "fork-b",

@@ -40,7 +40,7 @@ export class GenerateBraidUseCase {
 
   async execute(command: GenerateBraidCommand): Promise<GenerateBraidResult> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const version = prompt.getVersionOrThrow(command.version);
+    const version = prompt.getVersionByLabelOrThrow(command.version);
 
     const result = await this.generator.generate({
       sourcePrompt: version.sourcePrompt,
@@ -51,7 +51,7 @@ export class GenerateBraidUseCase {
 
     const qualityScore = this.linter.lint(result.graph);
     const forked = prompt.upsertBraid({
-      version: command.version,
+      sourceVersionId: version.id,
       graph: result.graph,
       authorship: BraidAuthorship.byModel(result.generatorModel),
       forkVersionId: this.idGenerator.newId(),

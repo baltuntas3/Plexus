@@ -55,7 +55,7 @@ const buildScaffold = async () => {
     initialPrompt: "Answer.",
   });
   await prompts.save(prompt);
-  const version = prompt.getVersionOrThrow("v1");
+  const version = prompt.getVersionByLabelOrThrow("v1");
 
   return {
     useCase: new CreateBenchmarkUseCase(benchmarks, queries, makeProviders(), ids),
@@ -131,16 +131,19 @@ describe("CreateBenchmarkUseCase", () => {
       taskType: "math",
       initialPrompt: "Classical instructions.",
     });
-    prompt.createVersion({ id: ids.newId(), sourcePrompt: "Outdated classical prompt." });
+    const v2 = prompt.createVersion({
+      id: ids.newId(),
+      sourcePrompt: "Outdated classical prompt.",
+    });
     // sourceVersion v2 is classical; upsertBraid forks v3 carrying the braid.
     const braid = prompt.upsertBraid({
-      version: "v2",
+      sourceVersionId: v2.id,
       graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
       authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
       forkVersionId: ids.newId(),
     });
     await prompts.save(prompt);
-    const classical = prompt.getVersionOrThrow("v1");
+    const classical = prompt.getVersionByLabelOrThrow("v1");
 
     const seen: GenerateRequest[] = [];
     const useCase = new CreateBenchmarkUseCase(
@@ -194,8 +197,8 @@ describe("CreateBenchmarkUseCase", () => {
     });
     prompt.createVersion({ id: ids.newId(), sourcePrompt: "Answer in Turkish when asked." });
     await prompts.save(prompt);
-    const v1 = prompt.getVersionOrThrow("v1");
-    const v2 = prompt.getVersionOrThrow("v2");
+    const v1 = prompt.getVersionByLabelOrThrow("v1");
+    const v2 = prompt.getVersionByLabelOrThrow("v2");
 
     const seen: GenerateRequest[] = [];
     const useCase = new CreateBenchmarkUseCase(

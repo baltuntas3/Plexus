@@ -2,8 +2,8 @@ import { Types } from "mongoose";
 import type { TaskType } from "@plexus/shared-types";
 import type {
   IPromptQueryService,
+  ListOwnedVersionSummariesQuery,
   ListPromptSummariesQuery,
-  ListVersionSummariesQuery,
   PromptSummary,
   PromptSummaryListResult,
   PromptVersionSummary,
@@ -87,9 +87,18 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return map;
   }
 
-  async listVersionSummaries(
-    query: ListVersionSummariesQuery,
-  ): Promise<VersionSummaryListResult> {
+  async listOwnedVersionSummaries(
+    query: ListOwnedVersionSummariesQuery,
+  ): Promise<VersionSummaryListResult | null> {
+    // Ownership gate first: missing prompt and foreign prompt both surface
+    // as the same null so the presentation layer cannot accidentally leak
+    // "exists but not yours".
+    const owned = await PromptModel.exists({
+      _id: query.promptId,
+      ownerId: query.ownerId,
+    });
+    if (!owned) return null;
+
     const filter = { promptId: query.promptId };
     const skip = (query.page - 1) * query.pageSize;
     const [docs, total] = await Promise.all([
@@ -101,6 +110,24 @@ export class MongoPromptQueryService implements IPromptQueryService {
       PromptVersionModel.countDocuments(filter),
     ]);
     return { items: docs.map(toVersionSummary), total };
+  }
+
+  async findOwnedVersionByLabel(
+    promptId: string,
+    label: string,
+    ownerId: string,
+  ): Promise<PromptVersionSummary | null> {
+    // Single ownership gate via exist check, then a direct (promptId,
+    // version) hit. Missing prompt, foreign prompt, and missing label all
+    // collapse to null so presentation uniformly 404s and id enumeration
+    // cannot signal "exists but not yours".
+    const owned = await PromptModel.exists({ _id: promptId, ownerId });
+    if (!owned) return null;
+    const doc = await PromptVersionModel.findOne({
+      promptId,
+      version: label,
+    }).lean<PromptVersionDocShape>();
+    return doc ? toVersionSummary(doc) : null;
   }
 
   async findOwnedVersionSummary(

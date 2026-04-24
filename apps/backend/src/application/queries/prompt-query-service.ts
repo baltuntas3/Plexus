@@ -61,8 +61,9 @@ export interface PromptSummaryListResult {
   total: number;
 }
 
-export interface ListVersionSummariesQuery {
+export interface ListOwnedVersionSummariesQuery {
   promptId: string;
+  ownerId: string;
   page: number;
   pageSize: number;
 }
@@ -92,7 +93,23 @@ export interface IPromptQueryService {
     ids: readonly string[],
     ownerId: string,
   ): Promise<Map<string, PromptSummary>>;
-  listVersionSummaries(query: ListVersionSummariesQuery): Promise<VersionSummaryListResult>;
+  // Ownership-enforcing list. Returns `null` when the prompt is missing or
+  // owned by someone else — collapses both into a single 404-shaped
+  // response at the query-service boundary so the "owned prompt version
+  // access" rule lives in one place instead of being composed by every
+  // caller (ownership check + list).
+  listOwnedVersionSummaries(
+    query: ListOwnedVersionSummariesQuery,
+  ): Promise<VersionSummaryListResult | null>;
+  // Direct (promptId, label) lookup. Expresses the ubiquitous-language
+  // operation "get version vN of this prompt" in one query instead of
+  // forcing callers to list-then-filter. Returns null for missing prompt,
+  // missing label, or foreign owner — presentation uniformly 404s.
+  findOwnedVersionByLabel(
+    promptId: string,
+    label: string,
+    ownerId: string,
+  ): Promise<PromptVersionSummary | null>;
   findOwnedVersionSummary(
     id: string,
     ownerId: string,

@@ -21,7 +21,7 @@ const buildDraftBenchmark = async (
     initialPrompt: "Answer.",
   });
   await prompts.save(prompt);
-  const version = prompt.getVersionOrThrow("v1");
+  const version = prompt.getVersionByLabelOrThrow("v1");
 
   const benchmark = Benchmark.create({
     id: ids.newId(),
@@ -135,11 +135,11 @@ describe("UpdateTestCasesUseCase", () => {
     ).rejects.toMatchObject({ code: "BENCHMARK_NOT_IN_DRAFT" });
   });
 
-  it("rejects access from a different owner", async () => {
+  it("hides other users' benchmarks behind a not-found response (no existence leak)", async () => {
     const { useCase, bm } = await buildHarness();
 
     await expect(
       useCase.execute({ benchmarkId: bm.id, ownerId: "other", updates: [], additions: [] }),
-    ).rejects.toMatchObject({ code: "BENCHMARK_NOT_OWNED" });
+    ).rejects.toMatchObject({ code: "BENCHMARK_NOT_FOUND" });
   });
 });

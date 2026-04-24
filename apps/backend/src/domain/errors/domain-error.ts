@@ -21,82 +21,76 @@ export type DomainErrorCode =
   | "BENCHMARK_NO_JUDGES"
   | "BENCHMARK_INVALID_REPETITIONS";
 
+// Domain errors carry a stable `code` (ubiquitous language) and an optional
+// `details` bag. Transport-specific mapping (HTTP status, gRPC code, i18n
+// wording) lives in the presentation layer — see
+// `presentation/http/errors/domain-error-http-mapper.ts`. Keeping httpStatus
+// out of the domain is what lets the same code base serve over multiple
+// transports later without the domain having to pick a transport's dialect.
 export class DomainError extends Error {
   public readonly code: DomainErrorCode;
-  public readonly httpStatus: number;
   public readonly details?: Record<string, unknown>;
 
   constructor(
     code: DomainErrorCode,
     message: string,
-    httpStatus: number,
     details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "DomainError";
     this.code = code;
-    this.httpStatus = httpStatus;
     this.details = details;
   }
 }
 
 export const ValidationError = (message: string, details?: Record<string, unknown>): DomainError =>
-  new DomainError("VALIDATION_ERROR", message, 400, details);
+  new DomainError("VALIDATION_ERROR", message, details);
 
 export const NotFoundError = (message: string): DomainError =>
-  new DomainError("NOT_FOUND", message, 404);
+  new DomainError("NOT_FOUND", message);
 
 export const UnauthorizedError = (message = "Unauthorized"): DomainError =>
-  new DomainError("UNAUTHORIZED", message, 401);
+  new DomainError("UNAUTHORIZED", message);
 
 export const ForbiddenError = (message = "Forbidden"): DomainError =>
-  new DomainError("FORBIDDEN", message, 403);
+  new DomainError("FORBIDDEN", message);
 
 export const ConflictError = (message: string): DomainError =>
-  new DomainError("CONFLICT", message, 409);
+  new DomainError("CONFLICT", message);
 
-// Prompt bounded-context errors. Message stays inside the domain as a
-// developer/fallback description, but callers should route on `code` so the
-// presentation layer owns the user-facing wording (enabling i18n and
-// stable API error codes).
+// Prompt bounded-context errors.
 export const PromptNotFoundError = (): DomainError =>
-  new DomainError("PROMPT_NOT_FOUND", "Prompt not found", 404);
+  new DomainError("PROMPT_NOT_FOUND", "Prompt not found");
 
 export const PromptVersionNotFoundError = (version?: string): DomainError =>
   new DomainError(
     "PROMPT_VERSION_NOT_FOUND",
     version ? `Prompt version ${version} not found` : "Prompt version not found",
-    404,
     version ? { version } : undefined,
   );
 
-// Raised when a caller is not the owner of the target Prompt aggregate. The
-// domain does not know about HTTP; the presentation layer maps this to 403.
+// Kept for defense-in-depth. Production write paths now reject foreign
+// prompts as "not found" at the repository boundary so existence does not
+// leak via id enumeration; this error covers the path where an aggregate
+// somehow arrives unscoped (direct test calls, future code paths).
 export const PromptNotOwnedError = (): DomainError =>
-  new DomainError("PROMPT_NOT_OWNED", "Caller does not own this prompt", 403);
+  new DomainError("PROMPT_NOT_OWNED", "Caller does not own this prompt");
 
-// Raised when an optimistic-concurrency check fails during save — another
-// writer advanced the aggregate's revision while this instance was held.
 export const PromptAggregateStaleError = (): DomainError =>
   new DomainError(
     "PROMPT_AGGREGATE_STALE",
     "Prompt was modified by another writer; reload and retry",
-    409,
   );
 
 export const PromptSourceEmptyError = (): DomainError =>
-  new DomainError("PROMPT_SOURCE_EMPTY", "Source prompt is empty", 400);
+  new DomainError("PROMPT_SOURCE_EMPTY", "Source prompt is empty");
 
 export const PromptVersionHasNoBraidError = (): DomainError =>
   new DomainError(
     "PROMPT_VERSION_HAS_NO_BRAID",
     "Version has no BRAID graph to lint. Generate one first.",
-    400,
   );
 
-// Raised when a version lifecycle transition is not permitted (e.g. demoting
-// back to draft). Carries the `from`/`to` pair in details so callers can
-// route on the tuple rather than parse messages.
 export const PromptInvalidVersionTransitionError = (
   from: string,
   to: string,
@@ -104,28 +98,26 @@ export const PromptInvalidVersionTransitionError = (
   new DomainError(
     "PROMPT_INVALID_VERSION_TRANSITION",
     `Cannot move version from ${from} to ${to}`,
-    409,
     { from, to },
   );
 
-// Benchmark bounded-context errors. Same convention as the Prompt errors —
-// domain throws the typed code, presentation maps to HTTP.
+// Benchmark bounded-context errors.
 export const BenchmarkNotFoundError = (id?: string): DomainError =>
   new DomainError(
     "BENCHMARK_NOT_FOUND",
     id ? `Benchmark ${id} not found` : "Benchmark not found",
-    404,
     id ? { id } : undefined,
   );
 
+// See note on `PromptNotOwnedError` — kept for defense-in-depth after the
+// write path unified missing+foreign as "not found".
 export const BenchmarkNotOwnedError = (): DomainError =>
-  new DomainError("BENCHMARK_NOT_OWNED", "Caller does not own this benchmark", 403);
+  new DomainError("BENCHMARK_NOT_OWNED", "Caller does not own this benchmark");
 
 export const BenchmarkAggregateStaleError = (): DomainError =>
   new DomainError(
     "BENCHMARK_AGGREGATE_STALE",
     "Benchmark was modified by another writer; reload and retry",
-    409,
   );
 
 export const BenchmarkIllegalTransitionError = (
@@ -135,7 +127,6 @@ export const BenchmarkIllegalTransitionError = (
   new DomainError(
     "BENCHMARK_ILLEGAL_TRANSITION",
     `Cannot move benchmark from ${from} to ${to}`,
-    409,
     { from, to },
   );
 
@@ -143,18 +134,16 @@ export const BenchmarkNotInDraftError = (): DomainError =>
   new DomainError(
     "BENCHMARK_NOT_IN_DRAFT",
     "Test cases can only be edited while the benchmark is in draft status",
-    409,
   );
 
 export const BenchmarkMatrixEmptyError = (): DomainError =>
-  new DomainError("BENCHMARK_MATRIX_EMPTY", "Benchmark matrix is empty", 400);
+  new DomainError("BENCHMARK_MATRIX_EMPTY", "Benchmark matrix is empty");
 
 export const BenchmarkNoJudgesError = (): DomainError =>
-  new DomainError("BENCHMARK_NO_JUDGES", "Benchmark has no judge models", 400);
+  new DomainError("BENCHMARK_NO_JUDGES", "Benchmark has no judge models");
 
 export const BenchmarkInvalidRepetitionsError = (): DomainError =>
   new DomainError(
     "BENCHMARK_INVALID_REPETITIONS",
     "Benchmark repetitions must be at least 1",
-    400,
   );

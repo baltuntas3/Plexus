@@ -99,6 +99,17 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
     return Benchmark.hydrate(toPrimitives(doc));
   }
 
+  async findOwnedById(id: string, ownerId: string): Promise<Benchmark | null> {
+    // Composite filter: missing and foreign collapse to the same null so
+    // existence is not leaked via 403 vs 404 to id-enumeration.
+    const doc = await BenchmarkModel.findOne({
+      _id: id,
+      ownerId,
+    }).lean<BenchmarkDocShape>();
+    if (!doc) return null;
+    return Benchmark.hydrate(toPrimitives(doc));
+  }
+
   async save(benchmark: Benchmark): Promise<void> {
     const snapshot = benchmark.toSnapshot();
     const { state, expectedRevision, nextRevision } = snapshot;

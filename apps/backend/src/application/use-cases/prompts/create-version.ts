@@ -18,10 +18,14 @@ export class CreateVersionUseCase {
 
   async execute(command: CreateVersionCommand): Promise<PromptVersionSummary> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
+    const fromVersionId = command.fromVersion
+      ? prompt.getVersionByLabelOrThrow(command.fromVersion).id
+      : null;
     const version = prompt.createVersion({
       id: this.idGenerator.newId(),
       sourcePrompt: command.sourcePrompt,
       name: command.name,
+      fromVersionId,
     });
     await this.prompts.save(prompt);
     return versionToSummary(version);

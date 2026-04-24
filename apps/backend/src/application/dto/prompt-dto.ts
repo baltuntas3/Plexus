@@ -12,6 +12,14 @@ export type CreatePromptInputDto = z.infer<typeof createPromptInputSchema>;
 export const createVersionInputSchema = z.object({
   sourcePrompt: z.string().min(1).max(20_000),
   name: z.string().trim().min(1).max(80).optional(),
+  // Optional ancestor label. When present, the new version records
+  // `parentVersionId` so classical prompt evolution carries lineage the
+  // same way BRAID fork-on-edit does. When absent, the new version is a
+  // fresh root.
+  fromVersion: z
+    .string()
+    .regex(/^v\d+$/, "fromVersion must be a version label like v1")
+    .optional(),
 });
 export type CreateVersionInputDto = z.infer<typeof createVersionInputSchema>;
 

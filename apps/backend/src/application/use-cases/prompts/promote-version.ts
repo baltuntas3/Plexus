@@ -15,7 +15,8 @@ export class PromoteVersionUseCase {
 
   async execute(command: PromoteVersionCommand): Promise<PromptVersionSummary> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const updated = prompt.promoteVersion(command.version, command.targetStatus);
+    const target = prompt.getVersionByLabelOrThrow(command.version);
+    const updated = prompt.promoteVersion(target.id, command.targetStatus);
     await this.prompts.save(prompt);
     return versionToSummary(updated);
   }

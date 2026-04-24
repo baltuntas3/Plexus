@@ -12,7 +12,6 @@ export class AIProviderFactory implements IAIProviderFactory {
       throw new DomainError(
         "INTERNAL",
         `No provider configured for "${info.provider}". Set the corresponding API key.`,
-        500,
       );
     }
     return provider;

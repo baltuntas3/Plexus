@@ -1,7 +1,7 @@
 import type {
   IPromptQueryService,
+  ListOwnedVersionSummariesQuery,
   ListPromptSummariesQuery,
-  ListVersionSummariesQuery,
   PromptSummary,
   PromptSummaryListResult,
   PromptVersionSummary,
@@ -24,18 +24,21 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
   private readonly versions = new Map<string, PromptVersionSummary>();
 
   seedFromAggregate(prompt: Prompt): void {
-    const rootState = prompt.toPrimitives();
-    this.summaries.set(rootState.id, {
-      id: rootState.id,
-      name: rootState.name,
-      description: rootState.description,
-      taskType: rootState.taskType,
-      ownerId: rootState.ownerId,
-      productionVersion: rootState.productionVersion,
-      createdAt: rootState.createdAt,
-      updatedAt: rootState.updatedAt,
+    // Reads the aggregate's save-time snapshot to avoid duplicating the
+    // primitives-extraction surface. The test fake never commits the
+    // snapshot — it's only used to derive read projections.
+    const { root, versions } = prompt.toSnapshot();
+    this.summaries.set(root.id, {
+      id: root.id,
+      name: root.name,
+      description: root.description,
+      taskType: root.taskType,
+      ownerId: root.ownerId,
+      productionVersion: root.productionVersion,
+      createdAt: root.createdAt,
+      updatedAt: root.updatedAt,
     });
-    for (const version of prompt.versionPrimitives()) {
+    for (const version of versions) {
       const hydrated = PromptVersion.hydrate(version);
       this.versions.set(version.id, toVersionSummary(hydrated));
     }
@@ -87,14 +90,29 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     return result;
   }
 
-  async listVersionSummaries(
-    query: ListVersionSummariesQuery,
-  ): Promise<VersionSummaryListResult> {
+  async listOwnedVersionSummaries(
+    query: ListOwnedVersionSummariesQuery,
+  ): Promise<VersionSummaryListResult | null> {
+    const prompt = this.summaries.get(query.promptId);
+    if (!prompt || prompt.ownerId !== query.ownerId) return null;
     const all = [...this.versions.values()]
       .filter((version) => version.promptId === query.promptId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     const start = (query.page - 1) * query.pageSize;
     return { items: all.slice(start, start + query.pageSize), total: all.length };
+  }
+
+  async findOwnedVersionByLabel(
+    promptId: string,
+    label: string,
+    ownerId: string,
+  ): Promise<PromptVersionSummary | null> {
+    const prompt = this.summaries.get(promptId);
+    if (!prompt || prompt.ownerId !== ownerId) return null;
+    const match = [...this.versions.values()].find(
+      (version) => version.promptId === promptId && version.version === label,
+    );
+    return match ?? null;
   }
 
   async findOwnedVersionSummary(

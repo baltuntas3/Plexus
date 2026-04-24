@@ -18,7 +18,7 @@ export class LintVersionUseCase {
 
   async execute(command: LintVersionCommand): Promise<GraphQualityScore> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const version = prompt.getVersionOrThrow(command.version);
+    const version = prompt.getVersionByLabelOrThrow(command.version);
     if (!version.braidGraph) {
       throw PromptVersionHasNoBraidError();
     }

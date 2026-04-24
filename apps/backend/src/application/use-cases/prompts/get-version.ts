@@ -2,37 +2,25 @@ import type {
   IPromptQueryService,
   PromptVersionSummary,
 } from "../../queries/prompt-query-service.js";
-import {
-  PromptNotFoundError,
-  PromptVersionNotFoundError,
-} from "../../../domain/errors/domain-error.js";
+import { PromptVersionNotFoundError } from "../../../domain/errors/domain-error.js";
 
-export interface GetVersionCommand {
-  promptId: string;
-  version: string;
-  ownerId: string;
-}
-
-// Read-side use case. Resolves the owning prompt first (so callers cannot
-// probe for foreign version ids by guessing), then finds the requested
-// label among its versions.
+// Read-side lookup by (promptId + label). The query service owns the
+// ownership join and the label→version resolution; missing prompt, missing
+// label, and foreign ownership collapse to the same `null` so id
+// enumeration cannot distinguish them.
 export class GetVersionUseCase {
   constructor(private readonly queries: IPromptQueryService) {}
 
-  async execute(command: GetVersionCommand): Promise<PromptVersionSummary> {
-    const owner = await this.queries.findOwnedPromptSummary(
+  async execute(command: {
+    promptId: string;
+    version: string;
+    ownerId: string;
+  }): Promise<PromptVersionSummary> {
+    const match = await this.queries.findOwnedVersionByLabel(
       command.promptId,
+      command.version,
       command.ownerId,
     );
-    if (!owner) {
-      throw PromptNotFoundError();
-    }
-    const { items } = await this.queries.listVersionSummaries({
-      promptId: command.promptId,
-      page: 1,
-      pageSize: Number.MAX_SAFE_INTEGER,
-    });
-    const match = items.find((item) => item.version === command.version);
     if (!match) {
       throw PromptVersionNotFoundError(command.version);
     }

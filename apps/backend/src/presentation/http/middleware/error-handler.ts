@@ -2,10 +2,11 @@ import type { ErrorRequestHandler } from "express";
 import { ZodError } from "zod";
 import { DomainError } from "../../../domain/errors/domain-error.js";
 import { logger } from "../../../infrastructure/logger/logger.js";
+import { domainErrorCodeToHttpStatus } from "./domain-error-http-mapper.js";
 
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof DomainError) {
-    res.status(err.httpStatus).json({
+    res.status(domainErrorCodeToHttpStatus(err.code)).json({
       error: { code: err.code, message: err.message, details: err.details },
     });
     return;

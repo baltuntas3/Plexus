@@ -14,6 +14,12 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
     return this.benchmarks.get(id) ?? null;
   }
 
+  async findOwnedById(id: string, ownerId: string): Promise<Benchmark | null> {
+    const benchmark = this.benchmarks.get(id);
+    if (!benchmark || benchmark.ownerId !== ownerId) return null;
+    return benchmark;
+  }
+
   async save(benchmark: Benchmark): Promise<void> {
     const snapshot = benchmark.toSnapshot();
     const stored = this.storedRevisions.get(benchmark.id);

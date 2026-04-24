@@ -4,6 +4,7 @@ import {
   Prompt,
   type PromptPrimitives,
 } from "../../../domain/entities/prompt.js";
+import type { PromptVersionPrimitives } from "../../../domain/entities/prompt-version.js";
 import { PromptAggregateStaleError } from "../../../domain/errors/domain-error.js";
 import { PromptModel } from "./prompt-model.js";
 import { PromptVersionModel } from "./prompt-version-model.js";
@@ -42,38 +43,64 @@ const toPromptPrimitives = (
   updatedAt: doc.updatedAt,
 });
 
-// Persist a Prompt aggregate atomically with optimistic concurrency. The
-// aggregate tracks which version ids are dirty; this repo drains that set
-// and upserts only those documents, so a prompt with hundreds of immutable
-// historical versions does not pay an O(|versions|) write per edit.
+// Stable signature over a version's persisted shape. Used by the save path
+// to decide which child rows actually need to be written: immutable
+// versions serialize to the same string on every save, so fork-on-edit
+// pays O(1) writes per edit instead of O(|versions|). The JSON encoding
+// also naturally covers the mutable metadata (name, status, updatedAt).
+const versionSignature = (v: PromptVersionPrimitives): string =>
+  JSON.stringify({
+    v: v.version,
+    n: v.name,
+    p: v.parentVersionId,
+    s: v.sourcePrompt,
+    r: v.representation,
+    st: v.status,
+    u: v.updatedAt.getTime(),
+  });
+
+// Persist a Prompt aggregate atomically with optimistic concurrency. Change
+// tracking lives inside the repo — the aggregate hands over a full
+// snapshot, the repo diffs it against what it last hydrated to decide
+// which version docs to upsert. The aggregate stays a business-rules
+// object and does not expose a persistence protocol beyond
+// `toSnapshot`/`commit`.
 //
 // Requires a replica-set or mongos deployment — `withTransaction` is not
 // supported on standalone MongoDB. Local dev must run a replica set.
 export class MongoPromptAggregateRepository implements IPromptAggregateRepository {
+  // Per-aggregate signature cache of the last hydrated version set. Save
+  // compares the outbound snapshot against this to find dirty rows. Stored
+  // on the repo instance, not the aggregate, so the aggregate's public
+  // surface stays free of persistence bookkeeping.
+  private readonly versionSignatures = new Map<string, Map<string, string>>();
+
   async findById(id: string): Promise<Prompt | null> {
     const promptDoc = await PromptModel.findById(id).lean<PromptDocShape>();
-    if (!promptDoc) {
-      return null;
-    }
-    const versionDocs = await PromptVersionModel.find({ promptId: id }).lean<
-      PromptVersionDocShape[]
-    >();
-    return Prompt.hydrate(
-      toPromptPrimitives(promptDoc, versionDocs.length),
-      versionDocs.map(toVersionPrimitives),
-    );
+    return promptDoc ? this.hydrateFromDoc(promptDoc) : null;
+  }
+
+  async findOwnedById(id: string, ownerId: string): Promise<Prompt | null> {
+    const promptDoc = await PromptModel.findOne({
+      _id: id,
+      ownerId,
+    }).lean<PromptDocShape>();
+    return promptDoc ? this.hydrateFromDoc(promptDoc) : null;
   }
 
   async save(prompt: Prompt): Promise<void> {
-    const dirtyVersionIds = new Set(prompt.pullDirtyVersionIds());
-    const rootState = prompt.toPrimitives();
-    const versions = prompt.versionPrimitives();
-    const expectedRevision = rootState.revision;
-    const nextRevision = expectedRevision + 1;
-
-    const versionsToWrite = versions.filter((version) =>
-      dirtyVersionIds.has(version.id),
-    );
+    const snapshot = prompt.toSnapshot();
+    const { root, versions, expectedRevision, nextRevision } = snapshot;
+    const previous = this.versionSignatures.get(root.id);
+    const nextSignatures = new Map<string, string>();
+    const versionsToWrite: PromptVersionPrimitives[] = [];
+    for (const version of versions) {
+      const signature = versionSignature(version);
+      nextSignatures.set(version.id, signature);
+      if (previous?.get(version.id) !== signature) {
+        versionsToWrite.push(version);
+      }
+    }
 
     const session = await mongoose.startSession();
     try {
@@ -83,16 +110,16 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
             await PromptModel.create(
               [
                 {
-                  _id: rootState.id,
-                  name: rootState.name,
-                  description: rootState.description,
-                  taskType: rootState.taskType,
-                  ownerId: rootState.ownerId,
-                  productionVersion: rootState.productionVersion,
-                  versionCounter: rootState.versionCounter,
+                  _id: root.id,
+                  name: root.name,
+                  description: root.description,
+                  taskType: root.taskType,
+                  ownerId: root.ownerId,
+                  productionVersion: root.productionVersion,
+                  versionCounter: root.versionCounter,
                   revision: nextRevision,
-                  createdAt: rootState.createdAt,
-                  updatedAt: rootState.updatedAt,
+                  createdAt: root.createdAt,
+                  updatedAt: root.updatedAt,
                 },
               ],
               { session },
@@ -105,17 +132,17 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
           }
         } else {
           const result = await PromptModel.updateOne(
-            { _id: rootState.id, revision: expectedRevision },
+            { _id: root.id, revision: expectedRevision },
             {
               $set: {
-                name: rootState.name,
-                description: rootState.description,
-                taskType: rootState.taskType,
-                ownerId: rootState.ownerId,
-                productionVersion: rootState.productionVersion,
-                versionCounter: rootState.versionCounter,
+                name: root.name,
+                description: root.description,
+                taskType: root.taskType,
+                ownerId: root.ownerId,
+                productionVersion: root.productionVersion,
+                versionCounter: root.versionCounter,
                 revision: nextRevision,
-                updatedAt: rootState.updatedAt,
+                updatedAt: root.updatedAt,
               },
             },
             { session },
@@ -137,7 +164,31 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
       await session.endSession();
     }
 
-    prompt.markPersisted(nextRevision);
+    this.versionSignatures.set(root.id, nextSignatures);
+    prompt.commit(snapshot);
+  }
+
+  private async hydrateFromDoc(promptDoc: PromptDocShape): Promise<Prompt> {
+    const versionDocs = await PromptVersionModel.find({
+      promptId: String(promptDoc._id),
+    }).lean<PromptVersionDocShape[]>();
+    const primitives = versionDocs.map(toVersionPrimitives);
+    this.cacheHydratedSignatures(String(promptDoc._id), primitives);
+    return Prompt.hydrate(
+      toPromptPrimitives(promptDoc, versionDocs.length),
+      primitives,
+    );
+  }
+
+  private cacheHydratedSignatures(
+    promptId: string,
+    versions: readonly PromptVersionPrimitives[],
+  ): void {
+    const map = new Map<string, string>();
+    for (const version of versions) {
+      map.set(version.id, versionSignature(version));
+    }
+    this.versionSignatures.set(promptId, map);
   }
 }
 

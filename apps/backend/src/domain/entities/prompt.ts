@@ -1,11 +1,11 @@
 import type { TaskType } from "@plexus/shared-types";
 import {
-  PromptForbiddenError,
+  PromptNotOwnedError,
   PromptVersionNotFoundError,
   ValidationError,
 } from "../errors/domain-error.js";
-import type { IIdGenerator } from "../services/id-generator.js";
 import type { BraidGraph } from "../value-objects/braid-graph.js";
+import { VersionLabel } from "../value-objects/version-label.js";
 import {
   PromptVersion,
   type PromptVersionPrimitives,
@@ -18,6 +18,11 @@ export interface PromptPrimitives {
   taskType: TaskType;
   ownerId: string;
   productionVersion: string | null;
+  // Monotonic counter that drives version label allocation. Advanced on every
+  // new version (fork or plain create) and never rewound, so labels remain
+  // unique even if a version is deleted in the future — decoupled from
+  // `versions.length` which would collide after a delete.
+  versionCounter: number;
   // Aggregate revision last seen in the store. Hydrated from persistence,
   // checked as the "expected" value during save, and advanced by `commit`
   // after a successful write.
@@ -27,12 +32,16 @@ export interface PromptPrimitives {
 }
 
 export interface CreatePromptParams {
+  // Identifiers are allocated by the use case (via IIdGenerator) and passed in.
+  // Keeping the aggregate free of that port means Prompt has no infrastructure
+  // dependency and can be constructed in pure unit tests with plain strings.
+  promptId: string;
+  initialVersionId: string;
   ownerId: string;
   name: string;
   description: string;
   taskType: TaskType;
   initialPrompt: string;
-  idGenerator: IIdGenerator;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -57,23 +66,23 @@ export class Prompt {
 
   static create(params: CreatePromptParams): Prompt {
     const now = params.createdAt ?? new Date();
-    const promptId = params.idGenerator.newId();
     const initialVersion = PromptVersion.create({
-      id: params.idGenerator.newId(),
-      promptId,
-      version: "v1",
+      id: params.initialVersionId,
+      promptId: params.promptId,
+      version: VersionLabel.fromSequence(1).toString(),
       sourcePrompt: params.initialPrompt,
       createdAt: now,
       updatedAt: now,
     });
     return new Prompt(
       {
-        id: promptId,
+        id: params.promptId,
         name: params.name,
         description: params.description,
         taskType: params.taskType,
         ownerId: params.ownerId,
         productionVersion: null,
+        versionCounter: 1,
         revision: 0,
         createdAt: now,
         updatedAt: params.updatedAt ?? now,
@@ -139,10 +148,11 @@ export class Prompt {
   }
 
   // Guards the aggregate behind an ownership check so callers cannot forget
-  // the rule. Throws PromptForbiddenError when `userId` does not match.
+  // the rule. Throws PromptNotOwnedError when `userId` does not match; the
+  // presentation layer decides what HTTP status that maps to.
   assertOwnedBy(userId: string): void {
     if (this.state.ownerId !== userId) {
-      throw PromptForbiddenError();
+      throw PromptNotOwnedError();
     }
   }
 
@@ -158,21 +168,21 @@ export class Prompt {
     return match;
   }
 
-  createVersion(
-    input: {
-      sourcePrompt: string;
-      name?: string | null;
-    },
-    idGenerator: IIdGenerator,
-  ): PromptVersion {
+  createVersion(input: {
+    id: string;
+    sourcePrompt: string;
+    name?: string | null;
+  }): PromptVersion {
+    const nextCounter = this.state.versionCounter + 1;
     const nextVersion = PromptVersion.create({
-      id: idGenerator.newId(),
+      id: input.id,
       promptId: this.id,
-      version: `v${this.versionsState.length + 1}`,
+      version: VersionLabel.fromSequence(nextCounter).toString(),
       sourcePrompt: input.sourcePrompt,
       name: input.name ?? null,
     });
     this.versionsState = [...this.versionsState, nextVersion];
+    this.state = { ...this.state, versionCounter: nextCounter };
     this.touch();
     return nextVersion;
   }
@@ -224,16 +234,17 @@ export class Prompt {
   }
 
   // Attaches a generated BRAID graph. If the source version already carries a
-  // graph the aggregate overwrites it; otherwise it forks a new version and
-  // only then pulls an id from `idGenerator` (no wasted ids on overwrite).
-  attachGeneratedBraid(
-    input: {
-      sourceVersion: string;
-      graph: BraidGraph;
-      generatorModel: string;
-    },
-    idGenerator: IIdGenerator,
-  ): { version: PromptVersion; createdNewVersion: boolean } {
+  // graph the aggregate overwrites it in place; otherwise it forks a new
+  // version using `forkVersionId`. The fork id is always passed from the use
+  // case so the aggregate stays free of id-allocation ports — on the
+  // overwrite path it is simply ignored (one unused ObjectId allocation is
+  // cheaper than plumbing a service dependency into the domain).
+  attachGeneratedBraid(input: {
+    sourceVersion: string;
+    graph: BraidGraph;
+    generatorModel: string;
+    forkVersionId: string;
+  }): { version: PromptVersion; createdNewVersion: boolean } {
     const source = this.getVersionOrThrow(input.sourceVersion);
     if (source.hasBraidRepresentation) {
       source.setBraidGraph(input.graph, input.generatorModel);
@@ -241,10 +252,10 @@ export class Prompt {
       return { version: source, createdNewVersion: false };
     }
 
-    const created = this.createVersion(
-      { sourcePrompt: source.sourcePrompt },
-      idGenerator,
-    );
+    const created = this.createVersion({
+      id: input.forkVersionId,
+      sourcePrompt: source.sourcePrompt,
+    });
     created.setBraidGraph(input.graph, input.generatorModel);
     this.touch();
     return { version: created, createdNewVersion: true };

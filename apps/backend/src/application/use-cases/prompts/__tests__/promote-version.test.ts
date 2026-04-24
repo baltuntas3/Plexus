@@ -87,7 +87,7 @@ describe("PromoteVersionUseCase", () => {
         ownerId: "other-user",
         targetStatus: "staging",
       }),
-    ).rejects.toMatchObject({ code: "PROMPT_FORBIDDEN" });
+    ).rejects.toMatchObject({ code: "PROMPT_NOT_OWNED" });
   });
 
   it("throws PromptVersionNotFoundError for missing version", async () => {

@@ -3,9 +3,8 @@ import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import { TokenCost } from "../../../domain/value-objects/token-cost.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
-import type { IAIProviderFactory } from "../../services/ai-provider.js";
 import { calculateCost } from "../../services/model-registry.js";
-import { BraidChatAgent } from "../../services/braid/braid-chat-agent.js";
+import type { IBraidChatAgentFactory } from "../../services/braid/braid-chat-agent-factory.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
 import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
@@ -33,7 +32,7 @@ export type ChatBraidResult =
 export class ChatBraidUseCase {
   constructor(
     private readonly prompts: IPromptAggregateRepository,
-    private readonly providers: IAIProviderFactory,
+    private readonly agents: IBraidChatAgentFactory,
     private readonly linter: GraphLinter,
     private readonly idGenerator: IIdGenerator,
   ) {}
@@ -42,8 +41,7 @@ export class ChatBraidUseCase {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
     const version = prompt.getVersionOrThrow(command.version);
 
-    const provider = this.providers.forModel(command.generatorModel);
-    const agent = new BraidChatAgent(provider, command.generatorModel);
+    const agent = this.agents.forModel(command.generatorModel);
 
     const chatResult = await agent.chat({
       sourcePrompt: version.sourcePrompt,
@@ -73,14 +71,12 @@ export class ChatBraidUseCase {
       return { type: "diagram", mermaidCode: graph.mermaidCode, newVersionName: null, qualityScore, cost };
     }
 
-    const { version: newVersion } = prompt.attachGeneratedBraid(
-      {
-        sourceVersion: command.version,
-        graph,
-        generatorModel: command.generatorModel,
-      },
-      this.idGenerator,
-    );
+    const { version: newVersion } = prompt.attachGeneratedBraid({
+      sourceVersion: command.version,
+      graph,
+      generatorModel: command.generatorModel,
+      forkVersionId: this.idGenerator.newId(),
+    });
     await this.prompts.save(prompt);
 
     return {

@@ -48,17 +48,16 @@ export class GenerateBraidUseCase {
     });
 
     const qualityScore = this.linter.lint(result.graph);
-    // The aggregate decides whether to fork a new version or overwrite; it
-    // only pulls a new id from the generator on the fork branch, so no id is
-    // wasted when the existing version is updated in place.
-    const { version: updatedVersion, createdNewVersion } = prompt.attachGeneratedBraid(
-      {
-        sourceVersion: command.version,
-        graph: result.graph,
-        generatorModel: result.generatorModel,
-      },
-      this.idGenerator,
-    );
+    // The aggregate decides whether to fork a new version or overwrite; the
+    // fork id is pre-allocated here so the aggregate stays free of the
+    // IIdGenerator port. It is unused on the overwrite branch — an acceptable
+    // trade since ObjectId allocation is effectively free.
+    const { version: updatedVersion, createdNewVersion } = prompt.attachGeneratedBraid({
+      sourceVersion: command.version,
+      graph: result.graph,
+      generatorModel: result.generatorModel,
+      forkVersionId: this.idGenerator.newId(),
+    });
     await this.prompts.save(prompt);
 
     return {

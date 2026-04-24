@@ -17,10 +17,11 @@ export class CreateVersionUseCase {
 
   async execute(command: CreateVersionCommand): Promise<PromptVersion> {
     const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const version = prompt.createVersion(
-      { sourcePrompt: command.sourcePrompt, name: command.name },
-      this.idGenerator,
-    );
+    const version = prompt.createVersion({
+      id: this.idGenerator.newId(),
+      sourcePrompt: command.sourcePrompt,
+      name: command.name,
+    });
     await this.prompts.save(prompt);
     return version;
   }

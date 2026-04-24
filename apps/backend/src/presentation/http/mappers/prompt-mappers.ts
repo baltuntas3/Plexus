@@ -6,7 +6,7 @@ import type {
   RuleResultDto,
 } from "@plexus/shared-types";
 import type { Prompt } from "../../../domain/entities/prompt.js";
-import type { PromptVersion } from "../../../domain/entities/prompt-version.js";
+import { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import type {
   PromptSummary,
   PromptVersionSummary,
@@ -35,7 +35,8 @@ export const toPromptDto = (prompt: PromptLike): PromptDto => ({
 // Duck-type over the write-side entity and the read-side summary so list
 // endpoints can render straight from the projection without hydrating a full
 // PromptVersion. `braidGraph`/`generatorModel` come pre-flattened on the
-// summary; on the entity they live inside the representation VO.
+// summary; on the entity they are exposed as explicit domain facts so
+// presentation does not couple to representation internals.
 type PromptVersionLike =
   | PromptVersion
   | PromptVersionSummary;
@@ -43,13 +44,10 @@ type PromptVersionLike =
 const extractBraid = (
   version: PromptVersionLike,
 ): { braidGraph: string | null; generatorModel: string | null } => {
-  if ("representation" in version) {
+  if (version instanceof PromptVersion) {
     return {
       braidGraph: version.braidGraph?.mermaidCode ?? null,
-      generatorModel:
-        version.representation.kind === "braid"
-          ? version.representation.generatorModel
-          : null,
+      generatorModel: version.generatorModel,
     };
   }
   return {

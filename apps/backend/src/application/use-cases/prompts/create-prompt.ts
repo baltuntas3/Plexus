@@ -21,12 +21,13 @@ export class CreatePromptUseCase {
 
   async execute(command: CreatePromptCommand): Promise<CreatePromptResult> {
     const prompt = Prompt.create({
+      promptId: this.idGenerator.newId(),
+      initialVersionId: this.idGenerator.newId(),
       ownerId: command.ownerId,
       name: command.name,
       description: command.description,
       taskType: command.taskType,
       initialPrompt: command.initialPrompt,
-      idGenerator: this.idGenerator,
     });
     await this.prompts.save(prompt);
     const version = prompt.getVersionOrThrow("v1");

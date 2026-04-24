@@ -19,6 +19,7 @@ import { ChatBraidUseCase } from "../application/use-cases/prompts/chat-braid.js
 import type { BraidGenerator } from "../application/services/braid/braid-generator.js";
 import type { GraphLinter } from "../application/services/braid/lint/graph-linter.js";
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
+import { BraidChatAgentFactory } from "../application/services/braid/braid-chat-agent-factory.js";
 
 export interface PromptComposition {
   createPrompt: CreatePromptUseCase;
@@ -46,6 +47,7 @@ export const createPromptComposition = (
   const prompts = new MongoPromptAggregateRepository();
   const queries = new MongoPromptQueryService();
   const idGenerator: IIdGenerator = new MongoObjectIdGenerator();
+  const chatAgents = new BraidChatAgentFactory(providers);
 
   return {
     createPrompt: new CreatePromptUseCase(prompts, idGenerator),
@@ -59,7 +61,7 @@ export const createPromptComposition = (
     generateBraid: new GenerateBraidUseCase(prompts, generator, linter, idGenerator),
     lintVersion: new LintVersionUseCase(prompts, linter),
     updateBraidGraph: new UpdateBraidGraphUseCase(prompts, linter),
-    chatBraid: new ChatBraidUseCase(prompts, providers, linter, idGenerator),
+    chatBraid: new ChatBraidUseCase(prompts, chatAgents, linter, idGenerator),
     promptAggregateRepository: prompts,
     promptQueryService: queries,
     idGenerator,

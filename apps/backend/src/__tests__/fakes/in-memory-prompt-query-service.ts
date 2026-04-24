@@ -116,9 +116,8 @@ const toVersionSummary = (version: PromptVersion): PromptVersionSummary => {
     name: version.name,
     sourcePrompt: version.sourcePrompt,
     braidGraph,
-    generatorModel:
-      version.representation.kind === "braid" ? version.representation.generatorModel : null,
-    executablePrompt: braidGraph ?? version.sourcePrompt,
+    generatorModel: version.generatorModel,
+    executablePrompt: version.executablePrompt,
     solverModel: version.solverModel,
     status: version.status,
     createdAt: version.createdAt,

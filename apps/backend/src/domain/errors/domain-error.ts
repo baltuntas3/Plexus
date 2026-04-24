@@ -7,7 +7,7 @@ export type DomainErrorCode =
   | "INTERNAL"
   | "PROMPT_NOT_FOUND"
   | "PROMPT_VERSION_NOT_FOUND"
-  | "PROMPT_FORBIDDEN"
+  | "PROMPT_NOT_OWNED"
   | "PROMPT_AGGREGATE_STALE"
   | "PROMPT_SOURCE_EMPTY"
   | "PROMPT_BRAID_GENERATOR_MODEL_REQUIRED"
@@ -63,8 +63,10 @@ export const PromptVersionNotFoundError = (version?: string): DomainError =>
     version ? { version } : undefined,
   );
 
-export const PromptForbiddenError = (): DomainError =>
-  new DomainError("PROMPT_FORBIDDEN", "You don't own this prompt", 403);
+// Raised when a caller is not the owner of the target Prompt aggregate. The
+// domain does not know about HTTP; the presentation layer maps this to 403.
+export const PromptNotOwnedError = (): DomainError =>
+  new DomainError("PROMPT_NOT_OWNED", "Caller does not own this prompt", 403);
 
 // Raised when an optimistic-concurrency check fails during save — another
 // writer advanced the aggregate's revision while this instance was held.

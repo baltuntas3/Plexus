@@ -45,12 +45,13 @@ const buildScaffold = async () => {
 
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
+    promptId: ids.newId(),
+    initialVersionId: ids.newId(),
     ownerId: "u1",
     name: "Prompt",
     description: "desc",
     taskType: "math",
     initialPrompt: "Answer.",
-    idGenerator: ids,
   });
   await prompts.save(prompt);
   const version = prompt.getVersionOrThrow("v1");
@@ -121,23 +122,22 @@ describe("CreateBenchmarkUseCase", () => {
 
     const { Prompt } = await import("../../../../domain/entities/prompt.js");
     const prompt = Prompt.create({
+      promptId: ids.newId(),
+      initialVersionId: ids.newId(),
       ownerId: "u1",
       name: "Prompt",
       description: "",
       taskType: "math",
       initialPrompt: "Classical instructions.",
-      idGenerator: ids,
     });
-    prompt.createVersion({ sourcePrompt: "Outdated classical prompt." }, ids);
+    prompt.createVersion({ id: ids.newId(), sourcePrompt: "Outdated classical prompt." });
     // sourceVersion v2 has no braid yet → aggregate forks a new v3 with the braid.
-    const { version: braid } = prompt.attachGeneratedBraid(
-      {
-        sourceVersion: "v2",
-        graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
-        generatorModel: "openai/gpt-oss-120b",
-      },
-      ids,
-    );
+    const { version: braid } = prompt.attachGeneratedBraid({
+      sourceVersion: "v2",
+      graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
+      generatorModel: "openai/gpt-oss-120b",
+      forkVersionId: ids.newId(),
+    });
     await prompts.save(prompt);
     const classical = prompt.getVersionOrThrow("v1");
 
@@ -177,14 +177,15 @@ describe("CreateBenchmarkUseCase", () => {
 
     const { Prompt } = await import("../../../../domain/entities/prompt.js");
     const prompt = Prompt.create({
+      promptId: ids.newId(),
+      initialVersionId: ids.newId(),
       ownerId: "u1",
       name: "Prompt",
       description: "",
       taskType: "math",
       initialPrompt: "Only answer in English.",
-      idGenerator: ids,
     });
-    prompt.createVersion({ sourcePrompt: "Answer in Turkish when asked." }, ids);
+    prompt.createVersion({ id: ids.newId(), sourcePrompt: "Answer in Turkish when asked." });
     await prompts.save(prompt);
     const v1 = prompt.getVersionOrThrow("v1");
     const v2 = prompt.getVersionOrThrow("v2");

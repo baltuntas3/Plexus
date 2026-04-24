@@ -17,18 +17,26 @@ interface PromptDocShape {
   taskType: PromptPrimitives["taskType"];
   ownerId: Types.ObjectId;
   productionVersion: string | null;
+  versionCounter?: number;
   revision: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const toPromptPrimitives = (doc: PromptDocShape): PromptPrimitives => ({
+const toPromptPrimitives = (
+  doc: PromptDocShape,
+  versionCount: number,
+): PromptPrimitives => ({
   id: String(doc._id),
   name: doc.name,
   description: doc.description,
   taskType: doc.taskType,
   ownerId: String(doc.ownerId),
   productionVersion: doc.productionVersion,
+  // Older docs predating the counter field fall back to the live version
+  // count — correct while no delete path exists, and self-heals on the next
+  // save when the counter is persisted explicitly.
+  versionCounter: doc.versionCounter ?? versionCount,
   // Older docs predating the concurrency field are treated as revision 0.
   revision: doc.revision ?? 0,
   createdAt: doc.createdAt,
@@ -56,7 +64,7 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
       PromptVersionDocShape[]
     >();
     return Prompt.hydrate(
-      toPromptPrimitives(promptDoc),
+      toPromptPrimitives(promptDoc, versionDocs.length),
       versionDocs.map(toVersionPrimitives),
     );
   }
@@ -82,6 +90,7 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
                   taskType: promptState.taskType,
                   ownerId: promptState.ownerId,
                   productionVersion: promptState.productionVersion,
+                  versionCounter: promptState.versionCounter,
                   revision: nextRevision,
                   createdAt: promptState.createdAt,
                   updatedAt: promptState.updatedAt,
@@ -108,6 +117,7 @@ export class MongoPromptAggregateRepository implements IPromptAggregateRepositor
                 taskType: promptState.taskType,
                 ownerId: promptState.ownerId,
                 productionVersion: promptState.productionVersion,
+                versionCounter: promptState.versionCounter,
                 revision: nextRevision,
                 updatedAt: promptState.updatedAt,
               },

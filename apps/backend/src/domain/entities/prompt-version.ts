@@ -1,10 +1,10 @@
 import type { VersionStatus } from "@plexus/shared-types";
 import {
   PromptBraidGeneratorModelRequiredError,
+  PromptSourceEmptyError,
   PromptVersionHasNoBraidToUpdateError,
 } from "../errors/domain-error.js";
 import { BraidGraph } from "../value-objects/braid-graph.js";
-import { PromptContent } from "../value-objects/prompt-content.js";
 
 export interface ClassicalPromptRepresentationPrimitives {
   kind: "classical";
@@ -79,7 +79,7 @@ interface InternalState {
   promptId: string;
   version: string;
   name: string | null;
-  sourcePrompt: PromptContent;
+  sourcePrompt: string;
   representation: PromptRepresentation;
   solverModel: string | null;
   status: VersionStatus;
@@ -97,7 +97,7 @@ export class PromptVersion {
       promptId: params.promptId,
       version: params.version,
       name: normalizeVersionName(params.name ?? null),
-      sourcePrompt: PromptContent.create(params.sourcePrompt),
+      sourcePrompt: normalizeSourcePrompt(params.sourcePrompt),
       representation: new ClassicalPromptRepresentation(),
       solverModel: null,
       status: "draft",
@@ -112,10 +112,8 @@ export class PromptVersion {
       promptId: primitives.promptId,
       version: primitives.version,
       name: normalizeVersionName(primitives.name),
-      // Hydrate bypasses validation: the source was already validated when
-      // created, so rebuild the VO without re-running the empty check.
-      // `create` remains the guarded path for new content.
-      sourcePrompt: PromptContent.fromPersistence(primitives.sourcePrompt),
+      // Persisted content was already validated at creation time; trust it.
+      sourcePrompt: primitives.sourcePrompt,
       representation: hydrateRepresentation(primitives.representation),
       solverModel: primitives.solverModel ?? null,
       status: primitives.status,
@@ -141,15 +139,20 @@ export class PromptVersion {
   }
 
   get sourcePrompt(): string {
-    return this.state.sourcePrompt.toString();
-  }
-
-  get representation(): PromptRepresentation {
-    return this.state.representation;
+    return this.state.sourcePrompt;
   }
 
   get braidGraph(): BraidGraph | null {
     return this.state.representation.kind === "braid" ? this.state.representation.graph : null;
+  }
+
+  // Exposes only the domain facts callers are allowed to observe. The
+  // concrete representation object stays encapsulated so outer layers do not
+  // branch on internal shape and couple themselves to entity internals.
+  get generatorModel(): string | null {
+    return this.state.representation.kind === "braid"
+      ? this.state.representation.generatorModel
+      : null;
   }
 
   get hasBraidRepresentation(): boolean {
@@ -159,7 +162,7 @@ export class PromptVersion {
   get executablePrompt(): string {
     return this.state.representation.kind === "braid"
       ? this.state.representation.graph.mermaidCode
-      : this.state.sourcePrompt.toString();
+      : this.state.sourcePrompt;
   }
 
   get solverModel(): string | null {
@@ -222,7 +225,7 @@ export class PromptVersion {
       promptId: this.state.promptId,
       version: this.state.version,
       name: this.state.name,
-      sourcePrompt: this.state.sourcePrompt.toString(),
+      sourcePrompt: this.state.sourcePrompt,
       representation: this.state.representation.toPrimitives(),
       solverModel: this.state.solverModel,
       status: this.state.status,
@@ -231,6 +234,14 @@ export class PromptVersion {
     };
   }
 }
+
+const normalizeSourcePrompt = (raw: string): string => {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw PromptSourceEmptyError();
+  }
+  return trimmed;
+};
 
 const normalizeVersionName = (name: string | null): string | null => {
   const trimmed = name?.trim() ?? "";

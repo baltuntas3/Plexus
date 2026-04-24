@@ -1,7 +1,8 @@
-// Aggregate-owned identifier generation is a domain concern, not a
-// repository one: aggregates must be constructable without a persistence
-// dependency, and use cases should not pre-allocate IDs that the aggregate
-// may or may not consume (wasted-id smell).
+// Domain port for identifier allocation. Consumed by application use cases
+// (not by aggregates themselves) so domain entities stay free of service
+// dependencies and can be constructed in pure unit tests with plain strings.
+// Implementations live in infrastructure (Mongo ObjectId) and tests
+// (deterministic sequence).
 export interface IIdGenerator {
   newId(): string;
 }

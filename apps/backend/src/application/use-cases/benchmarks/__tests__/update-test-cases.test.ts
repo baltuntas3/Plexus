@@ -11,12 +11,13 @@ const buildDraftBenchmark = async (
 ) => {
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
+    promptId: ids.newId(),
+    initialVersionId: ids.newId(),
     ownerId: "u1",
     name: "Prompt",
     description: "",
     taskType: "general",
     initialPrompt: "Answer.",
-    idGenerator: ids,
   });
   await prompts.save(prompt);
   const version = prompt.getVersionOrThrow("v1");

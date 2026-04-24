@@ -1,8 +1,9 @@
-import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
+import type { IPromptRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
+import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import type { UpdateVersionInputDto } from "../../dto/prompt-dto.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import { versionToSummary } from "../../queries/prompt-projections.js";
-import { loadOwnedPrompt } from "./load-owned-prompt.js";
+import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
 
 export interface UpdateVersionNameCommand extends UpdateVersionInputDto {
   promptId: string;
@@ -10,14 +11,24 @@ export interface UpdateVersionNameCommand extends UpdateVersionInputDto {
   ownerId: string;
 }
 
+// Pure metadata mutation: the version aggregate renames itself, the Prompt
+// root is loaded solely for the ownership gate and is not re-saved.
 export class UpdateVersionNameUseCase {
-  constructor(private readonly prompts: IPromptAggregateRepository) {}
+  constructor(
+    private readonly prompts: IPromptRepository,
+    private readonly versions: IPromptVersionRepository,
+  ) {}
 
   async execute(command: UpdateVersionNameCommand): Promise<PromptVersionSummary> {
-    const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const target = prompt.getVersionByLabelOrThrow(command.version);
-    const updated = prompt.renameVersion(target.id, command.name);
-    await this.prompts.save(prompt);
-    return versionToSummary(updated);
+    const { version } = await loadOwnedPromptAndVersion(
+      this.prompts,
+      this.versions,
+      command.promptId,
+      command.version,
+      command.ownerId,
+    );
+    version.rename(command.name);
+    await this.versions.save(version);
+    return versionToSummary(version);
   }
 }

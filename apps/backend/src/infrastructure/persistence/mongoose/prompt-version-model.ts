@@ -43,6 +43,11 @@ const promptVersionSchema = new Schema(
       default: () => ({ kind: "classical", graph: null, authorship: null }),
     },
     status: { type: String, required: true, enum: VERSION_STATUSES, default: "draft" },
+    // Optimistic-concurrency token. Bumped by the PromptVersion repo on
+    // each successful save so concurrent writers to the same version
+    // (rename races, concurrent promote flows) are caught instead of
+    // silently overwriting.
+    revision: { type: Number, required: true, default: 0 },
   },
   { timestamps: true },
 );

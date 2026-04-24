@@ -2,10 +2,12 @@ import { CreatePromptUseCase } from "../create-prompt.js";
 import { CreateVersionUseCase } from "../create-version.js";
 import { PromoteVersionUseCase } from "../promote-version.js";
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
+import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
 import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
 
 describe("PromoteVersionUseCase", () => {
   let prompts: InMemoryPromptAggregateRepository;
+  let versions: InMemoryPromptVersionRepository;
   let createPrompt: CreatePromptUseCase;
   let createVersion: CreateVersionUseCase;
   let promoteVersion: PromoteVersionUseCase;
@@ -14,10 +16,11 @@ describe("PromoteVersionUseCase", () => {
 
   beforeEach(async () => {
     prompts = new InMemoryPromptAggregateRepository();
+    versions = new InMemoryPromptVersionRepository();
     const ids = new InMemoryIdGenerator();
-    createPrompt = new CreatePromptUseCase(prompts, ids);
-    createVersion = new CreateVersionUseCase(prompts, ids);
-    promoteVersion = new PromoteVersionUseCase(prompts);
+    createPrompt = new CreatePromptUseCase(prompts, versions, ids);
+    createVersion = new CreateVersionUseCase(prompts, versions, ids);
+    promoteVersion = new PromoteVersionUseCase(prompts, versions);
 
     const { prompt } = await createPrompt.execute({
       ownerId,
@@ -39,7 +42,7 @@ describe("PromoteVersionUseCase", () => {
     expect(updated.status).toBe("staging");
   });
 
-  it("sets prompt.productionVersion when promoting to production", async () => {
+  it("sets prompt.productionVersionId when promoting to production", async () => {
     await promoteVersion.execute({
       promptId,
       version: "v1",
@@ -47,7 +50,8 @@ describe("PromoteVersionUseCase", () => {
       targetStatus: "production",
     });
     const prompt = await prompts.findById(promptId);
-    expect(prompt?.productionVersion).toBe("v1");
+    const v1 = await versions.findByPromptAndLabel(promptId, "v1");
+    expect(prompt?.productionVersionId).toBe(v1?.id);
   });
 
   it("demotes previous production to staging when a new version is promoted", async () => {
@@ -71,19 +75,15 @@ describe("PromoteVersionUseCase", () => {
     });
 
     const prompt = await prompts.findById(promptId);
-    const v1 = prompt?.getVersionByLabel("v1");
-    const v2 = prompt?.getVersionByLabel("v2");
+    const v1 = await versions.findByPromptAndLabel(promptId, "v1");
+    const v2 = await versions.findByPromptAndLabel(promptId, "v2");
 
     expect(v1?.status).toBe("staging");
     expect(v2?.status).toBe("production");
-    expect(prompt?.productionVersion).toBe("v2");
+    expect(prompt?.productionVersionId).toBe(v2?.id);
   });
 
   it("hides other users' prompts behind a not-found response (no existence leak)", async () => {
-    // Unified semantic: a foreign prompt is reported as missing so id
-    // enumeration cannot distinguish "exists but not yours" from "does not
-    // exist". The aggregate-level PromptNotOwnedError is kept as
-    // defense-in-depth but production paths never surface it.
     await expect(
       promoteVersion.execute({
         promptId,

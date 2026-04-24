@@ -22,18 +22,45 @@ interface PromptSummaryDoc {
   description: string;
   taskType: TaskType;
   ownerId: Types.ObjectId;
-  productionVersion: string | null;
+  productionVersionId: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const toSummary = (doc: PromptSummaryDoc): PromptSummary => ({
+// Resolves a batch of productionVersionId references to their labels in one
+// round trip. Returns a Map keyed by version id so callers can lookup each
+// prompt's label without further DB work. Cross-aggregate read-side join
+// that the query service owns — the write-side aggregates stay ignorant of
+// the denorm.
+const resolveProductionLabels = async (
+  versionIds: readonly (Types.ObjectId | null)[],
+): Promise<Map<string, string>> => {
+  const ids = versionIds
+    .filter((id): id is Types.ObjectId => id !== null && id !== undefined)
+    .map((id) => String(id));
+  if (ids.length === 0) return new Map();
+  const docs = await PromptVersionModel.find({ _id: { $in: ids } })
+    .select({ _id: 1, version: 1 })
+    .lean<{ _id: Types.ObjectId; version: string }[]>();
+  const map = new Map<string, string>();
+  for (const doc of docs) {
+    map.set(String(doc._id), doc.version);
+  }
+  return map;
+};
+
+const toSummary = (
+  doc: PromptSummaryDoc,
+  labelLookup: Map<string, string>,
+): PromptSummary => ({
   id: String(doc._id),
   name: doc.name,
   description: doc.description,
   taskType: doc.taskType,
   ownerId: String(doc.ownerId),
-  productionVersion: doc.productionVersion,
+  productionVersion: doc.productionVersionId
+    ? labelLookup.get(String(doc.productionVersionId)) ?? null
+    : null,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
 });
@@ -55,17 +82,20 @@ export class MongoPromptQueryService implements IPromptQueryService {
       PromptModel.countDocuments(filter),
     ]);
 
-    return { items: docs.map(toSummary), total };
+    const labels = await resolveProductionLabels(
+      docs.map((doc) => doc.productionVersionId),
+    );
+    return { items: docs.map((doc) => toSummary(doc, labels)), total };
   }
 
   async findOwnedPromptSummary(
     promptId: string,
     ownerId: string,
   ): Promise<PromptSummary | null> {
-    // Composite filter keeps "missing" and "not yours" indistinguishable at
-    // the storage boundary — a single round trip, no info leak.
     const doc = await PromptModel.findOne({ _id: promptId, ownerId }).lean<PromptSummaryDoc>();
-    return doc ? toSummary(doc) : null;
+    if (!doc) return null;
+    const labels = await resolveProductionLabels([doc.productionVersionId]);
+    return toSummary(doc, labels);
   }
 
   async findOwnedPromptSummariesByIds(
@@ -79,9 +109,12 @@ export class MongoPromptQueryService implements IPromptQueryService {
       _id: { $in: ids },
       ownerId,
     }).lean<PromptSummaryDoc[]>();
+    const labels = await resolveProductionLabels(
+      docs.map((doc) => doc.productionVersionId),
+    );
     const map = new Map<string, PromptSummary>();
     for (const doc of docs) {
-      const summary = toSummary(doc);
+      const summary = toSummary(doc, labels);
       map.set(summary.id, summary);
     }
     return map;
@@ -90,9 +123,6 @@ export class MongoPromptQueryService implements IPromptQueryService {
   async listOwnedVersionSummaries(
     query: ListOwnedVersionSummariesQuery,
   ): Promise<VersionSummaryListResult | null> {
-    // Ownership gate first: missing prompt and foreign prompt both surface
-    // as the same null so the presentation layer cannot accidentally leak
-    // "exists but not yours".
     const owned = await PromptModel.exists({
       _id: query.promptId,
       ownerId: query.ownerId,
@@ -117,10 +147,6 @@ export class MongoPromptQueryService implements IPromptQueryService {
     label: string,
     ownerId: string,
   ): Promise<PromptVersionSummary | null> {
-    // Single ownership gate via exist check, then a direct (promptId,
-    // version) hit. Missing prompt, foreign prompt, and missing label all
-    // collapse to null so presentation uniformly 404s and id enumeration
-    // cannot signal "exists but not yours".
     const owned = await PromptModel.exists({ _id: promptId, ownerId });
     if (!owned) return null;
     const doc = await PromptVersionModel.findOne({
@@ -157,10 +183,6 @@ export class MongoPromptQueryService implements IPromptQueryService {
     if (versionDocs.length === 0) {
       return new Map();
     }
-    // Second round trip to filter by ownership. Denormalising ownerId onto
-    // PromptVersion would save this query but drift against the Prompt
-    // aggregate on ownership transfer (there is none today, but the owner
-    // of truth is the Prompt root, and we want one place to change it).
     const promptIds = [...new Set(versionDocs.map((doc) => String(doc.promptId)))];
     const ownedPromptDocs = await PromptModel.find({
       _id: { $in: promptIds },

@@ -1,56 +1,71 @@
-import { Prompt } from "../../../../domain/entities/prompt.js";
+import { CreatePromptUseCase } from "../create-prompt.js";
+import { CreateVersionUseCase } from "../create-version.js";
+import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
+import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
+import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
 
-// Classical authoring path. A fresh `createVersion` without `fromVersionId`
-// produces a root; with `fromVersionId` it forks from the named ancestor so
-// classical prompt evolution carries the same lineage invariant as BRAID
-// fork-on-edit. The aggregate resolves the id itself — a phantom parent is
-// rejected at the boundary, not silently accepted.
+// createVersion forks when fromVersion is supplied, produces a root version
+// otherwise. The use case resolves `fromVersion` label → version via the
+// version repo scoped to this prompt — a phantom parent outside the prompt
+// is rejected at the lookup boundary.
 
-const makePrompt = (): Prompt =>
-  Prompt.create({
-    promptId: "prompt-1",
-    initialVersionId: "v1-id",
-    ownerId: "u1",
-    name: "p",
-    description: "",
-    taskType: "general",
-    initialPrompt: "Answer concisely.",
+describe("CreateVersionUseCase", () => {
+  let prompts: InMemoryPromptAggregateRepository;
+  let versions: InMemoryPromptVersionRepository;
+  let ids: InMemoryIdGenerator;
+  let createPrompt: CreatePromptUseCase;
+  let createVersion: CreateVersionUseCase;
+  let promptId: string;
+  const ownerId = "u1";
+
+  beforeEach(async () => {
+    prompts = new InMemoryPromptAggregateRepository();
+    versions = new InMemoryPromptVersionRepository();
+    ids = new InMemoryIdGenerator();
+    createPrompt = new CreatePromptUseCase(prompts, versions, ids);
+    createVersion = new CreateVersionUseCase(prompts, versions, ids);
+
+    const { prompt } = await createPrompt.execute({
+      ownerId,
+      name: "p",
+      description: "",
+      taskType: "general",
+      initialPrompt: "Answer concisely.",
+    });
+    promptId = prompt.id;
   });
 
-describe("Prompt.createVersion", () => {
-  it("creates a root version when no ancestor is supplied", () => {
-    const prompt = makePrompt();
-    const v2 = prompt.createVersion({
-      id: "v2-id",
+  it("creates a root version when no ancestor is supplied", async () => {
+    const v2 = await createVersion.execute({
+      promptId,
+      ownerId,
       sourcePrompt: "Answer in one sentence.",
     });
     expect(v2.version).toBe("v2");
     expect(v2.parentVersionId).toBeNull();
-    expect(v2.hasBraidRepresentation).toBe(false);
+    expect(v2.braidGraph).toBeNull();
   });
 
-  it("records parentVersionId when forking from an existing version", () => {
-    const prompt = makePrompt();
-    const v1 = prompt.getVersionByLabelOrThrow("v1");
-    const v2 = prompt.createVersion({
-      id: "v2-id",
+  it("records parentVersionId when forking from an existing version", async () => {
+    const v2 = await createVersion.execute({
+      promptId,
+      ownerId,
       sourcePrompt: "Answer in one sentence.",
-      fromVersionId: v1.id,
+      fromVersion: "v1",
     });
-    expect(v2.parentVersionId).toBe(v1.id);
-
-    const v1Reloaded = prompt.getVersionByLabelOrThrow("v1");
-    expect(v1Reloaded.sourcePrompt).toBe("Answer concisely.");
+    const v1 = await versions.findByPromptAndLabel(promptId, "v1");
+    expect(v2.parentVersionId).toBe(v1?.id);
+    expect(v1?.sourcePrompt).toBe("Answer concisely.");
   });
 
-  it("throws when the ancestor id does not belong to this aggregate", () => {
-    const prompt = makePrompt();
-    expect(() =>
-      prompt.createVersion({
-        id: "v2-id",
+  it("throws when the ancestor label does not belong to this prompt", async () => {
+    await expect(
+      createVersion.execute({
+        promptId,
+        ownerId,
         sourcePrompt: "x",
-        fromVersionId: "not-a-real-id",
+        fromVersion: "v99",
       }),
-    ).toThrow();
+    ).rejects.toMatchObject({ code: "PROMPT_VERSION_NOT_FOUND" });
   });
 });

@@ -1,90 +1,103 @@
+import { PromptVersion } from "../../../../domain/entities/prompt-version.js";
 import { Prompt } from "../../../../domain/entities/prompt.js";
 import { BraidAuthorship } from "../../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
 
-// Immutability invariant: every graph edit produces a new forked version
-// linked to its parent. The source version's content is not touched, so
-// BenchmarkResult rows that reference a historical version id always
-// resolve to the exact content that was evaluated.
+// Fork-on-edit invariant: every graph edit produces a new version linked
+// to its parent. Source version content is not touched, so BenchmarkResult
+// rows referencing a historical version id resolve to the exact evaluated
+// content. After the aggregate split, forking is a PromptVersion.fork
+// static that returns a fresh aggregate; the Prompt root only allocates
+// the next monotonic label.
 
-const makePrompt = (): Prompt =>
-  Prompt.create({
+const makePromptAndInitialVersion = (): { prompt: Prompt; v1: PromptVersion } => {
+  const prompt = Prompt.create({
     promptId: "prompt-1",
-    initialVersionId: "v1-id",
     ownerId: "u1",
     name: "p",
     description: "",
     taskType: "general",
-    initialPrompt: "Answer concisely.",
   });
+  const v1 = PromptVersion.create({
+    id: "v1-id",
+    promptId: prompt.id,
+    version: prompt.allocateNextVersionLabel(),
+    sourcePrompt: "Answer concisely.",
+  });
+  return { prompt, v1 };
+};
 
 const GRAPH_A = BraidGraph.parse("flowchart TD;\nA[start] --> B[Check output];");
 const GRAPH_B = BraidGraph.parse("flowchart TD;\nX[begin] --> Y[Verify response];");
 
-describe("Prompt.upsertBraid (fork-on-edit)", () => {
-  it("creates a new version on first braid attachment and keeps source classical", () => {
-    const prompt = makePrompt();
-    const v1 = prompt.getVersionByLabelOrThrow("v1");
-    const forked = prompt.upsertBraid({
-      sourceVersionId: v1.id,
-      graph: GRAPH_A,
-      authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
-      forkVersionId: "forked-id-1",
+describe("PromptVersion.fork", () => {
+  it("creates a new version on first braid attachment and leaves source classical", () => {
+    const { prompt, v1 } = makePromptAndInitialVersion();
+    const forked = PromptVersion.fork({
+      source: v1,
+      newId: "forked-id-1",
+      newLabel: prompt.allocateNextVersionLabel(),
+      initialBraid: {
+        graph: GRAPH_A,
+        authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
+      },
     });
     expect(forked.version).toBe("v2");
     expect(forked.hasBraidRepresentation).toBe(true);
     expect(forked.parentVersionId).toBe("v1-id");
 
-    const v1Reloaded = prompt.getVersionByLabelOrThrow("v1");
-    expect(v1Reloaded.hasBraidRepresentation).toBe(false);
-    expect(v1Reloaded.parentVersionId).toBeNull();
+    expect(v1.hasBraidRepresentation).toBe(false);
+    expect(v1.parentVersionId).toBeNull();
   });
 
   it("forks again on a subsequent braid edit — source braid stays frozen", () => {
-    const prompt = makePrompt();
-    const v1 = prompt.getVersionByLabelOrThrow("v1");
-    const v2 = prompt.upsertBraid({
-      sourceVersionId: v1.id,
-      graph: GRAPH_A,
-      authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
-      forkVersionId: "fork-a",
+    const { prompt, v1 } = makePromptAndInitialVersion();
+    const v2 = PromptVersion.fork({
+      source: v1,
+      newId: "fork-a",
+      newLabel: prompt.allocateNextVersionLabel(),
+      initialBraid: {
+        graph: GRAPH_A,
+        authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
+      },
     });
-    const v3 = prompt.upsertBraid({
-      sourceVersionId: v2.id,
-      graph: GRAPH_B,
-      authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
-      forkVersionId: "fork-b",
+    const v3 = PromptVersion.fork({
+      source: v2,
+      newId: "fork-b",
+      newLabel: prompt.allocateNextVersionLabel(),
+      initialBraid: {
+        graph: GRAPH_B,
+        authorship: BraidAuthorship.byModel("openai/gpt-oss-120b"),
+      },
     });
     expect(v3.version).toBe("v3");
     expect(v3.parentVersionId).toBe(v2.id);
     expect(v3.braidGraph?.mermaidCode).toBe(GRAPH_B.mermaidCode);
 
-    // Source v2 must be exactly what was originally written — no in-place
-    // overwrite even though the user "edited" it.
-    const reloadedV2 = prompt.getVersionByLabelOrThrow("v2");
-    expect(reloadedV2.braidGraph?.mermaidCode).toBe(GRAPH_A.mermaidCode);
-    expect(reloadedV2.id).toBe(v2.id);
+    // v2 content is exactly what was originally written — no in-place
+    // overwrite even though the user "edited" it downstream.
+    expect(v2.braidGraph?.mermaidCode).toBe(GRAPH_A.mermaidCode);
   });
 
   it("records the model that produced the fork, not the parent's model", () => {
-    // Provenance invariant: generatorModel on a fork is whichever model
-    // actually generated the content the fork carries. Parent's model is
-    // the parent's history (reachable via parentVersionId); it must not
-    // leak into the child's metadata when the child was built by a
-    // different model.
-    const prompt = makePrompt();
-    const v1 = prompt.getVersionByLabelOrThrow("v1");
-    const v2 = prompt.upsertBraid({
-      sourceVersionId: v1.id,
-      graph: GRAPH_A,
-      authorship: BraidAuthorship.byModel("model-a"),
-      forkVersionId: "fork-a",
+    const { prompt, v1 } = makePromptAndInitialVersion();
+    const v2 = PromptVersion.fork({
+      source: v1,
+      newId: "fork-a",
+      newLabel: prompt.allocateNextVersionLabel(),
+      initialBraid: {
+        graph: GRAPH_A,
+        authorship: BraidAuthorship.byModel("model-a"),
+      },
     });
-    const v3 = prompt.upsertBraid({
-      sourceVersionId: v2.id,
-      graph: GRAPH_B,
-      authorship: BraidAuthorship.byModel("model-b"),
-      forkVersionId: "fork-b",
+    const v3 = PromptVersion.fork({
+      source: v2,
+      newId: "fork-b",
+      newLabel: prompt.allocateNextVersionLabel(),
+      initialBraid: {
+        graph: GRAPH_B,
+        authorship: BraidAuthorship.byModel("model-b"),
+      },
     });
     expect(v2.braidAuthorship?.kind).toBe("model");
     expect(v2.generatorModel).toBe("model-a");
@@ -94,27 +107,30 @@ describe("Prompt.upsertBraid (fork-on-edit)", () => {
   });
 
   it("distinguishes manual edits from LLM-authored graphs", () => {
-    // Manual edits do not claim a producing model. Authorship is
-    // `manual`, `derivedFromModel` carries the ancestor's model as a
-    // lineage breadcrumb — but the legacy `generatorModel` convenience
-    // still surfaces something for display paths.
-    const prompt = makePrompt();
-    const v1 = prompt.getVersionByLabelOrThrow("v1");
-    const v2 = prompt.upsertBraid({
-      sourceVersionId: v1.id,
-      graph: GRAPH_A,
-      authorship: BraidAuthorship.byModel("model-a"),
-      forkVersionId: "fork-a",
+    const { prompt, v1 } = makePromptAndInitialVersion();
+    const v2 = PromptVersion.fork({
+      source: v1,
+      newId: "fork-a",
+      newLabel: prompt.allocateNextVersionLabel(),
+      initialBraid: {
+        graph: GRAPH_A,
+        authorship: BraidAuthorship.byModel("model-a"),
+      },
     });
-    const v3 = prompt.upsertBraid({
-      sourceVersionId: v2.id,
-      graph: GRAPH_B,
-      authorship: BraidAuthorship.manual(v2.generatorModel),
-      forkVersionId: "fork-b",
+    const v3 = PromptVersion.fork({
+      source: v2,
+      newId: "fork-b",
+      newLabel: prompt.allocateNextVersionLabel(),
+      initialBraid: {
+        graph: GRAPH_B,
+        authorship: BraidAuthorship.manual(v2.generatorModel),
+      },
     });
     expect(v3.braidAuthorship?.kind).toBe("manual");
-    const snap = v3.braidAuthorship?.toSnapshot();
-    expect(snap).toEqual({ kind: "manual", derivedFromModel: "model-a" });
+    expect(v3.braidAuthorship?.toSnapshot()).toEqual({
+      kind: "manual",
+      derivedFromModel: "model-a",
+    });
     expect(v3.generatorModel).toBe("model-a");
   });
 });

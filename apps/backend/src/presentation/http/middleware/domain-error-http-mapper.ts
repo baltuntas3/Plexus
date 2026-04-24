@@ -26,6 +26,7 @@ export const domainErrorCodeToHttpStatus = (code: DomainErrorCode): number => {
       return 404;
     case "CONFLICT":
     case "PROMPT_AGGREGATE_STALE":
+    case "PROMPT_VERSION_AGGREGATE_STALE":
     case "PROMPT_INVALID_VERSION_TRANSITION":
     case "BENCHMARK_AGGREGATE_STALE":
     case "BENCHMARK_ILLEGAL_TRANSITION":

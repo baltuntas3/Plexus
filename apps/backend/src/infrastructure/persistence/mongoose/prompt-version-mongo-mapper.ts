@@ -34,6 +34,7 @@ export interface PromptVersionDocShape {
     generatorModel?: string | null;
   };
   status: PromptVersionPrimitives["status"];
+  revision?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -87,6 +88,7 @@ export const toVersionPrimitives = (
   sourcePrompt: doc.sourcePrompt,
   representation: hydrateAuthorship(doc.representation),
   status: doc.status,
+  revision: doc.revision ?? 0,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
 });
@@ -150,6 +152,7 @@ export const toVersionDocSet = (
         }
       : { kind: "classical", graph: null, authorship: null },
   status: version.status,
+  revision: version.revision,
   createdAt: version.createdAt,
   updatedAt: version.updatedAt,
 });

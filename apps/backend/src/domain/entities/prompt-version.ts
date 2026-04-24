@@ -1,5 +1,9 @@
 import type { VersionStatus } from "@plexus/shared-types";
-import { PromptSourceEmptyError } from "../errors/domain-error.js";
+import {
+  PromptInvalidVersionTransitionError,
+  PromptSourceEmptyError,
+  ValidationError,
+} from "../errors/domain-error.js";
 import {
   BraidAuthorship,
   type BraidAuthorshipSnapshot,
@@ -7,18 +11,19 @@ import {
 import { BraidGraph } from "../value-objects/braid-graph.js";
 import { VersionLabel } from "../value-objects/version-label.js";
 
-// PromptVersion is an immutable content artifact.
+// PromptVersion is its own aggregate root.
 //
-// Once a version is written, its `sourcePrompt` and `representation` (braid
-// graph + generator model) never change. Any "edit" to a braid — manual
-// mermaid tweak, regenerate, or chat refinement — produces a *new* version
-// linked via `parentVersionId`. This preserves audit trail: a BenchmarkResult
-// referencing a version id always resolves to the exact content that was
-// evaluated, not whatever the content has been mutated to since.
+// Content (sourcePrompt, representation) is immutable — every graph edit is
+// a fork that creates a new version with its own id, never a rewrite. This
+// keeps BenchmarkResult → PromptVersion links stable: an old row always
+// resolves to the exact content that was evaluated, not whatever the
+// content has been mutated to since.
 //
 // Only metadata mutates in place: `name` (user-facing label) and `status`
-// (workflow: draft / staging / production). Status transitions are managed
-// by the Prompt aggregate root via the symbol-keyed mutator.
+// (workflow: draft / staging / production). The "one production per prompt"
+// invariant is held by the Prompt root (productionVersionId); the version's
+// own `status` is the user-facing workflow state that a promote orchestrates
+// across the two aggregates.
 
 export interface ClassicalPromptRepresentationPrimitives {
   kind: "classical";
@@ -43,8 +48,15 @@ export interface PromptVersionPrimitives {
   sourcePrompt: string;
   representation: PromptRepresentationPrimitives;
   status: VersionStatus;
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface PromptVersionSnapshot {
+  readonly state: PromptVersionPrimitives;
+  readonly expectedRevision: number;
+  readonly nextRevision: number;
 }
 
 export interface CreatePromptVersionParams {
@@ -104,43 +116,13 @@ interface InternalState {
   sourcePrompt: string;
   representation: PromptRepresentation;
   status: VersionStatus;
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-// Symbol-keyed gateway to the child's metadata mutators. Content mutation
-// (braid graph, source prompt) does not live here — edits fork a new
-// version via Prompt.upsertBraid, they do not rewrite in place. Only
-// `name` (label) and `status` (workflow) change on an existing version.
-//
-// The `unique symbol` type annotation is what makes the class computed-key
-// property resolve: without it TS widens to `symbol` and refuses to index.
-export const PromptVersionInternal: unique symbol = Symbol(
-  "PromptVersion#internal-mutator",
-);
-
-export interface PromptVersionMutator {
-  rename(name: string | null): void;
-  changeStatus(status: VersionStatus): void;
-}
-
 export class PromptVersion {
-  readonly [PromptVersionInternal]: PromptVersionMutator;
-
-  private constructor(private state: InternalState) {
-    this[PromptVersionInternal] = {
-      rename: (name) => {
-        this.state = {
-          ...this.state,
-          name: normalizeVersionName(name),
-          updatedAt: new Date(),
-        };
-      },
-      changeStatus: (status) => {
-        this.state = { ...this.state, status, updatedAt: new Date() };
-      },
-    };
-  }
+  private constructor(private state: InternalState) {}
 
   static create(params: CreatePromptVersionParams): PromptVersion {
     const now = params.createdAt ?? new Date();
@@ -159,6 +141,7 @@ export class PromptVersion {
       sourcePrompt: normalizeSourcePrompt(params.sourcePrompt),
       representation,
       status: "draft",
+      revision: 0,
       createdAt: now,
       updatedAt: params.updatedAt ?? now,
     });
@@ -178,8 +161,31 @@ export class PromptVersion {
       sourcePrompt: primitives.sourcePrompt,
       representation: hydrateRepresentation(primitives.representation),
       status: primitives.status,
+      revision: primitives.revision,
       createdAt: primitives.createdAt,
       updatedAt: primitives.updatedAt,
+    });
+  }
+
+  // Fork with a new id and label — the content is either carried from the
+  // source (classical) or replaced with a new braid. `parentVersionId` is
+  // set from the source so lineage is preserved.
+  static fork(params: {
+    source: PromptVersion;
+    newId: string;
+    newLabel: VersionLabel;
+    sourcePrompt?: string;
+    name?: string | null;
+    initialBraid?: { graph: BraidGraph; authorship: BraidAuthorship };
+  }): PromptVersion {
+    return PromptVersion.create({
+      id: params.newId,
+      promptId: params.source.promptId,
+      version: params.newLabel,
+      sourcePrompt: params.sourcePrompt ?? params.source.sourcePrompt,
+      name: params.name ?? null,
+      parentVersionId: params.source.id,
+      initialBraid: params.initialBraid,
     });
   }
 
@@ -191,15 +197,10 @@ export class PromptVersion {
     return this.state.promptId;
   }
 
-  // Exposed as a string for external callers (controllers, mappers). The
-  // internal state carries the VersionLabel VO so the "v{n}" invariant is
-  // checked at exactly one place (creation / parse).
   get version(): string {
     return this.state.version.toString();
   }
 
-  // Typed accessor for aggregate-internal comparisons (Prompt.promoteVersion
-  // uses this to check productionVersion equality without stringifying).
   get versionLabel(): VersionLabel {
     return this.state.version;
   }
@@ -220,19 +221,12 @@ export class PromptVersion {
     return this.state.representation.kind === "braid" ? this.state.representation.graph : null;
   }
 
-  // Typed provenance accessor. Null for classical versions; a BraidAuthorship
-  // VO for braid versions so consumers that care about "was this LLM-made
-  // or hand-edited?" can branch on kind.
   get braidAuthorship(): BraidAuthorship | null {
     return this.state.representation.kind === "braid"
       ? this.state.representation.authorship
       : null;
   }
 
-  // Legacy convenience getter preserved for DTO/display paths. Returns the
-  // model that actually ran for "model" authorship and the derivedFromModel
-  // for "manual" authorship (null if unknown). Use `braidAuthorship` when
-  // the distinction matters for correctness (audit, filtering, scoring).
   get generatorModel(): string | null {
     return this.state.representation.kind === "braid"
       ? this.state.representation.authorship.displayModel
@@ -253,12 +247,36 @@ export class PromptVersion {
     return this.state.status;
   }
 
+  get revision(): number {
+    return this.state.revision;
+  }
+
   get createdAt(): Date {
     return this.state.createdAt;
   }
 
   get updatedAt(): Date {
     return this.state.updatedAt;
+  }
+
+  rename(name: string | null): void {
+    this.state = {
+      ...this.state,
+      name: normalizeVersionName(name),
+      updatedAt: new Date(),
+    };
+  }
+
+  // Status transition rule: draft is the initial working state and cannot
+  // be re-entered. Cross-aggregate invariants (one production per prompt)
+  // are orchestrated by the PromoteVersion use case on the Prompt root;
+  // this method only guards the intra-aggregate transition rule.
+  changeStatus(status: VersionStatus): void {
+    if (status === "draft") {
+      throw PromptInvalidVersionTransitionError(this.state.status, "draft");
+    }
+    if (this.state.status === status) return;
+    this.state = { ...this.state, status, updatedAt: new Date() };
   }
 
   toPrimitives(): PromptVersionPrimitives {
@@ -271,9 +289,29 @@ export class PromptVersion {
       sourcePrompt: this.state.sourcePrompt,
       representation: this.state.representation.toPrimitives(),
       status: this.state.status,
+      revision: this.state.revision,
       createdAt: this.state.createdAt,
       updatedAt: this.state.updatedAt,
     };
+  }
+
+  toSnapshot(): PromptVersionSnapshot {
+    const expectedRevision = this.state.revision;
+    const nextRevision = expectedRevision + 1;
+    return {
+      state: { ...this.toPrimitives(), revision: nextRevision },
+      expectedRevision,
+      nextRevision,
+    };
+  }
+
+  commit(snapshot: PromptVersionSnapshot): void {
+    if (snapshot.expectedRevision !== this.state.revision) {
+      throw ValidationError(
+        "Cannot commit a stale PromptVersion snapshot: revision advanced since the snapshot was taken",
+      );
+    }
+    this.state = { ...this.state, revision: snapshot.nextRevision };
   }
 }
 

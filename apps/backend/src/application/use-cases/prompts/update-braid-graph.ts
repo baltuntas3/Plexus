@@ -1,11 +1,13 @@
-import type { IPromptAggregateRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
+import type { IPromptRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
+import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
+import { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import { BraidAuthorship } from "../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
-import { loadOwnedPrompt } from "./load-owned-prompt.js";
+import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
 
 export interface UpdateBraidGraphCommand {
   promptId: string;
@@ -15,46 +17,50 @@ export interface UpdateBraidGraphCommand {
 }
 
 export interface UpdateBraidGraphResult {
-  // New version label the fork was written to. Clients redirect to this
-  // label after a save — the source version is frozen.
   newVersion: string;
   qualityScore: GraphQualityScore;
 }
 
-// Manual mermaid-edit flow. Because PromptVersion content is immutable, the
-// user's edit becomes a new forked version rather than rewriting the source
-// in place. The parent's generator model is carried over — the edit derives
-// from that model's output, even when the user hand-corrects a line.
+// Manual mermaid edit: fork the source version carrying the user's graph.
+// Authorship is recorded as manual so the fork does not falsely claim the
+// parent's model produced this text.
 export class UpdateBraidGraphUseCase {
   constructor(
-    private readonly prompts: IPromptAggregateRepository,
+    private readonly prompts: IPromptRepository,
+    private readonly versions: IPromptVersionRepository,
     private readonly linter: GraphLinter,
     private readonly idGenerator: IIdGenerator,
   ) {}
 
   async execute(command: UpdateBraidGraphCommand): Promise<UpdateBraidGraphResult> {
-    const prompt = await loadOwnedPrompt(this.prompts, command.promptId, command.ownerId);
-    const source = prompt.getVersionByLabelOrThrow(command.version);
+    const { prompt, version: source } = await loadOwnedPromptAndVersion(
+      this.prompts,
+      this.versions,
+      command.promptId,
+      command.version,
+      command.ownerId,
+    );
     if (!source.hasBraidRepresentation) {
-      // Editing mermaid assumes there was a braid to start from. Callers
-      // that want to attach a braid to a classical version must go through
-      // the generate/chat flows — those know which model the braid came from.
       throw ValidationError(
         "Cannot edit mermaid on a version that has no BRAID graph yet",
       );
     }
     const graph = BraidGraph.parse(command.mermaidCode);
-    // Manual edit: no LLM ran. Record the honest provenance — "manual,
-    // derived from <whichever model produced the parent's content>" —
-    // instead of inheriting the parent's generatorModel as if this text
-    // were its output.
-    const forked = prompt.upsertBraid({
-      sourceVersionId: source.id,
-      graph,
-      authorship: BraidAuthorship.manual(source.generatorModel),
-      forkVersionId: this.idGenerator.newId(),
+
+    const label = prompt.allocateNextVersionLabel();
+    const forked = PromptVersion.fork({
+      source,
+      newId: this.idGenerator.newId(),
+      newLabel: label,
+      initialBraid: {
+        graph,
+        authorship: BraidAuthorship.manual(source.generatorModel),
+      },
     });
+
+    await this.versions.save(forked);
     await this.prompts.save(prompt);
+
     return { newVersion: forked.version, qualityScore: this.linter.lint(graph) };
   }
 }

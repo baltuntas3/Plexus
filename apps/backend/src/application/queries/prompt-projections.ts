@@ -6,23 +6,24 @@ import type {
 } from "./prompt-query-service.js";
 
 // Entity → read-projection adapter. Lets write use cases hand a projection
-// back to the presentation layer so it never sees a live aggregate —
-// preserves the CQRS split even though the command just mutated and has
-// the entity in hand. Without this, presentation would either import
-// domain entities (leak) or pay a fresh read round-trip just to get the
-// shape it already knows the answer to.
+// back to the presentation layer so it never sees a live aggregate.
 //
-// Callers that ran a mutation and then called `repo.save(...)` already
-// have the post-save state on their entity, so these projections are
-// correct up to the just-written revision.
+// `productionVersion` in the summary is a label ("v2") whereas the Prompt
+// root tracks `productionVersionId`. The production label is only needed
+// when the caller has the corresponding PromptVersion in hand; callers
+// without it (e.g. a freshly created prompt where no version is yet
+// production) pass `null`.
 
-export const promptToSummary = (prompt: Prompt): PromptSummary => ({
+export const promptToSummary = (
+  prompt: Prompt,
+  productionVersionLabel: string | null = null,
+): PromptSummary => ({
   id: prompt.id,
   name: prompt.name,
   description: prompt.description,
   taskType: prompt.taskType,
   ownerId: prompt.ownerId,
-  productionVersion: prompt.productionVersion,
+  productionVersion: productionVersionLabel,
   createdAt: prompt.createdAt,
   updatedAt: prompt.updatedAt,
 });

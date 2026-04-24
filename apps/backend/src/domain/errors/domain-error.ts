@@ -9,6 +9,7 @@ export type DomainErrorCode =
   | "PROMPT_VERSION_NOT_FOUND"
   | "PROMPT_NOT_OWNED"
   | "PROMPT_AGGREGATE_STALE"
+  | "PROMPT_VERSION_AGGREGATE_STALE"
   | "PROMPT_SOURCE_EMPTY"
   | "PROMPT_VERSION_HAS_NO_BRAID"
   | "PROMPT_INVALID_VERSION_TRANSITION"
@@ -80,6 +81,12 @@ export const PromptAggregateStaleError = (): DomainError =>
   new DomainError(
     "PROMPT_AGGREGATE_STALE",
     "Prompt was modified by another writer; reload and retry",
+  );
+
+export const PromptVersionAggregateStaleError = (): DomainError =>
+  new DomainError(
+    "PROMPT_VERSION_AGGREGATE_STALE",
+    "Prompt version was modified by another writer; reload and retry",
   );
 
 export const PromptSourceEmptyError = (): DomainError =>

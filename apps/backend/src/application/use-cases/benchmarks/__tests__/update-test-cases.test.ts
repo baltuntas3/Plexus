@@ -1,27 +1,34 @@
 import { UpdateTestCasesUseCase } from "../update-test-cases.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
+import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
 import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
 import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
 import { Benchmark } from "../../../../domain/entities/benchmark.js";
+import { PromptVersion } from "../../../../domain/entities/prompt-version.js";
 
 const buildDraftBenchmark = async (
   benchmarks: InMemoryBenchmarkRepository,
   prompts: InMemoryPromptAggregateRepository,
+  versions: InMemoryPromptVersionRepository,
   ids: InMemoryIdGenerator,
 ): Promise<Benchmark> => {
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
     promptId: ids.newId(),
-    initialVersionId: ids.newId(),
     ownerId: "u1",
     name: "Prompt",
     description: "",
     taskType: "general",
-    initialPrompt: "Answer.",
+  });
+  const version = PromptVersion.create({
+    id: ids.newId(),
+    promptId: prompt.id,
+    version: prompt.allocateNextVersionLabel(),
+    sourcePrompt: "Answer.",
   });
   await prompts.save(prompt);
-  const version = prompt.getVersionByLabelOrThrow("v1");
+  await versions.save(version);
 
   const benchmark = Benchmark.create({
     id: ids.newId(),
@@ -67,10 +74,11 @@ const buildHarness = async () => {
   const benchmarks = new InMemoryBenchmarkRepository();
   const queries = new InMemoryPromptQueryService();
   const prompts = new InMemoryPromptAggregateRepository(queries);
+  const versions = new InMemoryPromptVersionRepository(queries);
   const ids = new InMemoryIdGenerator();
   const useCase = new UpdateTestCasesUseCase(benchmarks, queries, ids);
-  const bm = await buildDraftBenchmark(benchmarks, prompts, ids);
-  return { benchmarks, queries, prompts, useCase, bm };
+  const bm = await buildDraftBenchmark(benchmarks, prompts, versions, ids);
+  return { benchmarks, queries, prompts, versions, useCase, bm };
 };
 
 describe("UpdateTestCasesUseCase", () => {

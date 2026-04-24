@@ -10,57 +10,84 @@ import type {
 import { PromptVersion } from "../../domain/entities/prompt-version.js";
 import type { Prompt } from "../../domain/entities/prompt.js";
 
-// Test fake that the Prompt aggregate repo writes summaries and versions
-// into, keeping read-side snapshots in sync with the write side. Tests call
-// `seedFromAggregate` (directly or via the in-memory aggregate repo) to make
-// data visible to query-service consumers. All reads return projections,
-// not entities — same contract as the Mongo implementation.
-//
-// Owner-scoped lookups filter by the Prompt summary's ownerId. Tests that
-// seed raw version summaries without a matching prompt must also call
-// `seedPromptSummary` so the ownership join works.
+// Read-side test fake. Seed hooks mirror what the Mongo query service
+// resolves from the persistence layer: the Prompt root contributes the
+// summary fields plus `productionVersionId`; versions are seeded separately
+// (previously the Prompt aggregate carried them, now they are their own
+// aggregate). Production label is resolved at read time by joining the
+// seeded version map.
 export class InMemoryPromptQueryService implements IPromptQueryService {
-  private readonly summaries = new Map<string, PromptSummary>();
+  private readonly summaries = new Map<
+    string,
+    { summary: Omit<PromptSummary, "productionVersion">; productionVersionId: string | null }
+  >();
   private readonly versions = new Map<string, PromptVersionSummary>();
 
-  seedFromAggregate(prompt: Prompt): void {
-    // Reads the aggregate's save-time snapshot to avoid duplicating the
-    // primitives-extraction surface. The test fake never commits the
-    // snapshot — it's only used to derive read projections.
-    const { root, versions } = prompt.toSnapshot();
-    this.summaries.set(root.id, {
-      id: root.id,
-      name: root.name,
-      description: root.description,
-      taskType: root.taskType,
-      ownerId: root.ownerId,
-      productionVersion: root.productionVersion,
-      createdAt: root.createdAt,
-      updatedAt: root.updatedAt,
+  seedPromptRoot(prompt: Prompt): void {
+    this.summaries.set(prompt.id, {
+      summary: {
+        id: prompt.id,
+        name: prompt.name,
+        description: prompt.description,
+        taskType: prompt.taskType,
+        ownerId: prompt.ownerId,
+        createdAt: prompt.createdAt,
+        updatedAt: prompt.updatedAt,
+      },
+      productionVersionId: prompt.productionVersionId,
     });
-    for (const version of versions) {
-      const hydrated = PromptVersion.hydrate(version);
-      this.versions.set(version.id, toVersionSummary(hydrated));
-    }
+  }
+
+  seedVersion(version: PromptVersion): void {
+    this.versions.set(version.id, toVersionSummary(version));
   }
 
   seedPromptSummary(summary: PromptSummary): void {
-    this.summaries.set(summary.id, summary);
+    // Used by tests that construct summaries directly without a Prompt
+    // aggregate. We stash the label on `productionVersionId` as a key into
+    // the versions map only when it corresponds to a seeded version; for
+    // standalone summary seeding we just echo the label back at read time.
+    this.summaries.set(summary.id, {
+      summary: {
+        id: summary.id,
+        name: summary.name,
+        description: summary.description,
+        taskType: summary.taskType,
+        ownerId: summary.ownerId,
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+      },
+      productionVersionId: summary.productionVersion,
+    });
   }
 
   seedVersionSummary(version: PromptVersionSummary): void {
     this.versions.set(version.id, version);
   }
 
+  private project(
+    entry: { summary: Omit<PromptSummary, "productionVersion">; productionVersionId: string | null },
+  ): PromptSummary {
+    // productionVersionId may be either a real id (seeded via aggregate) or
+    // a label (seeded via raw summary); try id first, fall back to label.
+    let productionVersion: string | null = null;
+    if (entry.productionVersionId) {
+      const asVersion = this.versions.get(entry.productionVersionId);
+      productionVersion = asVersion?.version ?? entry.productionVersionId;
+    }
+    return { ...entry.summary, productionVersion };
+  }
+
   async listPromptSummaries(query: ListPromptSummariesQuery): Promise<PromptSummaryListResult> {
     const owned = [...this.summaries.values()]
-      .filter((summary) => summary.ownerId === query.ownerId)
-      .filter((summary) =>
+      .filter((entry) => entry.summary.ownerId === query.ownerId)
+      .filter((entry) =>
         query.search
-          ? summary.name.toLowerCase().includes(query.search.toLowerCase())
+          ? entry.summary.name.toLowerCase().includes(query.search.toLowerCase())
           : true,
       )
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      .sort((a, b) => b.summary.createdAt.getTime() - a.summary.createdAt.getTime())
+      .map((entry) => this.project(entry));
     const start = (query.page - 1) * query.pageSize;
     return { items: owned.slice(start, start + query.pageSize), total: owned.length };
   }
@@ -69,11 +96,9 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     promptId: string,
     ownerId: string,
   ): Promise<PromptSummary | null> {
-    const summary = this.summaries.get(promptId);
-    if (!summary || summary.ownerId !== ownerId) {
-      return null;
-    }
-    return { ...summary };
+    const entry = this.summaries.get(promptId);
+    if (!entry || entry.summary.ownerId !== ownerId) return null;
+    return this.project(entry);
   }
 
   async findOwnedPromptSummariesByIds(
@@ -82,9 +107,9 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
   ): Promise<Map<string, PromptSummary>> {
     const result = new Map<string, PromptSummary>();
     for (const id of ids) {
-      const summary = this.summaries.get(id);
-      if (summary && summary.ownerId === ownerId) {
-        result.set(id, { ...summary });
+      const entry = this.summaries.get(id);
+      if (entry && entry.summary.ownerId === ownerId) {
+        result.set(id, this.project(entry));
       }
     }
     return result;
@@ -93,8 +118,8 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
   async listOwnedVersionSummaries(
     query: ListOwnedVersionSummariesQuery,
   ): Promise<VersionSummaryListResult | null> {
-    const prompt = this.summaries.get(query.promptId);
-    if (!prompt || prompt.ownerId !== query.ownerId) return null;
+    const entry = this.summaries.get(query.promptId);
+    if (!entry || entry.summary.ownerId !== query.ownerId) return null;
     const all = [...this.versions.values()]
       .filter((version) => version.promptId === query.promptId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -107,8 +132,8 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     label: string,
     ownerId: string,
   ): Promise<PromptVersionSummary | null> {
-    const prompt = this.summaries.get(promptId);
-    if (!prompt || prompt.ownerId !== ownerId) return null;
+    const entry = this.summaries.get(promptId);
+    if (!entry || entry.summary.ownerId !== ownerId) return null;
     const match = [...this.versions.values()].find(
       (version) => version.promptId === promptId && version.version === label,
     );
@@ -121,8 +146,8 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
   ): Promise<PromptVersionSummary | null> {
     const version = this.versions.get(id);
     if (!version) return null;
-    const prompt = this.summaries.get(version.promptId);
-    if (!prompt || prompt.ownerId !== ownerId) return null;
+    const entry = this.summaries.get(version.promptId);
+    if (!entry || entry.summary.ownerId !== ownerId) return null;
     return version;
   }
 
@@ -134,8 +159,8 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     for (const id of ids) {
       const version = this.versions.get(id);
       if (!version) continue;
-      const prompt = this.summaries.get(version.promptId);
-      if (!prompt || prompt.ownerId !== ownerId) continue;
+      const entry = this.summaries.get(version.promptId);
+      if (!entry || entry.summary.ownerId !== ownerId) continue;
       result.set(id, version);
     }
     return result;

@@ -1,14 +1,13 @@
-import type { IPromptAggregateRepository } from "../../domain/repositories/prompt-aggregate-repository.js";
+import type { IPromptRepository } from "../../domain/repositories/prompt-aggregate-repository.js";
 import { Prompt } from "../../domain/entities/prompt.js";
 import { PromptAggregateStaleError } from "../../domain/errors/domain-error.js";
 import type { InMemoryPromptQueryService } from "./in-memory-prompt-query-service.js";
 
-// Test double. Mirrors the Mongo repo's snapshot/commit protocol: save
-// consumes the aggregate's snapshot, gates on expected revision, rehydrates
-// into storage, and commits the aggregate. No dirty-tracking — the fake
-// rewrites the whole thing; the production repo is the one that diffs for
-// write-volume reasons.
-export class InMemoryPromptAggregateRepository implements IPromptAggregateRepository {
+// Test double for the Prompt root repository. Snapshot/commit protocol
+// mirrors the Mongo repo: the snapshot's expected revision gates the
+// write, the stored copy is rehydrated, the aggregate's cursor is
+// advanced only on success.
+export class InMemoryPromptAggregateRepository implements IPromptRepository {
   private readonly prompts = new Map<string, Prompt>();
   private readonly storedRevisions = new Map<string, number>();
 
@@ -30,10 +29,10 @@ export class InMemoryPromptAggregateRepository implements IPromptAggregateReposi
     if (stored !== undefined && stored !== snapshot.expectedRevision) {
       throw PromptAggregateStaleError();
     }
-    const hydrated = Prompt.hydrate(snapshot.root, [...snapshot.versions]);
+    const hydrated = Prompt.hydrate(snapshot.root);
     this.prompts.set(prompt.id, hydrated);
     this.storedRevisions.set(prompt.id, snapshot.nextRevision);
-    this.queryService?.seedFromAggregate(hydrated);
+    this.queryService?.seedPromptRoot(hydrated);
     prompt.commit(snapshot);
   }
 }

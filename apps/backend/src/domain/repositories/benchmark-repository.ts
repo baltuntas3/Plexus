@@ -1,76 +1,14 @@
-import type { TaskType } from "@plexus/shared-types";
-import type {
-  Benchmark,
-  BenchmarkCostForecast,
-  BenchmarkProgress,
-  BenchmarkStatus,
-  BenchmarkTestCase,
-} from "../entities/benchmark.js";
+import type { Benchmark } from "../entities/benchmark.js";
 
-export interface CreateBenchmarkInput {
-  name: string;
-  ownerId: string;
-  promptVersionIds: string[];
-  solverModels: string[];
-  judgeModels: string[];
-  generatorModel: string;
-  testGenerationMode: Benchmark["testGenerationMode"];
-  analysisModel: string | null;
-  taskType: TaskType;
-  costForecast: BenchmarkCostForecast | null;
-  testCount: number;
-  repetitions: number;
-  solverTemperature: number;
-  seed: number;
-  testCases: BenchmarkTestCase[];
-  concurrency: number;
-  cellTimeoutMs: number | null;
-  budgetUsd: number | null;
-}
-
-export interface ListBenchmarksQuery {
-  ownerId: string;
-  page: number;
-  pageSize: number;
-}
-
-export interface BenchmarkListResult {
-  items: Benchmark[];
-  total: number;
-}
-
-export interface BenchmarkStatusUpdate {
-  status: BenchmarkStatus;
-  jobId?: string | null;
-  error?: string | null;
-  startedAt?: Date | null;
-  completedAt?: Date | null;
-}
+// Write-side port for the Benchmark aggregate. Mirrors the Prompt aggregate
+// repository: a single `save(benchmark)` entry point that atomically
+// persists the aggregate under optimistic-concurrency (via the revision
+// field) so partial-update surface area stays at zero. Read projections
+// live on IBenchmarkQueryService.
 
 export interface IBenchmarkRepository {
-  create(input: CreateBenchmarkInput): Promise<Benchmark>;
   findById(id: string): Promise<Benchmark | null>;
-  list(query: ListBenchmarksQuery): Promise<BenchmarkListResult>;
-  updateStatus(id: string, update: BenchmarkStatusUpdate): Promise<void>;
-  updateProgress(id: string, progress: BenchmarkProgress): Promise<void>;
-  updateTestCases(
-    id: string,
-    updates: Array<{
-      id: string;
-      input?: string;
-      expectedOutput: string | null;
-      category?: BenchmarkTestCase["category"];
-    }>,
-    additions: Array<{
-      id: string;
-      input: string;
-      expectedOutput: string | null;
-      category: BenchmarkTestCase["category"];
-      source: BenchmarkTestCase["source"];
-    }>,
-  ): Promise<void>;
-  updateCostForecast(
-    id: string,
-    costForecast: BenchmarkCostForecast,
-  ): Promise<void>;
+  // save advances the aggregate's revision on success and throws
+  // BenchmarkAggregateStaleError when the optimistic-concurrency check fails.
+  save(benchmark: Benchmark): Promise<void>;
 }

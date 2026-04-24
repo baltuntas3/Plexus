@@ -81,6 +81,3 @@ Output Requirements (STRICT):
 2. Start exactly with "flowchart TD;" on the first line.
 3. End each statement with a semicolon.
 4. Node IDs are letters or short alphanumerics (A, B, C1, G2). Never quote IDs.`;
-
-export const buildEnhancedUserMessage = (conversationText: string): string =>
-  `Conversation:\n${conversationText}`;

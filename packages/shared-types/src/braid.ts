@@ -47,13 +47,16 @@ export interface UpdateBraidRequest {
 }
 
 export interface UpdateBraidResponse {
+  // New forked version label. PromptVersion content is immutable; a manual
+  // mermaid edit always creates a new version rather than rewriting the
+  // source in place.
+  newVersion: string;
   qualityScore: GraphQualityScoreDto;
 }
 
 export interface ChatBraidRequest {
   userMessage: string;
   generatorModel: string;
-  currentMermaid?: string;
 }
 
 export type ChatBraidResponse =
@@ -61,8 +64,10 @@ export type ChatBraidResponse =
   | {
       type: "diagram";
       mermaidCode: string;
-      // Non-null when initial generation created a new version; null on refinement.
-      newVersion: string | null;
+      // The forked version's label. Both initial generation and refinement
+      // produce a new, immutable version — there is no "silent refine in
+      // place" path anymore.
+      newVersion: string;
       qualityScore: GraphQualityScoreDto;
       usage: { totalUsd: number };
     };

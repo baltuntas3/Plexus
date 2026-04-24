@@ -7,14 +7,19 @@ import type {
 import type { Benchmark } from "../../../domain/entities/benchmark.js";
 import type { BenchmarkResult } from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkAnalysis } from "../../../application/services/benchmark/benchmark-analyzer.js";
+import type { BenchmarkSummary } from "../../../application/queries/benchmark-query-service.js";
 
-export const toBenchmarkDto = (bm: Benchmark): BenchmarkDto => ({
+// Duck-types over both the write-side aggregate and the read-side summary so
+// the same controller response shape can come from either path.
+type BenchmarkLike = Benchmark | BenchmarkSummary;
+
+export const toBenchmarkDto = (bm: BenchmarkLike): BenchmarkDto => ({
   id: bm.id,
   name: bm.name,
   ownerId: bm.ownerId,
-  promptVersionIds: bm.promptVersionIds,
-  solverModels: bm.solverModels,
-  judgeModels: bm.judgeModels,
+  promptVersionIds: [...bm.promptVersionIds],
+  solverModels: [...bm.solverModels],
+  judgeModels: [...bm.judgeModels],
   generatorModel: bm.generatorModel,
   testGenerationMode: bm.testGenerationMode,
   analysisModel: bm.analysisModel,
@@ -28,7 +33,7 @@ export const toBenchmarkDto = (bm: Benchmark): BenchmarkDto => ({
   cellTimeoutMs: bm.cellTimeoutMs,
   budgetUsd: bm.budgetUsd,
   status: bm.status,
-  progress: bm.progress,
+  progress: { ...bm.progress },
   jobId: bm.jobId,
   error: bm.error,
   createdAt: bm.createdAt.toISOString(),

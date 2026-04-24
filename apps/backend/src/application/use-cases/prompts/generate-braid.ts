@@ -16,11 +16,11 @@ export interface GenerateBraidCommand extends GenerateBraidInputDto {
   ownerId: string;
 }
 
+// Generation always forks — PromptVersion content is immutable, so each
+// regenerate produces a brand-new version linked via parentVersionId to
+// the source. The returned `version` is always a freshly created record.
 export interface GenerateBraidResult {
   version: PromptVersion;
-  // True when a new version was created to hold the BRAID; false when the
-  // existing version already had a graph and was updated in place (forceRegenerate).
-  createdNewVersion: boolean;
   graph: BraidGraph;
   cost: TokenCost;
   usage: TokenUsage;
@@ -48,12 +48,8 @@ export class GenerateBraidUseCase {
     });
 
     const qualityScore = this.linter.lint(result.graph);
-    // The aggregate decides whether to fork a new version or overwrite; the
-    // fork id is pre-allocated here so the aggregate stays free of the
-    // IIdGenerator port. It is unused on the overwrite branch — an acceptable
-    // trade since ObjectId allocation is effectively free.
-    const { version: updatedVersion, createdNewVersion } = prompt.attachGeneratedBraid({
-      sourceVersion: command.version,
+    const forked = prompt.upsertBraid({
+      version: command.version,
       graph: result.graph,
       generatorModel: result.generatorModel,
       forkVersionId: this.idGenerator.newId(),
@@ -61,8 +57,7 @@ export class GenerateBraidUseCase {
     await this.prompts.save(prompt);
 
     return {
-      version: updatedVersion,
-      createdNewVersion,
+      version: forked,
       graph: result.graph,
       cost: result.cost,
       usage: result.usage,

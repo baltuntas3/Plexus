@@ -38,7 +38,7 @@ export class GetBenchmarkAnalysisUseCase {
     const results = await this.results.listByBenchmark(benchmark.id);
     const versionLabels = await buildVersionLabels(
       this.promptQueries,
-      benchmark.promptVersionIds,
+      [...benchmark.promptVersionIds],
     );
     const testCasesById = Object.fromEntries(
       benchmark.testCases.map((tc) => [
@@ -46,7 +46,8 @@ export class GetBenchmarkAnalysisUseCase {
         { category: tc.category, source: tc.source },
       ]),
     );
-    const commentaryModel = benchmark.analysisModel ?? benchmark.judgeModels[0];
+    const commentaryModel =
+      benchmark.analysisModel ?? (benchmark.judgeModels[0] ?? null);
     if (!commentaryModel) {
       throw new Error("Benchmark has no analysis or judge model configured");
     }

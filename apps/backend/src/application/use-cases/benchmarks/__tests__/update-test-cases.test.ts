@@ -3,12 +3,13 @@ import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memo
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
 import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
 import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
+import { Benchmark } from "../../../../domain/entities/benchmark.js";
 
 const buildDraftBenchmark = async (
   benchmarks: InMemoryBenchmarkRepository,
   prompts: InMemoryPromptAggregateRepository,
   ids: InMemoryIdGenerator,
-) => {
+): Promise<Benchmark> => {
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
     promptId: ids.newId(),
@@ -22,7 +23,8 @@ const buildDraftBenchmark = async (
   await prompts.save(prompt);
   const version = prompt.getVersionOrThrow("v1");
 
-  return benchmarks.create({
+  const benchmark = Benchmark.create({
+    id: ids.newId(),
     name: "bm",
     ownerId: "u1",
     promptVersionIds: [version.id],
@@ -57,6 +59,8 @@ const buildDraftBenchmark = async (
     cellTimeoutMs: null,
     budgetUsd: null,
   });
+  await benchmarks.save(benchmark);
+  return benchmark;
 };
 
 const buildHarness = async () => {
@@ -64,7 +68,7 @@ const buildHarness = async () => {
   const queries = new InMemoryPromptQueryService();
   const prompts = new InMemoryPromptAggregateRepository(queries);
   const ids = new InMemoryIdGenerator();
-  const useCase = new UpdateTestCasesUseCase(benchmarks, queries);
+  const useCase = new UpdateTestCasesUseCase(benchmarks, queries, ids);
   const bm = await buildDraftBenchmark(benchmarks, prompts, ids);
   return { benchmarks, queries, prompts, useCase, bm };
 };
@@ -119,11 +123,16 @@ describe("UpdateTestCasesUseCase", () => {
 
   it("rejects updates when the benchmark is not in draft status", async () => {
     const { benchmarks, useCase, bm } = await buildHarness();
-    await benchmarks.updateStatus(bm.id, { status: "queued" });
+    // Transition the aggregate out of draft via its own state machine so the
+    // "can only edit while draft" invariant is exercised through real methods,
+    // not a store hack.
+    const loaded = await benchmarks.findById(bm.id);
+    loaded!.queue();
+    await benchmarks.save(loaded!);
 
     await expect(
       useCase.execute({ benchmarkId: bm.id, ownerId: "u1", updates: [], additions: [] }),
-    ).rejects.toThrow(/draft/);
+    ).rejects.toMatchObject({ code: "BENCHMARK_NOT_IN_DRAFT" });
   });
 
   it("rejects access from a different owner", async () => {
@@ -131,6 +140,6 @@ describe("UpdateTestCasesUseCase", () => {
 
     await expect(
       useCase.execute({ benchmarkId: bm.id, ownerId: "other", updates: [], additions: [] }),
-    ).rejects.toThrow(/don't own/);
+    ).rejects.toMatchObject({ code: "BENCHMARK_NOT_OWNED" });
   });
 });

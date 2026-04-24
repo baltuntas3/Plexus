@@ -1,4 +1,4 @@
-import type { Benchmark } from "../../../../domain/entities/benchmark.js";
+import { Benchmark } from "../../../../domain/entities/benchmark.js";
 import type {
   GenerateRequest,
   IAIProvider,
@@ -26,11 +26,11 @@ const createVersion = (
     promptId: params.promptId,
     version: params.version,
     name: null,
+    parentVersionId: null,
     sourcePrompt: params.sourcePrompt,
     braidGraph,
     generatorModel: braidGraph ? params.generatorModel ?? "openai/gpt-oss-120b" : null,
     executablePrompt: braidGraph ?? params.sourcePrompt,
-    solverModel: null,
     status: "draft",
     createdAt: now,
     updatedAt: now,
@@ -113,8 +113,9 @@ const buildScaffold = async () => {
   const results = new InMemoryBenchmarkResultRepository();
   const queries = new InMemoryPromptQueryService();
   // Reset so the first seeded version always has id "1" — matches
-  // queueBenchmark's default versionId.
+  // queueBenchmark's default versionId — and benchmark ids stay predictable.
   versionCounter = 1;
+  benchmarkIdSeq = 1;
 
   const version = createVersion(queries, {
     promptId: "p1",
@@ -125,14 +126,38 @@ const buildScaffold = async () => {
   return { benchmarks, results, queries, version };
 };
 
+// Test-only override surface. The aggregate's `create` factory takes the
+// full config; tests use this loose shape because each case only cares
+// about the knobs it mutates.
+type BenchmarkTestOverrides = {
+  name?: string;
+  ownerId?: string;
+  promptVersionIds?: string[];
+  solverModels?: string[];
+  judgeModels?: string[];
+  generatorModel?: string;
+  testGenerationMode?: Benchmark["testGenerationMode"];
+  analysisModel?: string | null;
+  taskType?: Benchmark["taskType"];
+  costForecast?: Benchmark["costForecast"];
+  testCount?: number;
+  repetitions?: number;
+  solverTemperature?: number;
+  seed?: number;
+  testCases?: Benchmark["testCases"][number][];
+  concurrency?: number;
+  cellTimeoutMs?: number | null;
+  budgetUsd?: number | null;
+};
+
+let benchmarkIdSeq = 1;
 const queueBenchmark = async (
   benchmarks: InMemoryBenchmarkRepository,
-  overrides: Partial<
-    Omit<Benchmark, "id" | "status" | "progress" | "jobId" | "error" | "createdAt" | "startedAt" | "completedAt">
-  > = {},
+  overrides: BenchmarkTestOverrides = {},
   versionId = "1",
-): Promise<Benchmark> =>
-  benchmarks.create({
+): Promise<Benchmark> => {
+  const benchmark = Benchmark.create({
+    id: `bm-${benchmarkIdSeq++}`,
     name: overrides.name ?? "bm",
     ownerId: overrides.ownerId ?? "u1",
     promptVersionIds: overrides.promptVersionIds ?? [versionId],
@@ -152,6 +177,9 @@ const queueBenchmark = async (
     cellTimeoutMs: overrides.cellTimeoutMs ?? null,
     budgetUsd: overrides.budgetUsd ?? null,
   });
+  await benchmarks.save(benchmark);
+  return benchmark;
+};
 
 describe("BenchmarkRunner.run", () => {
   it("executes the full matrix, records results, and marks the benchmark completed", async () => {
@@ -900,7 +928,9 @@ describe("BenchmarkRunner.run", () => {
     });
 
     const bm = await queueBenchmark(benchmarks, { testCases: [] });
-    await expect(runner.run(bm.id, buildContext().ctx)).rejects.toThrow(/no test cases/);
+    await expect(runner.run(bm.id, buildContext().ctx)).rejects.toMatchObject({
+      code: "BENCHMARK_MATRIX_EMPTY",
+    });
     const final = await benchmarks.findById(bm.id);
     expect(final?.status).toBe("failed");
   });

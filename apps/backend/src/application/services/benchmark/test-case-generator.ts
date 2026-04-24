@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import type { TestGenerationMode } from "../../../domain/entities/benchmark.js";
@@ -41,7 +40,6 @@ export const TEST_CASE_CATEGORIES = [
 export type TestCaseCategory = (typeof TEST_CASE_CATEGORIES)[number];
 
 export interface GeneratedTestCase {
-  id: string;
   input: string;
   category: TestCaseCategory;
 }
@@ -319,8 +317,10 @@ const finaliseTestCases = (
     unique.push(tc);
   }
 
+  // ID allocation is the caller's responsibility (via IIdGenerator) — the
+  // generator stays pure input/category. Keeps the domain aggregate the sole
+  // owner of id-producing ports.
   const testCases = unique.slice(0, count).map((tc) => ({
-    id: randomUUID(),
     input: tc.input,
     category: tc.category,
   }));

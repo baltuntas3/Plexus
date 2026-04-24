@@ -8,14 +8,23 @@ import type { IBraidChatAgentFactory } from "../../services/braid/braid-chat-age
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
 import { loadOwnedPrompt } from "./load-owned-prompt.js";
 
+// Refinement vs. initial-generation is a domain fact — "does this version
+// already carry a BRAID?" — not something the client should assert. The
+// current mermaid is read from the aggregate itself, so a stale client
+// snapshot can never steer the LLM into refining the wrong diagram.
+//
+// Because PromptVersion content is immutable, both refinement and initial
+// generation produce a *new* forked version here. The difference is only
+// which model (the caller's `generatorModel` for fresh generation, or the
+// parent's model for refinement) is recorded on the fork — the source
+// version stays untouched either way.
+
 export interface ChatBraidCommand {
   promptId: string;
   version: string;
   ownerId: string;
   userMessage: string;
   generatorModel: string;
-  // If provided the agent refines the given graph; otherwise generates from scratch.
-  currentMermaid?: string;
 }
 
 export type ChatBraidResult =
@@ -23,8 +32,9 @@ export type ChatBraidResult =
   | {
       type: "diagram";
       mermaidCode: string;
-      // Non-null when initial generation created a new version; null on refinement.
-      newVersionName: string | null;
+      // The forked version's label — both refinement and initial generation
+      // always produce a new version now that content is immutable.
+      newVersionName: string;
       qualityScore: GraphQualityScore;
       cost: TokenCost;
     };
@@ -43,11 +53,15 @@ export class ChatBraidUseCase {
 
     const agent = this.agents.forModel(command.generatorModel);
 
+    // Refinement mode is determined by aggregate state, not by the client.
+    // `version.braidGraph?.mermaidCode` is the canonical "current" diagram —
+    // whatever the user's browser thinks it is, this is the one the LLM sees.
+    const currentMermaid = version.braidGraph?.mermaidCode;
     const chatResult = await agent.chat({
       sourcePrompt: version.sourcePrompt,
       taskType: prompt.taskType,
       userMessage: command.userMessage,
-      currentMermaid: command.currentMermaid,
+      currentMermaid,
     });
 
     // Agent asked a clarifying question — nothing to save or lint.
@@ -55,9 +69,7 @@ export class ChatBraidUseCase {
       return { type: "question", question: chatResult.question };
     }
 
-    // Validate output; throws ValidationError on bad Mermaid
     const graph = BraidGraph.parse(chatResult.mermaidCode);
-
     const cost = calculateCost(
       command.generatorModel,
       chatResult.totalInputTokens,
@@ -65,14 +77,17 @@ export class ChatBraidUseCase {
     );
     const qualityScore = this.linter.lint(graph);
 
-    if (command.currentMermaid) {
-      prompt.updateBraidGraph(command.version, graph);
-      await this.prompts.save(prompt);
-      return { type: "diagram", mermaidCode: graph.mermaidCode, newVersionName: null, qualityScore, cost };
-    }
-
-    const { version: newVersion } = prompt.attachGeneratedBraid({
-      sourceVersion: command.version,
+    // Record the model that actually produced this artifact. The agent was
+    // built with `command.generatorModel`, the LLM call ran with that model,
+    // the cost was calculated against that model — the fork's metadata must
+    // match. Carrying over the parent's model here would mean "v3 was made
+    // by Model A" when in reality Model B produced every token; that is a
+    // provenance lie, and immutable-versions + lineage only work if each
+    // artifact honestly records its producer. `parentVersionId` already
+    // answers "what came before", so there is no need to double-encode it
+    // into generatorModel.
+    const forked = prompt.upsertBraid({
+      version: command.version,
       graph,
       generatorModel: command.generatorModel,
       forkVersionId: this.idGenerator.newId(),
@@ -82,7 +97,7 @@ export class ChatBraidUseCase {
     return {
       type: "diagram",
       mermaidCode: graph.mermaidCode,
-      newVersionName: newVersion.version,
+      newVersionName: forked.version,
       qualityScore,
       cost,
     };

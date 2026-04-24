@@ -12,7 +12,15 @@ export type DomainErrorCode =
   | "PROMPT_SOURCE_EMPTY"
   | "PROMPT_BRAID_GENERATOR_MODEL_REQUIRED"
   | "PROMPT_VERSION_HAS_NO_BRAID"
-  | "PROMPT_VERSION_HAS_NO_BRAID_TO_UPDATE";
+  | "PROMPT_INVALID_VERSION_TRANSITION"
+  | "BENCHMARK_NOT_FOUND"
+  | "BENCHMARK_NOT_OWNED"
+  | "BENCHMARK_AGGREGATE_STALE"
+  | "BENCHMARK_ILLEGAL_TRANSITION"
+  | "BENCHMARK_NOT_IN_DRAFT"
+  | "BENCHMARK_MATRIX_EMPTY"
+  | "BENCHMARK_NO_JUDGES"
+  | "BENCHMARK_INVALID_REPETITIONS";
 
 export class DomainError extends Error {
   public readonly code: DomainErrorCode;
@@ -94,9 +102,67 @@ export const PromptVersionHasNoBraidError = (): DomainError =>
     400,
   );
 
-export const PromptVersionHasNoBraidToUpdateError = (): DomainError =>
+// Raised when a version lifecycle transition is not permitted (e.g. demoting
+// back to draft). Carries the `from`/`to` pair in details so callers can
+// route on the tuple rather than parse messages.
+export const PromptInvalidVersionTransitionError = (
+  from: string,
+  to: string,
+): DomainError =>
   new DomainError(
-    "PROMPT_VERSION_HAS_NO_BRAID_TO_UPDATE",
-    "Version has no BRAID graph to update",
+    "PROMPT_INVALID_VERSION_TRANSITION",
+    `Cannot move version from ${from} to ${to}`,
+    409,
+    { from, to },
+  );
+
+// Benchmark bounded-context errors. Same convention as the Prompt errors —
+// domain throws the typed code, presentation maps to HTTP.
+export const BenchmarkNotFoundError = (id?: string): DomainError =>
+  new DomainError(
+    "BENCHMARK_NOT_FOUND",
+    id ? `Benchmark ${id} not found` : "Benchmark not found",
+    404,
+    id ? { id } : undefined,
+  );
+
+export const BenchmarkNotOwnedError = (): DomainError =>
+  new DomainError("BENCHMARK_NOT_OWNED", "Caller does not own this benchmark", 403);
+
+export const BenchmarkAggregateStaleError = (): DomainError =>
+  new DomainError(
+    "BENCHMARK_AGGREGATE_STALE",
+    "Benchmark was modified by another writer; reload and retry",
+    409,
+  );
+
+export const BenchmarkIllegalTransitionError = (
+  from: string,
+  to: string,
+): DomainError =>
+  new DomainError(
+    "BENCHMARK_ILLEGAL_TRANSITION",
+    `Cannot move benchmark from ${from} to ${to}`,
+    409,
+    { from, to },
+  );
+
+export const BenchmarkNotInDraftError = (): DomainError =>
+  new DomainError(
+    "BENCHMARK_NOT_IN_DRAFT",
+    "Test cases can only be edited while the benchmark is in draft status",
+    409,
+  );
+
+export const BenchmarkMatrixEmptyError = (): DomainError =>
+  new DomainError("BENCHMARK_MATRIX_EMPTY", "Benchmark matrix is empty", 400);
+
+export const BenchmarkNoJudgesError = (): DomainError =>
+  new DomainError("BENCHMARK_NO_JUDGES", "Benchmark has no judge models", 400);
+
+export const BenchmarkInvalidRepetitionsError = (): DomainError =>
+  new DomainError(
+    "BENCHMARK_INVALID_REPETITIONS",
+    "Benchmark repetitions must be at least 1",
     400,
   );

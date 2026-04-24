@@ -1,9 +1,7 @@
-import type {
-  Benchmark,
-  BenchmarkCostForecast,
-} from "../../../domain/entities/benchmark.js";
+import { Benchmark } from "../../../domain/entities/benchmark.js";
 import type { TaskType } from "@plexus/shared-types";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
+import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type {
   IPromptQueryService,
   PromptVersionSummary,
@@ -11,7 +9,6 @@ import type {
 import { NotFoundError, ValidationError } from "../../../domain/errors/domain-error.js";
 import type { CreateBenchmarkDto } from "../../dto/benchmark-dto.js";
 import {
-  calculateCost,
   ModelRegistry,
   pickGeneratorModel,
   pickJudgeModels,
@@ -20,17 +17,19 @@ import {
   TestCaseGenerator,
   buildEvaluationSpecFromVersions,
 } from "../../services/benchmark/test-case-generator.js";
+import { BenchmarkCostEstimator } from "../../services/benchmark/benchmark-cost-estimator.js";
 import type { IAIProviderFactory } from "../../services/ai-provider.js";
+import { BenchmarkSeed } from "../../../domain/value-objects/benchmark-seed.js";
 
-// Creates a benchmark in "draft" status, generating test cases from the
-// selected prompt versions so the user can review and optionally annotate them
-// with expected outputs before starting the run.
+// Creates a benchmark in "draft" status. Test cases are generated up-front
+// so the user can review and optionally annotate them with expected outputs
+// before starting the run.
 //
-// The caller only chooses what to benchmark (versions, solver models) and how
-// many cases to probe. Everything that makes a benchmark fair and reproducible
-// — judge ensemble, generator model, test-generation mode, repetitions, seed,
-// concurrency — is derived here so the surface area stays minimal but the
-// defaults are explicit.
+// The caller only chooses what to benchmark (versions, solver models) and
+// how many cases to probe. Everything that makes a benchmark fair and
+// reproducible — judge ensemble, generator model, test-generation mode,
+// repetitions, seed, concurrency — is derived here so the surface area
+// stays minimal but the defaults are explicit.
 
 const DEFAULT_GENERATOR_MODEL = "openai/gpt-oss-120b";
 const DEFAULT_JUDGE_COUNT = 2;
@@ -53,6 +52,8 @@ export class CreateBenchmarkUseCase {
     private readonly benchmarks: IBenchmarkRepository,
     private readonly promptQueries: IPromptQueryService,
     private readonly providers: IAIProviderFactory,
+    private readonly idGenerator: IIdGenerator,
+    private readonly costEstimator: BenchmarkCostEstimator = new BenchmarkCostEstimator(),
   ) {}
 
   async execute(command: CreateBenchmarkCommand): Promise<CreateBenchmarkResult> {
@@ -74,7 +75,10 @@ export class CreateBenchmarkUseCase {
     const testGenerationMode =
       command.testGenerationMode ??
       (resolvedVersions.length > 1 ? "hybrid" : "shared-core");
-    const seed = command.seed ?? generateSeed();
+    const seed =
+      command.seed !== undefined
+        ? BenchmarkSeed.of(command.seed).toNumber()
+        : BenchmarkSeed.random().toNumber();
     const taskType = await this.resolveTaskType(resolvedVersions);
 
     const spec = buildEvaluationSpecFromVersions(
@@ -89,12 +93,13 @@ export class CreateBenchmarkUseCase {
       generatorModel,
       seed,
     );
-    const costForecast = estimateBenchmarkCost({
+    const repetitions = command.repetitions ?? DEFAULT_REPETITIONS;
+    const costForecast = this.costEstimator.estimate({
       versions: resolvedVersions,
       generatedInputs: generated.map((tc) => tc.input),
       solverModels: command.solverModels,
       judgeModels,
-      repetitions: command.repetitions ?? DEFAULT_REPETITIONS,
+      repetitions,
     });
     const budgetUsd = command.budgetUsd ?? DEFAULT_BUDGET_USD;
     if (costForecast.estimatedTotalCostUsd > budgetUsd) {
@@ -103,7 +108,8 @@ export class CreateBenchmarkUseCase {
       );
     }
 
-    const benchmark = await this.benchmarks.create({
+    const benchmark = Benchmark.create({
+      id: this.idGenerator.newId(),
       name: command.name,
       ownerId: command.ownerId,
       promptVersionIds: command.promptVersionIds,
@@ -115,20 +121,21 @@ export class CreateBenchmarkUseCase {
       taskType,
       costForecast,
       testCount: command.testCount,
-      repetitions: command.repetitions ?? DEFAULT_REPETITIONS,
+      repetitions,
       solverTemperature: command.solverTemperature ?? DEFAULT_SOLVER_TEMPERATURE,
       seed,
+      concurrency: command.concurrency ?? DEFAULT_CONCURRENCY,
+      cellTimeoutMs: command.cellTimeoutMs ?? null,
+      budgetUsd,
       testCases: generated.map((tc) => ({
-        id: tc.id,
+        id: this.idGenerator.newId(),
         input: tc.input,
         expectedOutput: null,
         category: tc.category,
         source: "generated" as const,
       })),
-      concurrency: command.concurrency ?? DEFAULT_CONCURRENCY,
-      cellTimeoutMs: command.cellTimeoutMs ?? null,
-      budgetUsd,
     });
+    await this.benchmarks.save(benchmark);
 
     const versionLabels: Record<string, string> = {};
     resolvedVersions.forEach((v, i) => {
@@ -161,77 +168,3 @@ export class CreateBenchmarkUseCase {
     return ids.map((id) => resolved.get(id) as PromptVersionSummary);
   }
 }
-
-const generateSeed = (): number => Math.floor(Math.random() * 0x7fffffff);
-
-const estimateTokenCount = (text: string): number => {
-  const matches = text.match(/[\p{L}\p{N}]+(?:['_-][\p{L}\p{N}]+)*|[^\s]/gu);
-  return matches?.length ?? 0;
-};
-
-export const estimateBenchmarkCost = (input: {
-  versions: readonly PromptVersionSummary[];
-  generatedInputs: readonly string[];
-  solverModels: readonly string[];
-  judgeModels: readonly string[];
-  repetitions: number;
-}): BenchmarkCostForecast => {
-  const versionPrompts = input.versions.map((version) => version.executablePrompt);
-  const avgSystemPromptTokens = average(versionPrompts.map(estimateTokenCount));
-  const avgUserInputTokens = average(input.generatedInputs.map(estimateTokenCount));
-  const avgCandidateOutputTokens = Math.max(
-    64,
-    Math.round(avgUserInputTokens * 1.6),
-  );
-  const estimatedMatrixCells =
-    input.generatedInputs.length *
-    input.versions.length *
-    input.solverModels.length *
-    input.repetitions;
-
-  let estimatedCandidateCostUsd = 0;
-  for (const solverModel of input.solverModels) {
-    const perCell = calculateCost(
-      solverModel,
-      Math.round(avgSystemPromptTokens + avgUserInputTokens),
-      avgCandidateOutputTokens,
-    );
-    estimatedCandidateCostUsd +=
-      perCell.totalUsd *
-      input.generatedInputs.length *
-      input.versions.length *
-      input.repetitions;
-  }
-
-  const judgeInputTokensPerVote = Math.round(
-    avgSystemPromptTokens * 2 + avgUserInputTokens + avgCandidateOutputTokens + 140,
-  );
-  const judgeOutputTokensPerVote = 32;
-  let estimatedJudgeCostUsd = 0;
-  for (const judgeModel of input.judgeModels) {
-    const perVote = calculateCost(
-      judgeModel,
-      judgeInputTokensPerVote,
-      judgeOutputTokensPerVote,
-    );
-    estimatedJudgeCostUsd += perVote.totalUsd * estimatedMatrixCells;
-  }
-
-  return {
-    estimatedMatrixCells,
-    estimatedCandidateInputTokens: Math.round(
-      (avgSystemPromptTokens + avgUserInputTokens) * estimatedMatrixCells,
-    ),
-    estimatedCandidateOutputTokens: avgCandidateOutputTokens * estimatedMatrixCells,
-    estimatedJudgeInputTokens:
-      judgeInputTokensPerVote * estimatedMatrixCells * input.judgeModels.length,
-    estimatedJudgeOutputTokens:
-      judgeOutputTokensPerVote * estimatedMatrixCells * input.judgeModels.length,
-    estimatedCandidateCostUsd,
-    estimatedJudgeCostUsd,
-    estimatedTotalCostUsd: estimatedCandidateCostUsd + estimatedJudgeCostUsd,
-  };
-};
-
-const average = (values: readonly number[]): number =>
-  values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;

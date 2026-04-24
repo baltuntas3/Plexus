@@ -1,7 +1,7 @@
 import type {
-  BenchmarkListResult,
-  IBenchmarkRepository,
-} from "../../../domain/repositories/benchmark-repository.js";
+  BenchmarkSummaryListResult,
+  IBenchmarkQueryService,
+} from "../../queries/benchmark-query-service.js";
 
 export interface ListBenchmarksCommand {
   ownerId: string;
@@ -9,10 +9,13 @@ export interface ListBenchmarksCommand {
   pageSize: number;
 }
 
+// Read-side use case. Goes through IBenchmarkQueryService so list endpoints
+// never hydrate a full aggregate just to render a summary — the CQRS split
+// keeps both sides narrow.
 export class ListBenchmarksUseCase {
-  constructor(private readonly benchmarks: IBenchmarkRepository) {}
+  constructor(private readonly queries: IBenchmarkQueryService) {}
 
-  async execute(command: ListBenchmarksCommand): Promise<BenchmarkListResult> {
-    return this.benchmarks.list(command);
+  async execute(command: ListBenchmarksCommand): Promise<BenchmarkSummaryListResult> {
+    return this.queries.listBenchmarkSummaries(command);
   }
 }

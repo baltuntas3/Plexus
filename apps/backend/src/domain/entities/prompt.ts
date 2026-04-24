@@ -1,5 +1,6 @@
 import type { TaskType } from "@plexus/shared-types";
 import {
+  PromptInvalidVersionTransitionError,
   PromptNotOwnedError,
   PromptVersionNotFoundError,
   ValidationError,
@@ -8,9 +9,19 @@ import type { BraidGraph } from "../value-objects/braid-graph.js";
 import { VersionLabel } from "../value-objects/version-label.js";
 import {
   PromptVersion,
+  PromptVersionInternal,
   type PromptVersionPrimitives,
 } from "./prompt-version.js";
 
+// All prompt-edit flows (manual mermaid save, regenerate, chat refinement)
+// produce a brand-new, immutable PromptVersion through this aggregate.
+// PromptVersion never mutates its content after creation — the write-once
+// invariant is what keeps BenchmarkResult ↔ PromptVersion linkage stable
+// across subsequent edits.
+
+// Persistence-boundary shape. `productionVersion` is serialized as a plain
+// string; the aggregate's internal state uses VersionLabel so the "v{n}"
+// invariant is type-enforced inside the aggregate.
 export interface PromptPrimitives {
   id: string;
   name: string;
@@ -26,6 +37,22 @@ export interface PromptPrimitives {
   // Aggregate revision last seen in the store. Hydrated from persistence,
   // checked as the "expected" value during save, and advanced by `commit`
   // after a successful write.
+  revision: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Internal aggregate state. Uses VersionLabel for productionVersion so
+// cross-version identity comparisons (promoteVersion) happen through the VO
+// rather than ad-hoc string equality.
+interface InternalPromptState {
+  id: string;
+  name: string;
+  description: string;
+  taskType: TaskType;
+  ownerId: string;
+  productionVersion: VersionLabel | null;
+  versionCounter: number;
   revision: number;
   createdAt: Date;
   updatedAt: Date;
@@ -60,7 +87,7 @@ export interface PromptSnapshot {
 
 export class Prompt {
   private constructor(
-    private state: PromptPrimitives,
+    private state: InternalPromptState,
     private versionsState: PromptVersion[],
   ) {}
 
@@ -69,8 +96,9 @@ export class Prompt {
     const initialVersion = PromptVersion.create({
       id: params.initialVersionId,
       promptId: params.promptId,
-      version: VersionLabel.fromSequence(1).toString(),
+      version: VersionLabel.fromSequence(1),
       sourcePrompt: params.initialPrompt,
+      parentVersionId: null,
       createdAt: now,
       updatedAt: now,
     });
@@ -96,7 +124,21 @@ export class Prompt {
     versions: PromptVersionPrimitives[],
   ): Prompt {
     return new Prompt(
-      { ...prompt },
+      {
+        id: prompt.id,
+        name: prompt.name,
+        description: prompt.description,
+        taskType: prompt.taskType,
+        ownerId: prompt.ownerId,
+        productionVersion:
+          prompt.productionVersion !== null
+            ? VersionLabel.parse(prompt.productionVersion)
+            : null,
+        versionCounter: prompt.versionCounter,
+        revision: prompt.revision,
+        createdAt: prompt.createdAt,
+        updatedAt: prompt.updatedAt,
+      },
       versions
         .map((version) => PromptVersion.hydrate(version))
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
@@ -123,8 +165,11 @@ export class Prompt {
     return this.state.ownerId;
   }
 
+  // External surface stays string-typed (DTO/shared-types contract). The
+  // VersionLabel VO is an aggregate-internal invariant carrier — callers
+  // outside the domain do not need the typed wrapper.
   get productionVersion(): string | null {
-    return this.state.productionVersion;
+    return this.state.productionVersion?.toString() ?? null;
   }
 
   get revision(): number {
@@ -141,8 +186,9 @@ export class Prompt {
 
   // Defensive copy: the `readonly` modifier is shallow in TS, so returning the
   // live array would still let a caller `push` / `splice` into it at runtime
-  // and silently mutate aggregate state. Callers always get the canonical
-  // creation-order snapshot.
+  // and silently mutate aggregate state. PromptVersion instances themselves
+  // expose only reader getters — their mutators are symbol-keyed and only
+  // reachable via the aggregate root.
   get versions(): readonly PromptVersion[] {
     return [...this.versionsState];
   }
@@ -172,14 +218,18 @@ export class Prompt {
     id: string;
     sourcePrompt: string;
     name?: string | null;
+    parentVersionId?: string | null;
+    initialBraid?: { graph: BraidGraph; generatorModel: string };
   }): PromptVersion {
     const nextCounter = this.state.versionCounter + 1;
     const nextVersion = PromptVersion.create({
       id: input.id,
       promptId: this.id,
-      version: VersionLabel.fromSequence(nextCounter).toString(),
+      version: VersionLabel.fromSequence(nextCounter),
       sourcePrompt: input.sourcePrompt,
       name: input.name ?? null,
+      parentVersionId: input.parentVersionId ?? null,
+      initialBraid: input.initialBraid,
     });
     this.versionsState = [...this.versionsState, nextVersion];
     this.state = { ...this.state, versionCounter: nextCounter };
@@ -192,73 +242,63 @@ export class Prompt {
   // back to `draft` is forbidden because draft is the initial working state
   // and would effectively "unpublish" history. Repeated promotion to the
   // current status is a no-op (still updates aggregate timestamp).
-  promoteVersion(version: string, targetStatus: PromptVersion["status"]): PromptVersion {
-    if (targetStatus === "draft") {
-      throw ValidationError("Cannot demote a version back to draft");
-    }
+  promoteVersion(
+    version: string,
+    targetStatus: PromptVersion["status"],
+  ): PromptVersion {
     const target = this.getVersionOrThrow(version);
+    if (targetStatus === "draft") {
+      throw PromptInvalidVersionTransitionError(target.status, "draft");
+    }
     if (targetStatus === "production") {
       for (const candidate of this.versionsState) {
         if (candidate.id !== target.id && candidate.status === "production") {
-          candidate.changeStatus("staging");
+          candidate[PromptVersionInternal].changeStatus("staging");
         }
       }
       this.state = {
         ...this.state,
-        productionVersion: target.version,
+        productionVersion: target.versionLabel,
       };
-    } else if (this.state.productionVersion === target.version) {
+    } else if (this.state.productionVersion?.equals(target.versionLabel)) {
       this.state = {
         ...this.state,
         productionVersion: null,
       };
     }
 
-    target.changeStatus(targetStatus);
+    target[PromptVersionInternal].changeStatus(targetStatus);
     this.touch();
     return target;
   }
 
   renameVersion(version: string, name: string | null): PromptVersion {
     const target = this.getVersionOrThrow(version);
-    target.rename(name);
+    target[PromptVersionInternal].rename(name);
     this.touch();
     return target;
   }
 
-  updateBraidGraph(version: string, graph: BraidGraph): PromptVersion {
-    const target = this.getVersionOrThrow(version);
-    target.updateBraidGraph(graph);
-    this.touch();
-    return target;
-  }
-
-  // Attaches a generated BRAID graph. If the source version already carries a
-  // graph the aggregate overwrites it in place; otherwise it forks a new
-  // version using `forkVersionId`. The fork id is always passed from the use
-  // case so the aggregate stays free of id-allocation ports — on the
-  // overwrite path it is simply ignored (one unused ObjectId allocation is
-  // cheaper than plumbing a service dependency into the domain).
-  attachGeneratedBraid(input: {
-    sourceVersion: string;
+  // Fork a new version carrying the supplied braid graph. Always produces a
+  // new version — PromptVersion content is immutable by design, so every
+  // graph edit (manual mermaid tweak, regenerate, chat refinement) creates
+  // a new record linked to its parent via `parentVersionId`. This is what
+  // keeps the BenchmarkResult → PromptVersion link deterministic: whatever
+  // content the benchmark evaluated stays reachable forever under the id
+  // that benchmark recorded, even if the user keeps iterating on the braid.
+  upsertBraid(input: {
+    version: string;
     graph: BraidGraph;
     generatorModel: string;
     forkVersionId: string;
-  }): { version: PromptVersion; createdNewVersion: boolean } {
-    const source = this.getVersionOrThrow(input.sourceVersion);
-    if (source.hasBraidRepresentation) {
-      source.setBraidGraph(input.graph, input.generatorModel);
-      this.touch();
-      return { version: source, createdNewVersion: false };
-    }
-
-    const created = this.createVersion({
+  }): PromptVersion {
+    const source = this.getVersionOrThrow(input.version);
+    return this.createVersion({
       id: input.forkVersionId,
       sourcePrompt: source.sourcePrompt,
+      parentVersionId: source.id,
+      initialBraid: { graph: input.graph, generatorModel: input.generatorModel },
     });
-    created.setBraidGraph(input.graph, input.generatorModel);
-    this.touch();
-    return { version: created, createdNewVersion: true };
   }
 
   // Produces a one-shot save token. The repository writes `nextRevision`
@@ -271,7 +311,18 @@ export class Prompt {
     const expectedRevision = this.state.revision;
     const nextRevision = expectedRevision + 1;
     return {
-      prompt: { ...this.state, revision: nextRevision },
+      prompt: {
+        id: this.state.id,
+        name: this.state.name,
+        description: this.state.description,
+        taskType: this.state.taskType,
+        ownerId: this.state.ownerId,
+        productionVersion: this.state.productionVersion?.toString() ?? null,
+        versionCounter: this.state.versionCounter,
+        revision: nextRevision,
+        createdAt: this.state.createdAt,
+        updatedAt: this.state.updatedAt,
+      },
       versions: this.versionsState.map((version) => version.toPrimitives()),
       expectedRevision,
       nextRevision,

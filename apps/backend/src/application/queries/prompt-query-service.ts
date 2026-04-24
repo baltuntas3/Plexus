@@ -31,11 +31,11 @@ export interface PromptVersionSummary {
   promptId: string;
   version: string;
   name: string | null;
+  parentVersionId: string | null;
   sourcePrompt: string;
   braidGraph: string | null;
   generatorModel: string | null;
   executablePrompt: string;
-  solverModel: string | null;
   status: VersionStatus;
   createdAt: Date;
   updatedAt: Date;

@@ -98,6 +98,10 @@ const benchmarkSchema = new Schema(
     },
     jobId: { type: String, default: null },
     error: { type: String, default: null },
+    // Optimistic-concurrency token bumped on every aggregate save. Filtering
+    // by this on update guarantees lost-update detection if two writers ever
+    // race (the runner and a user edit path are the plausible offenders).
+    revision: { type: Number, required: true, default: 0 },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
   },

@@ -1,4 +1,7 @@
-import type { BenchmarkResult } from "../entities/benchmark-result.js";
+import type {
+  BenchmarkResult,
+  UpsertableBenchmarkResult,
+} from "../entities/benchmark-result.js";
 
 // Result rows are written via upsert keyed on
 // (benchmarkId, testCaseId, promptVersionId, solverModel, runIndex) so a
@@ -8,7 +11,11 @@ import type { BenchmarkResult } from "../entities/benchmark-result.js";
 // `updateScores` rewrites verbosityPenalty + finalScore on completed rows when
 // scoring logic is adjusted after the initial write.
 
-export type UpsertBenchmarkResultInput = Omit<BenchmarkResult, "id" | "createdAt">;
+// Alias kept for callers that still reference the old name. The canonical
+// shape is UpsertableBenchmarkResult on the entity file, produced by the
+// `completedBenchmarkResult` / `failedBenchmarkResult` factories so
+// "failed without error" and "completed without votes" become type-safe.
+export type UpsertBenchmarkResultInput = UpsertableBenchmarkResult;
 
 export interface UpdateScoresInput {
   id: string;

@@ -35,7 +35,7 @@ export class GetBenchmarkUseCase {
     );
     const [results, versionLabels] = await Promise.all([
       this.results.listByBenchmark(benchmark.id),
-      buildVersionLabels(this.promptQueries, benchmark.promptVersionIds),
+      buildVersionLabels(this.promptQueries, [...benchmark.promptVersionIds]),
     ]);
     return { benchmark, results, versionLabels };
   }

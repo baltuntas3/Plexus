@@ -57,7 +57,7 @@ const buildScaffold = async () => {
   const version = prompt.getVersionOrThrow("v1");
 
   return {
-    useCase: new CreateBenchmarkUseCase(benchmarks, queries, makeProviders()),
+    useCase: new CreateBenchmarkUseCase(benchmarks, queries, makeProviders(), ids),
     benchmarks,
     queries,
     prompts,
@@ -131,9 +131,9 @@ describe("CreateBenchmarkUseCase", () => {
       initialPrompt: "Classical instructions.",
     });
     prompt.createVersion({ id: ids.newId(), sourcePrompt: "Outdated classical prompt." });
-    // sourceVersion v2 has no braid yet → aggregate forks a new v3 with the braid.
-    const { version: braid } = prompt.attachGeneratedBraid({
-      sourceVersion: "v2",
+    // sourceVersion v2 is classical; upsertBraid forks v3 carrying the braid.
+    const braid = prompt.upsertBraid({
+      version: "v2",
       graph: BraidGraph.parse("graph TD\nA[start] --> B[end]"),
       generatorModel: "openai/gpt-oss-120b",
       forkVersionId: ids.newId(),
@@ -146,6 +146,7 @@ describe("CreateBenchmarkUseCase", () => {
       benchmarks,
       queries,
       makeProviders(5, (req) => seen.push(req)),
+      ids,
     );
 
     await useCase.execute({
@@ -161,8 +162,13 @@ describe("CreateBenchmarkUseCase", () => {
   });
 
   it("rejects generator output when fewer test cases are returned than requested", async () => {
-    const { benchmarks, queries, version } = await buildScaffold();
-    const useCase = new CreateBenchmarkUseCase(benchmarks, queries, makeProviders(2));
+    const { benchmarks, queries, ids, version } = await buildScaffold();
+    const useCase = new CreateBenchmarkUseCase(
+      benchmarks,
+      queries,
+      makeProviders(2),
+      ids,
+    );
 
     await expect(
       useCase.execute({ ...baseCommand(version.id), testCount: 5 }),
@@ -195,6 +201,7 @@ describe("CreateBenchmarkUseCase", () => {
       benchmarks,
       queries,
       makeProviders(5, (req) => seen.push(req)),
+      ids,
     );
 
     const { benchmark: bm } = await useCase.execute({
@@ -213,7 +220,7 @@ describe("CreateBenchmarkUseCase", () => {
   });
 
   it("rejects benchmarks whose estimated cost exceeds the budget cap", async () => {
-    const { benchmarks, queries, version } = await buildScaffold();
+    const { benchmarks, queries, ids, version } = await buildScaffold();
     const expensiveProvider: IAIProvider = {
       generate: async (req: GenerateRequest) => ({
         text: JSON.stringify({
@@ -226,9 +233,14 @@ describe("CreateBenchmarkUseCase", () => {
         model: req.model,
       }),
     };
-    const useCase = new CreateBenchmarkUseCase(benchmarks, queries, {
-      forModel: () => expensiveProvider,
-    });
+    const useCase = new CreateBenchmarkUseCase(
+      benchmarks,
+      queries,
+      {
+        forModel: () => expensiveProvider,
+      },
+      ids,
+    );
 
     await expect(
       useCase.execute({

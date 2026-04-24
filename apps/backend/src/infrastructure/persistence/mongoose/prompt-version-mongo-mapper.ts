@@ -14,13 +14,13 @@ export interface PromptVersionDocShape {
   promptId: Types.ObjectId;
   version: string;
   name: string | null;
+  parentVersionId: Types.ObjectId | null;
   sourcePrompt: string;
   representation: {
     kind: "classical" | "braid";
     graph: string | null;
     generatorModel: string | null;
   };
-  solverModel: string | null;
   status: PromptVersionPrimitives["status"];
   createdAt: Date;
   updatedAt: Date;
@@ -42,9 +42,9 @@ export const toVersionPrimitives = (
   promptId: String(doc.promptId),
   version: doc.version,
   name: doc.name ?? null,
+  parentVersionId: doc.parentVersionId ? String(doc.parentVersionId) : null,
   sourcePrompt: doc.sourcePrompt,
   representation: toRepresentation(doc.representation),
-  solverModel: doc.solverModel,
   status: doc.status,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
@@ -63,12 +63,12 @@ export const toVersionSummary = (
     promptId: String(doc.promptId),
     version: doc.version,
     name: doc.name ?? null,
+    parentVersionId: doc.parentVersionId ? String(doc.parentVersionId) : null,
     sourcePrompt: doc.sourcePrompt,
     braidGraph,
     generatorModel:
       representation.kind === "braid" ? representation.generatorModel : null,
     executablePrompt: braidGraph ?? doc.sourcePrompt,
-    solverModel: doc.solverModel,
     status: doc.status,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -81,6 +81,7 @@ export const toVersionDocSet = (
   promptId: version.promptId,
   version: version.version,
   name: version.name,
+  parentVersionId: version.parentVersionId,
   sourcePrompt: version.sourcePrompt,
   representation:
     version.representation.kind === "braid"
@@ -90,7 +91,6 @@ export const toVersionDocSet = (
           generatorModel: version.representation.generatorModel,
         }
       : { kind: "classical", graph: null, generatorModel: null },
-  solverModel: version.solverModel,
   status: version.status,
   createdAt: version.createdAt,
   updatedAt: version.updatedAt,

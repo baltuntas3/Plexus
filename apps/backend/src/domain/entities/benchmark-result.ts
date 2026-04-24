@@ -12,6 +12,8 @@
 // individual votes are stored on `judgeVotes` and the aggregated mean
 // (accuracy, coherence, instruction) is kept on the row for fast analysis.
 
+import { ValidationError } from "../errors/domain-error.js";
+
 export type BenchmarkResultStatus = "completed" | "failed";
 export type BenchmarkFailureKind =
   | "budget_exceeded"
@@ -69,6 +71,155 @@ export interface BenchmarkResult {
   error: string | null;
   createdAt: Date;
 }
+
+// Shape persisted by the repository — `id` and `createdAt` are assigned by
+// the store, everything else comes from the factory below.
+export type UpsertableBenchmarkResult = Omit<BenchmarkResult, "id" | "createdAt">;
+
+export interface CompletedResultInput {
+  benchmarkId: string;
+  testCaseId: string;
+  promptVersionId: string;
+  solverModel: string;
+  runIndex: number;
+
+  input: string;
+  candidateOutput: string;
+  candidateInputTokens: number;
+  candidateOutputTokens: number;
+  candidateCostUsd: number;
+
+  judgeAccuracy: number;
+  judgeCoherence: number;
+  judgeInstruction: number;
+  judgeVotes: readonly JudgeVote[];
+  rawScore: number;
+  verbosityPenalty: number;
+  finalScore: number;
+  judgeInputTokens: number;
+  judgeOutputTokens: number;
+  judgeCostUsd: number;
+  judgeFailureCount: number;
+
+  latencyMs: number;
+  partialJudgeFailureMessage: string | null;
+}
+
+// `completed` requires at least one successful judge vote — a completed row
+// with no judge output is not a valid domain state, that's what `failed`
+// with failureKind="judge_error" is for.
+export const completedBenchmarkResult = (
+  input: CompletedResultInput,
+): UpsertableBenchmarkResult => {
+  if (input.judgeVotes.length === 0) {
+    throw ValidationError(
+      "Completed benchmark result must include at least one judge vote",
+    );
+  }
+  return {
+    benchmarkId: input.benchmarkId,
+    testCaseId: input.testCaseId,
+    promptVersionId: input.promptVersionId,
+    solverModel: input.solverModel,
+    runIndex: input.runIndex,
+
+    input: input.input,
+    candidateOutput: input.candidateOutput,
+
+    judgeAccuracy: input.judgeAccuracy,
+    judgeCoherence: input.judgeCoherence,
+    judgeInstruction: input.judgeInstruction,
+    judgeVotes: [...input.judgeVotes],
+    rawScore: input.rawScore,
+    verbosityPenalty: input.verbosityPenalty,
+    finalScore: input.finalScore,
+    exactMatch: null,
+    fuzzyMatchScore: null,
+
+    candidateInputTokens: input.candidateInputTokens,
+    candidateOutputTokens: input.candidateOutputTokens,
+    candidateCostUsd: input.candidateCostUsd,
+    judgeInputTokens: input.judgeInputTokens,
+    judgeOutputTokens: input.judgeOutputTokens,
+    judgeCostUsd: input.judgeCostUsd,
+    totalCostUsd: input.candidateCostUsd + input.judgeCostUsd,
+    judgeFailureCount: input.judgeFailureCount,
+
+    latencyMs: input.latencyMs,
+    status: "completed",
+    failureKind: null,
+    error: input.partialJudgeFailureMessage,
+  };
+};
+
+export interface FailedResultInput {
+  benchmarkId: string;
+  testCaseId: string;
+  promptVersionId: string;
+  solverModel: string;
+  runIndex: number;
+
+  input: string;
+  failureKind: BenchmarkFailureKind;
+  error: string;
+
+  candidateOutput?: string;
+  candidateInputTokens?: number;
+  candidateOutputTokens?: number;
+  candidateCostUsd?: number;
+  judgeInputTokens?: number;
+  judgeOutputTokens?: number;
+  judgeCostUsd?: number;
+  judgeFailureCount?: number;
+  latencyMs?: number;
+}
+
+// `failed` enforces the domain invariant that a failed row must carry a
+// non-empty `error` message — previously the runner built this by hand and
+// the type system could not stop a caller from passing `error: null` here.
+export const failedBenchmarkResult = (
+  input: FailedResultInput,
+): UpsertableBenchmarkResult => {
+  if (input.error.trim().length === 0) {
+    throw ValidationError("Failed benchmark result must carry a non-empty error");
+  }
+  const candidateCostUsd = input.candidateCostUsd ?? 0;
+  const judgeCostUsd = input.judgeCostUsd ?? 0;
+  return {
+    benchmarkId: input.benchmarkId,
+    testCaseId: input.testCaseId,
+    promptVersionId: input.promptVersionId,
+    solverModel: input.solverModel,
+    runIndex: input.runIndex,
+
+    input: input.input,
+    candidateOutput: input.candidateOutput ?? "",
+
+    judgeAccuracy: 0,
+    judgeCoherence: 0,
+    judgeInstruction: 0,
+    judgeVotes: [],
+    rawScore: 0,
+    verbosityPenalty: 0,
+    finalScore: 0,
+    exactMatch: null,
+    fuzzyMatchScore: null,
+
+    candidateInputTokens: input.candidateInputTokens ?? 0,
+    candidateOutputTokens: input.candidateOutputTokens ?? 0,
+    candidateCostUsd,
+    judgeInputTokens: input.judgeInputTokens ?? 0,
+    judgeOutputTokens: input.judgeOutputTokens ?? 0,
+    judgeCostUsd,
+    totalCostUsd: candidateCostUsd + judgeCostUsd,
+    judgeFailureCount: input.judgeFailureCount ?? 0,
+
+    latencyMs: input.latencyMs ?? 0,
+    status: "failed",
+    failureKind: input.failureKind,
+    error: input.error,
+  };
+};
 
 // Stable identifier for the (testCase, version, solver, runIndex) row. The
 // runner uses it to look up which rows are already recorded on a resume.

@@ -1,69 +1,52 @@
-import type { Benchmark, BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
+import type { Benchmark } from "../../../domain/entities/benchmark.js";
 import {
   benchmarkResultKey,
+  completedBenchmarkResult,
+  failedBenchmarkResult,
   type BenchmarkFailureKind,
+  type CompletedResultInput,
+  type FailedResultInput,
   type JudgeVote,
+  type UpsertableBenchmarkResult,
 } from "../../../domain/entities/benchmark-result.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
-import {
-  NotFoundError,
-  ValidationError,
-} from "../../../domain/errors/domain-error.js";
+import { NotFoundError } from "../../../domain/errors/domain-error.js";
+import { BenchmarkMatrix, type MatrixCell } from "../../../domain/value-objects/benchmark-matrix.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
-import type {
-  IBenchmarkResultRepository,
-  UpsertBenchmarkResultInput,
-} from "../../../domain/repositories/benchmark-result-repository.js";
+import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { mapConcurrent } from "../../utils/map-concurrent.js";
-import type { IAIProviderFactory } from "../ai-provider.js";
+import type { IAIProviderFactory, GenerateResponse } from "../ai-provider.js";
 import type { JobContext } from "../job-queue.js";
 import { calculateCost } from "../model-registry.js";
 import { LLMJudge } from "../judge/llm-judge.js";
 import { JudgeExecutionError, type IJudge } from "../judge/judge.js";
 import { buildEvaluationPrompt } from "./evaluation-prompt.js";
-import type { GenerateResponse } from "../ai-provider.js";
 
-// Orchestrates a single benchmark run end-to-end.
+// Orchestrates a single benchmark run end-to-end against the Benchmark
+// aggregate. The runner only performs lifecycle transitions through domain
+// methods (`start`, `recordProgress`, `completeNormally`,
+// `completeWithBudgetCap`, `failWith`), so illegal state moves surface as
+// typed domain errors rather than as silent inconsistency in the store.
 //
 // The matrix is (testCase × promptVersion × solverModel × runIndex). Test
-// cases are embedded on the Benchmark entity itself — they were generated
-// (and optionally annotated with expected outputs) before the benchmark was
-// queued. Each logical cell is repeated `bm.repetitions` times so the
-// analyzer can estimate within-candidate variance.
+// cases are embedded on the Benchmark aggregate; each logical cell is
+// repeated `benchmark.repetitions` times so the analyzer can estimate
+// within-candidate variance.
 //
-// Every row is graded by EVERY judge in `bm.judgeModels`; the rubric means
-// across judges are stored on the row (judgeAccuracy/Coherence/Instruction),
-// and the individual votes are kept on `judgeVotes` for drill-down and
-// bias analysis. Judge token cost is the sum across judges.
-//
-// Per-cell failures do not abort the run: they are captured as "failed" rows
-// so a partial matrix is still useful. Only fatal errors (missing versions,
-// empty matrix, missing judge models) abort the whole benchmark.
-//
-// Rows with an `expectedOutput` receive a reference-based verbosity penalty
-// inside the judge. Reference-free rows are left as judged; we do not apply
-// any benchmark-relative length penalty after the fact.
-//
-// The system prompt for each cell is determined by the PromptVersion: if its
-// representation is braid, that graph becomes the system prompt; otherwise
-// sourcePrompt is used. There is no separate mode field and no benchmark-
-// specific instruction prefix is injected.
+// Every row is graded by every judge in `benchmark.judgeModels`; rubric
+// means are stored on the row, individual votes on `judgeVotes` for
+// drill-down and bias analysis. Per-cell failures are captured as "failed"
+// rows so a partial matrix is still useful.
 
 const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 const DEFAULT_BUDGET_USD = 50;
-interface Cell {
-  testCase: BenchmarkTestCase;
-  version: PromptVersionSummary;
-  solverModel: string;
-  runIndex: number;
-}
 
 interface CellSlice {
   sampleKey: string;
   runIndex: number;
-  cells: Cell[];
+  cells: MatrixCell[];
 }
 
 export interface BenchmarkRunnerDeps {
@@ -79,49 +62,69 @@ export class BenchmarkRunner {
   constructor(private readonly deps: BenchmarkRunnerDeps) {}
 
   async run(benchmarkId: string, ctx: JobContext): Promise<void> {
-    const bm = await this.deps.benchmarks.findById(benchmarkId);
-    if (!bm) throw NotFoundError(`Benchmark ${benchmarkId} not found`);
+    let benchmark = await this.deps.benchmarks.findById(benchmarkId);
+    if (!benchmark) throw NotFoundError(`Benchmark ${benchmarkId} not found`);
 
-    await this.deps.benchmarks.updateStatus(benchmarkId, {
-      status: "running",
-      jobId: ctx.jobId,
-      startedAt: new Date(),
-      error: null,
-    });
+    // Resume path: a completed or failed benchmark is re-runnable. The
+    // aggregate's `queue()` rule rejects the "already queued" / "already
+    // running" cases, so this transition is safe — the runner does not need
+    // to reimplement that logic inline.
+    if (
+      benchmark.status !== "queued" &&
+      benchmark.status !== "running" &&
+      benchmark.status !== "draft"
+    ) {
+      benchmark.queue();
+    }
+    benchmark.start(ctx.jobId);
+    await this.deps.benchmarks.save(benchmark);
 
     try {
-      const cells = await this.buildMatrix(bm);
-      const estimatedCellCostUsd = estimateCellCostUsd(bm, cells.length);
+      benchmark.assertRunnable();
+      const versions = await this.loadVersions([...benchmark.promptVersionIds]);
+      const matrix = BenchmarkMatrix.build({
+        testCases: benchmark.testCases,
+        versions,
+        solverModels: [...benchmark.solverModels],
+        judgeModels: [...benchmark.judgeModels],
+        repetitions: benchmark.repetitions,
+      });
+
+      const cells = [...matrix.cells];
+      const estimatedCellCostUsd = estimateCellCostUsd(benchmark, cells.length);
       const existingRows = await this.deps.results.listByBenchmark(benchmarkId);
-      const existingByKey = new Map(existingRows.map((row) => [resultKey(row), row] as const));
+      const existingByKey = new Map(
+        existingRows.map((row) => [resultKey(row), row] as const),
+      );
       const total = cells.length;
       let processed = cells.reduce((sum, cell) => {
         const row = existingByKey.get(cellKey(cell));
         return sum + (row?.status === "completed" ? 1 : 0);
       }, 0);
 
-      await this.report(benchmarkId, ctx, processed, total);
+      benchmark.recordProgress(processed, total);
+      await this.deps.benchmarks.save(benchmark);
+      await ctx.reportProgress({ completed: processed, total });
 
-      const pending = cells.filter((cell) => existingByKey.get(cellKey(cell))?.status !== "completed");
-      const slices = this.buildSlices(pending, bm.seed);
-      const judges = this.buildJudges(bm.judgeModels, bm.taskType);
-      const cellTimeout = bm.cellTimeoutMs ?? DEFAULT_CELL_TIMEOUT_MS;
-      const budget = bm.budgetUsd ?? DEFAULT_BUDGET_USD;
-      let spentUsd = existingRows.reduce((sum, row) => sum + row.totalCostUsd, 0);
-      let observedCellCosts = 0;
-      let observedCellCount = 0;
+      const pending = cells.filter(
+        (cell) => existingByKey.get(cellKey(cell))?.status !== "completed",
+      );
+      const slices = buildSlices(pending, benchmark.seed);
+      const judges = this.buildJudges(benchmark.judgeModels, benchmark.taskType);
+      const cellTimeout = benchmark.cellTimeoutMs ?? DEFAULT_CELL_TIMEOUT_MS;
+      const budget = benchmark.budgetUsd ?? DEFAULT_BUDGET_USD;
+      let spentUsd = existingRows.reduce(
+        (sum, row) => sum + row.totalCostUsd,
+        0,
+      );
+      let observedCellCosts = spentUsd;
+      let observedCellCount = existingRows.length;
       let cappedByBudget = false;
-      for (const row of existingRows) {
-        observedCellCosts += row.totalCostUsd;
-        observedCellCount += 1;
-      }
 
-      const reservePerCellUsd = (): number => {
-        if (observedCellCount > 0) {
-          return observedCellCosts / observedCellCount;
-        }
-        return estimatedCellCostUsd;
-      };
+      const reservePerCellUsd = (): number =>
+        observedCellCount > 0
+          ? observedCellCosts / observedCellCount
+          : estimatedCellCostUsd;
 
       for (const slice of slices) {
         const estimatedSliceCostUsd = reservePerCellUsd() * slice.cells.length;
@@ -129,75 +132,87 @@ export class BenchmarkRunner {
           cappedByBudget = true;
           break;
         }
-        await mapConcurrent(slice.cells, Math.max(1, bm.concurrency), async (cell) => {
-          const row = await withTimeout(
-            this.runCell(bm, cell, judges),
-            cellTimeout,
-          ).catch((err) => buildFailedRow(bm.id, cell, err));
-          spentUsd += row.totalCostUsd;
-          observedCellCosts += row.totalCostUsd;
-          observedCellCount += 1;
-          await this.deps.results.upsert(row);
-          processed += 1;
-          await this.report(benchmarkId, ctx, processed, total);
-        });
+        await mapConcurrent(
+          slice.cells,
+          Math.max(1, benchmark.concurrency),
+          async (cell) => {
+            const row = await withTimeout(
+              this.runCell(benchmark!, cell, judges),
+              cellTimeout,
+            ).catch((err) =>
+              failedBenchmarkResult({
+                benchmarkId: benchmark!.id,
+                testCaseId: cell.testCase.id,
+                promptVersionId: cell.version.id,
+                solverModel: cell.solverModel,
+                runIndex: cell.runIndex,
+                input: cell.testCase.input,
+                error: err instanceof Error ? err.message : String(err),
+                failureKind: classifyFailureKind(err),
+              }),
+            );
+            spentUsd += row.totalCostUsd;
+            observedCellCosts += row.totalCostUsd;
+            observedCellCount += 1;
+            await this.deps.results.upsert(row);
+            processed += 1;
+            benchmark = await this.reloadAndReport(
+              benchmarkId,
+              ctx,
+              processed,
+              total,
+            );
+          },
+        );
       }
 
-      await this.deps.benchmarks.updateStatus(benchmarkId, cappedByBudget
-        ? {
-            status: "completed_with_budget_cap",
-            completedAt: new Date(),
-            error:
-              `Stopped at the $${budget.toFixed(2)} budget cap after completing ` +
-              `${processed}/${total} cells with balanced coverage.`,
-          }
-        : {
-            status: "completed",
-            completedAt: new Date(),
-            error: null,
-          });
+      // Final transition. Reload to pick up the latest persisted revision
+      // (progress ticks advance it) before recording completion.
+      benchmark = await this.requireBenchmark(benchmarkId);
+      if (cappedByBudget) {
+        benchmark.completeWithBudgetCap(
+          `Stopped at the $${budget.toFixed(2)} budget cap after completing ` +
+            `${processed}/${total} cells with balanced coverage.`,
+        );
+      } else {
+        benchmark.completeNormally();
+      }
+      await this.deps.benchmarks.save(benchmark);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.deps.benchmarks.updateStatus(benchmarkId, {
-        status: "failed",
-        error: message,
-        completedAt: new Date(),
-      });
+      const latest = await this.deps.benchmarks.findById(benchmarkId);
+      if (latest) {
+        latest.failWith(message);
+        await this.deps.benchmarks.save(latest);
+      }
       throw err;
     }
   }
 
-  private async buildMatrix(bm: Benchmark): Promise<Cell[]> {
-    if (bm.testCases.length === 0) {
-      throw ValidationError("Benchmark has no test cases");
-    }
-    if (bm.judgeModels.length === 0) {
-      throw ValidationError("Benchmark has no judge models");
-    }
-    if (bm.repetitions < 1) {
-      throw ValidationError("Benchmark repetitions must be at least 1");
-    }
-
-    const versions = await this.loadVersions(bm.promptVersionIds);
-
-    const cells: Cell[] = [];
-    for (const testCase of bm.testCases) {
-      for (const version of versions) {
-        for (const solverModel of bm.solverModels) {
-          for (let runIndex = 0; runIndex < bm.repetitions; runIndex += 1) {
-            cells.push({ testCase, version, solverModel, runIndex });
-          }
-        }
-      }
-    }
-
-    if (cells.length === 0) {
-      throw ValidationError("Benchmark matrix is empty");
-    }
-    return cells;
+  private async reloadAndReport(
+    benchmarkId: string,
+    ctx: JobContext,
+    completed: number,
+    total: number,
+  ): Promise<Benchmark> {
+    const latest = await this.requireBenchmark(benchmarkId);
+    latest.recordProgress(completed, total);
+    await this.deps.benchmarks.save(latest);
+    await ctx.reportProgress({ completed, total });
+    return latest;
   }
 
-  private async loadVersions(ids: readonly string[]): Promise<PromptVersionSummary[]> {
+  private async requireBenchmark(id: string): Promise<Benchmark> {
+    const latest = await this.deps.benchmarks.findById(id);
+    if (!latest) {
+      throw NotFoundError(`Benchmark ${id} not found`);
+    }
+    return latest;
+  }
+
+  private async loadVersions(
+    ids: readonly string[],
+  ): Promise<PromptVersionSummary[]> {
     const found = await this.deps.promptQueries.findVersionSummariesByIds(ids);
     const missing = ids.filter((id) => !found.has(id));
     if (missing.length > 0) {
@@ -219,14 +234,14 @@ export class BenchmarkRunner {
   }
 
   private async runCell(
-    bm: Benchmark,
-    cell: Cell,
+    benchmark: Benchmark,
+    cell: MatrixCell,
     judges: ReadonlyArray<{ model: string; judge: IJudge }>,
-  ): Promise<UpsertBenchmarkResultInput> {
+  ): Promise<UpsertableBenchmarkResult> {
     const systemPrompt = buildEvaluationPrompt(cell.version);
     const provider = this.deps.providers.forModel(cell.solverModel);
 
-    const solverSeed = deriveSeed(bm.seed, cell);
+    const solverSeed = deriveSeed(benchmark.seed, cell);
 
     const start = Date.now();
     let candidate: GenerateResponse;
@@ -237,14 +252,16 @@ export class BenchmarkRunner {
           { role: "system", content: systemPrompt },
           { role: "user", content: cell.testCase.input },
         ],
-        temperature: bm.solverTemperature,
+        temperature: benchmark.solverTemperature,
         seed: solverSeed,
       });
     } catch (err) {
-      return buildFailedRow(bm.id, cell, err, {
-        latencyMs: Date.now() - start,
-        failureKind: "solver_error",
-      });
+      return failedBenchmarkResult(
+        buildFailedInput(benchmark.id, cell, err, {
+          latencyMs: Date.now() - start,
+          failureKind: "solver_error",
+        }),
+      );
     }
     const latencyMs = Date.now() - start;
     const candidateCost = calculateCost(
@@ -259,7 +276,7 @@ export class BenchmarkRunner {
           const graded = await judge.grade({
             input: cell.testCase.input,
             candidate: candidate.text,
-            seed: deriveJudgeSeed(bm.seed, cell, model),
+            seed: deriveJudgeSeed(benchmark.seed, cell, model),
             reference: cell.testCase.expectedOutput ?? undefined,
             systemPrompt,
           });
@@ -290,44 +307,21 @@ export class BenchmarkRunner {
     );
 
     const judgeFailures = judgeExecution.filter((j) => !j.ok);
-    const votes = judgeExecution.filter((j): j is Extract<typeof judgeExecution[number], { ok: true }> => j.ok);
-    const successfulJudgeInputTokens = votes.reduce((sum, vote) => sum + vote.vote.inputTokens, 0);
-    const successfulJudgeOutputTokens = votes.reduce((sum, vote) => sum + vote.vote.outputTokens, 0);
-    const successfulJudgeCostUsd = votes.reduce((sum, vote) => sum + vote.vote.costUsd, 0);
-    if (votes.length === 0) {
-      const firstFailure = judgeFailures[0];
-      const partialJudgeInputTokens = judgeFailures.reduce(
-        (sum, failure) => sum + (failure.partial?.inputTokens ?? 0),
-        0,
-      );
-      const partialJudgeOutputTokens = judgeFailures.reduce(
-        (sum, failure) => sum + (failure.partial?.outputTokens ?? 0),
-        0,
-      );
-      const partialJudgeCostUsd = judgeFailures.reduce(
-        (sum, failure) => sum + (failure.partial?.costUsd ?? 0),
-        0,
-      );
-      return buildFailedRow(
-        bm.id,
-        cell,
-        firstFailure?.err ?? new Error("Judge ensemble incomplete"),
-        {
-          latencyMs,
-          candidate,
-          candidateCostUsd: candidateCost.totalUsd,
-          judgeInputTokens: successfulJudgeInputTokens + partialJudgeInputTokens,
-          judgeOutputTokens: successfulJudgeOutputTokens + partialJudgeOutputTokens,
-          judgeCostUsd: successfulJudgeCostUsd + partialJudgeCostUsd,
-          failureKind: "judge_error",
-        },
-      );
-    }
-
-    const meanAccuracy = mean(votes.map((v) => v.vote.accuracy));
-    const meanCoherence = mean(votes.map((v) => v.vote.coherence));
-    const meanInstruction = mean(votes.map((v) => v.vote.instruction));
-    const meanVerbosityPenalty = mean(votes.map((v) => v.graded.score.verbosityPenalty));
+    const votes = judgeExecution.filter(
+      (j): j is Extract<typeof judgeExecution[number], { ok: true }> => j.ok,
+    );
+    const successfulJudgeInputTokens = votes.reduce(
+      (sum, vote) => sum + vote.vote.inputTokens,
+      0,
+    );
+    const successfulJudgeOutputTokens = votes.reduce(
+      (sum, vote) => sum + vote.vote.outputTokens,
+      0,
+    );
+    const successfulJudgeCostUsd = votes.reduce(
+      (sum, vote) => sum + vote.vote.costUsd,
+      0,
+    );
     const partialJudgeInputTokens = judgeFailures.reduce(
       (sum, failure) => sum + (failure.partial?.inputTokens ?? 0),
       0,
@@ -340,28 +334,58 @@ export class BenchmarkRunner {
       (sum, failure) => sum + (failure.partial?.costUsd ?? 0),
       0,
     );
+    const judgeInputTokens = successfulJudgeInputTokens + partialJudgeInputTokens;
+    const judgeOutputTokens =
+      successfulJudgeOutputTokens + partialJudgeOutputTokens;
+    const judgeCostUsd = successfulJudgeCostUsd + partialJudgeCostUsd;
 
+    if (votes.length === 0) {
+      const firstFailure = judgeFailures[0];
+      return failedBenchmarkResult(
+        buildFailedInput(
+          benchmark.id,
+          cell,
+          firstFailure?.err ?? new Error("Judge ensemble incomplete"),
+          {
+            latencyMs,
+            candidate,
+            candidateCostUsd: candidateCost.totalUsd,
+            judgeInputTokens,
+            judgeOutputTokens,
+            judgeCostUsd,
+            failureKind: "judge_error",
+          },
+        ),
+      );
+    }
+
+    const meanAccuracy = mean(votes.map((v) => v.vote.accuracy));
+    const meanCoherence = mean(votes.map((v) => v.vote.coherence));
+    const meanInstruction = mean(votes.map((v) => v.vote.instruction));
+    const meanVerbosityPenalty = mean(
+      votes.map((v) => v.graded.score.verbosityPenalty),
+    );
     const score = JudgeScore.fromRubric(
-      { accuracy: meanAccuracy, coherence: meanCoherence, instruction: meanInstruction },
+      {
+        accuracy: meanAccuracy,
+        coherence: meanCoherence,
+        instruction: meanInstruction,
+      },
       meanVerbosityPenalty,
       "",
     );
 
-    const judgeInputTokens =
-      successfulJudgeInputTokens + partialJudgeInputTokens;
-    const judgeOutputTokens =
-      successfulJudgeOutputTokens + partialJudgeOutputTokens;
-    const judgeCostUsd =
-      successfulJudgeCostUsd + partialJudgeCostUsd;
-
-    return {
-      benchmarkId: bm.id,
+    const completed: CompletedResultInput = {
+      benchmarkId: benchmark.id,
       testCaseId: cell.testCase.id,
       promptVersionId: cell.version.id,
       solverModel: cell.solverModel,
       runIndex: cell.runIndex,
       input: cell.testCase.input,
       candidateOutput: candidate.text,
+      candidateInputTokens: candidate.usage.inputTokens,
+      candidateOutputTokens: candidate.usage.outputTokens,
+      candidateCostUsd: candidateCost.totalUsd,
       judgeAccuracy: meanAccuracy,
       judgeCoherence: meanCoherence,
       judgeInstruction: meanInstruction,
@@ -369,86 +393,27 @@ export class BenchmarkRunner {
       rawScore: score.rawScore,
       verbosityPenalty: meanVerbosityPenalty,
       finalScore: score.finalScore,
-      exactMatch: null,
-      fuzzyMatchScore: null,
-      candidateInputTokens: candidate.usage.inputTokens,
-      candidateOutputTokens: candidate.usage.outputTokens,
-      candidateCostUsd: candidateCost.totalUsd,
       judgeInputTokens,
       judgeOutputTokens,
       judgeCostUsd,
-      totalCostUsd: candidateCost.totalUsd + judgeCostUsd,
       judgeFailureCount: judgeFailures.length,
       latencyMs,
-      status: "completed",
-      failureKind: null,
-      error:
+      partialJudgeFailureMessage:
         judgeFailures.length === 0
           ? null
-          : `Partial judge failure: ${judgeFailures.length}/${judges.length} judge(s) failed. ${
-              judgeFailures
-                .map((failure) =>
-                  failure.err instanceof Error ? failure.err.message : String(failure.err),
-                )
-                .join("; ")
-            }`,
+          : `Partial judge failure: ${judgeFailures.length}/${judges.length} judge(s) failed. ${judgeFailures
+              .map((failure) =>
+                failure.err instanceof Error
+                  ? failure.err.message
+                  : String(failure.err),
+              )
+              .join("; ")}`,
     };
-  }
-
-  private async report(
-    benchmarkId: string,
-    ctx: JobContext,
-    completed: number,
-    total: number,
-  ): Promise<void> {
-    await this.deps.benchmarks.updateProgress(benchmarkId, { completed, total });
-    await ctx.reportProgress({ completed, total });
-  }
-
-  private buildSlices(cells: readonly Cell[], seed: number): CellSlice[] {
-    const bySample = new Map<string, CellSlice>();
-    for (const cell of cells) {
-      const key = sampleKey(cell);
-      const existing = bySample.get(key);
-      if (existing) {
-        existing.cells.push(cell);
-        continue;
-      }
-      bySample.set(key, {
-        sampleKey: key,
-        runIndex: cell.runIndex,
-        cells: [cell],
-      });
-    }
-
-    const runBuckets = new Map<number, CellSlice[]>();
-    for (const slice of bySample.values()) {
-      runBuckets.set(slice.runIndex, [...(runBuckets.get(slice.runIndex) ?? []), slice]);
-    }
-
-    return [...runBuckets.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .flatMap(([runIndex, slices]) =>
-        this.shuffleItems(slices, hashSeed(seed, `run:${runIndex}`)).map((slice) => ({
-          ...slice,
-          cells: this.shuffleItems(slice.cells, hashSeed(seed, slice.sampleKey)),
-        })),
-      );
-  }
-
-  private shuffleItems<T>(items: readonly T[], seed: number): T[] {
-    const shuffled = [...items];
-    let state = seed >>> 0;
-    for (let i = shuffled.length - 1; i > 0; i -= 1) {
-      state = nextShuffleState(state);
-      const j = state % (i + 1);
-      const tmp = shuffled[i];
-      shuffled[i] = shuffled[j] as T;
-      shuffled[j] = tmp as T;
-    }
-    return shuffled;
+    return completedBenchmarkResult(completed);
   }
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 class CellTimeoutError extends Error {
   constructor(ms: number) {
@@ -468,7 +433,7 @@ const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
   ]);
 };
 
-const cellKey = (cell: Cell): string =>
+const cellKey = (cell: MatrixCell): string =>
   benchmarkResultKey(
     cell.testCase.id,
     cell.version.id,
@@ -476,10 +441,14 @@ const cellKey = (cell: Cell): string =>
     cell.runIndex,
   );
 
-const sampleKey = (cell: Cell): string => `${cell.testCase.id}::${cell.runIndex}`;
+const sampleKey = (cell: MatrixCell): string =>
+  `${cell.testCase.id}::${cell.runIndex}`;
 
 const resultKey = (
-  row: Pick<UpsertBenchmarkResultInput, "testCaseId" | "promptVersionId" | "solverModel" | "runIndex">,
+  row: Pick<
+    UpsertableBenchmarkResult,
+    "testCaseId" | "promptVersionId" | "solverModel" | "runIndex"
+  >,
 ): string =>
   benchmarkResultKey(
     row.testCaseId,
@@ -488,9 +457,9 @@ const resultKey = (
     row.runIndex,
   );
 
-const buildFailedRow = (
+const buildFailedInput = (
   benchmarkId: string,
-  cell: Cell,
+  cell: MatrixCell,
   err: unknown,
   partial: {
     latencyMs?: number;
@@ -502,7 +471,7 @@ const buildFailedRow = (
     judgeFailureCount?: number;
     failureKind?: BenchmarkFailureKind;
   } = {},
-): UpsertBenchmarkResultInput => {
+): FailedResultInput => {
   const message = err instanceof Error ? err.message : String(err);
   const failureKind = partial.failureKind ?? classifyFailureKind(err);
   return {
@@ -512,28 +481,17 @@ const buildFailedRow = (
     solverModel: cell.solverModel,
     runIndex: cell.runIndex,
     input: cell.testCase.input,
+    error: message || `${failureKind} failure`,
+    failureKind,
     candidateOutput: partial.candidate?.text ?? "",
-    judgeAccuracy: 0,
-    judgeCoherence: 0,
-    judgeInstruction: 0,
-    judgeVotes: [],
-    rawScore: 0,
-    verbosityPenalty: 0,
-    finalScore: 0,
-    exactMatch: null,
-    fuzzyMatchScore: null,
     candidateInputTokens: partial.candidate?.usage.inputTokens ?? 0,
     candidateOutputTokens: partial.candidate?.usage.outputTokens ?? 0,
     candidateCostUsd: partial.candidateCostUsd ?? 0,
     judgeInputTokens: partial.judgeInputTokens ?? 0,
     judgeOutputTokens: partial.judgeOutputTokens ?? 0,
     judgeCostUsd: partial.judgeCostUsd ?? 0,
-    totalCostUsd: (partial.candidateCostUsd ?? 0) + (partial.judgeCostUsd ?? 0),
     judgeFailureCount: partial.judgeFailureCount ?? 0,
     latencyMs: partial.latencyMs ?? 0,
-    status: "failed",
-    failureKind,
-    error: message,
   };
 };
 
@@ -562,9 +520,63 @@ const buildPartialJudgeUsage = (
 const mean = (values: readonly number[]): number =>
   values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
-const estimateCellCostUsd = (bm: Benchmark, totalCells: number): number => {
-  if (!bm.costForecast || totalCells <= 0) return 0;
-  return bm.costForecast.estimatedTotalCostUsd / totalCells;
+const estimateCellCostUsd = (
+  benchmark: Benchmark,
+  totalCells: number,
+): number => {
+  const forecast = benchmark.costForecast;
+  if (!forecast || totalCells <= 0) return 0;
+  return forecast.estimatedTotalCostUsd / totalCells;
+};
+
+// Slice + shuffle cells so concurrent workers progress across all sample
+// points in lockstep (instead of finishing one cell before starting the
+// next). Keeps the matrix balanced if the run caps out on budget mid-stream.
+const buildSlices = (cells: readonly MatrixCell[], seed: number): CellSlice[] => {
+  const bySample = new Map<string, CellSlice>();
+  for (const cell of cells) {
+    const key = sampleKey(cell);
+    const existing = bySample.get(key);
+    if (existing) {
+      existing.cells.push(cell);
+      continue;
+    }
+    bySample.set(key, {
+      sampleKey: key,
+      runIndex: cell.runIndex,
+      cells: [cell],
+    });
+  }
+
+  const runBuckets = new Map<number, CellSlice[]>();
+  for (const slice of bySample.values()) {
+    runBuckets.set(slice.runIndex, [
+      ...(runBuckets.get(slice.runIndex) ?? []),
+      slice,
+    ]);
+  }
+
+  return [...runBuckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .flatMap(([runIndex, slices]) =>
+      shuffleItems(slices, hashSeed(seed, `run:${runIndex}`)).map((slice) => ({
+        ...slice,
+        cells: shuffleItems(slice.cells, hashSeed(seed, slice.sampleKey)),
+      })),
+    );
+};
+
+const shuffleItems = <T>(items: readonly T[], seed: number): T[] => {
+  const shuffled = [...items];
+  let state = seed >>> 0;
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    state = nextShuffleState(state);
+    const j = state % (i + 1);
+    const tmp = shuffled[i];
+    shuffled[i] = shuffled[j] as T;
+    shuffled[j] = tmp as T;
+  }
+  return shuffled;
 };
 
 const nextShuffleState = (state: number): number => {
@@ -584,10 +596,9 @@ const hashSeed = (seed: number, value: string): number => {
   return h >>> 0;
 };
 
-// Deterministic 32-bit seed derivation: a stable fold of the benchmark seed
-// and the cell coordinates so each (testCase, version, solver, runIndex)
-// gets a distinct but reproducible sampling seed.
-const deriveSeed = (benchmarkSeed: number, cell: Cell): number => {
+// Deterministic 32-bit seed derivation so each (testCase, version, solver,
+// runIndex) gets a distinct but reproducible sampling seed.
+const deriveSeed = (benchmarkSeed: number, cell: MatrixCell): number => {
   const str = `${cell.testCase.id}|${cell.version.id}|${cell.solverModel}|${cell.runIndex}`;
   let h = benchmarkSeed >>> 0;
   for (let i = 0; i < str.length; i += 1) {
@@ -599,7 +610,7 @@ const deriveSeed = (benchmarkSeed: number, cell: Cell): number => {
 
 const deriveJudgeSeed = (
   benchmarkSeed: number,
-  cell: Cell,
+  cell: MatrixCell,
   judgeModel: string,
 ): number => {
   const str = `${cell.testCase.id}|${cell.version.id}|${cell.solverModel}|${cell.runIndex}|${judgeModel}`;

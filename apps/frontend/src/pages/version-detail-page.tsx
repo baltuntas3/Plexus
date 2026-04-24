@@ -115,7 +115,6 @@ const ChatPanel = ({ promptId, version, currentMermaid, onResult }: ChatPanelPro
         body: {
           userMessage: text,
           generatorModel: model,
-          currentMermaid: currentMermaid ?? undefined,
         },
       });
 

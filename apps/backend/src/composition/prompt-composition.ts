@@ -60,7 +60,7 @@ export const createPromptComposition = (
     updateVersionName: new UpdateVersionNameUseCase(prompts),
     generateBraid: new GenerateBraidUseCase(prompts, generator, linter, idGenerator),
     lintVersion: new LintVersionUseCase(prompts, linter),
-    updateBraidGraph: new UpdateBraidGraphUseCase(prompts, linter),
+    updateBraidGraph: new UpdateBraidGraphUseCase(prompts, linter, idGenerator),
     chatBraid: new ChatBraidUseCase(prompts, chatAgents, linter, idGenerator),
     promptAggregateRepository: prompts,
     promptQueryService: queries,

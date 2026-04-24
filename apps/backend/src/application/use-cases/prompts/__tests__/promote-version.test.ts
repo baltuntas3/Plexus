@@ -100,4 +100,24 @@ describe("PromoteVersionUseCase", () => {
       }),
     ).rejects.toMatchObject({ code: "PROMPT_VERSION_NOT_FOUND" });
   });
+
+  it("surfaces a typed transition error when demoting back to draft", async () => {
+    await promoteVersion.execute({
+      promptId,
+      version: "v1",
+      ownerId,
+      targetStatus: "staging",
+    });
+    await expect(
+      promoteVersion.execute({
+        promptId,
+        version: "v1",
+        ownerId,
+        targetStatus: "draft",
+      }),
+    ).rejects.toMatchObject({
+      code: "PROMPT_INVALID_VERSION_TRANSITION",
+      details: { from: "staging", to: "draft" },
+    });
+  });
 });

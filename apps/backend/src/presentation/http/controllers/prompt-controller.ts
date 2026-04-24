@@ -180,7 +180,10 @@ export class PromptController {
       version,
       ownerId,
     });
-    res.json({ qualityScore: toGraphQualityScoreDto(result.qualityScore) });
+    res.json({
+      newVersion: result.newVersion,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+    });
   };
 
   chatBraid: RequestHandler = async (req: Request, res: Response) => {

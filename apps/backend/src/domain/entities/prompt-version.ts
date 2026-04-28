@@ -2,7 +2,6 @@ import type { VersionStatus } from "@plexus/shared-types";
 import {
   PromptInvalidVersionTransitionError,
   PromptSourceEmptyError,
-  ValidationError,
 } from "../errors/domain-error.js";
 import {
   BraidAuthorship,
@@ -54,9 +53,8 @@ export interface PromptVersionPrimitives {
 }
 
 export interface PromptVersionSnapshot {
-  readonly state: PromptVersionPrimitives;
+  readonly primitives: PromptVersionPrimitives;
   readonly expectedRevision: number;
-  readonly nextRevision: number;
 }
 
 export interface CreatePromptVersionParams {
@@ -107,19 +105,12 @@ export class BraidPromptRepresentation {
 
 export type PromptRepresentation = ClassicalPromptRepresentation | BraidPromptRepresentation;
 
-interface InternalState {
-  id: string;
-  promptId: string;
-  version: VersionLabel;
-  name: string | null;
-  parentVersionId: string | null;
-  sourcePrompt: string;
+// Internal state shape mirrors `PromptVersionPrimitives` exactly except for
+// `representation`, which is kept as a parsed class instance so getters
+// like `braidGraph` can return the VO without re-parsing on every access.
+type InternalState = Omit<PromptVersionPrimitives, "representation"> & {
   representation: PromptRepresentation;
-  status: VersionStatus;
-  revision: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
+};
 
 export class PromptVersion {
   private constructor(private state: InternalState) {}
@@ -135,7 +126,7 @@ export class PromptVersion {
     return new PromptVersion({
       id: params.id,
       promptId: params.promptId,
-      version: params.version,
+      version: params.version.toString(),
       name: normalizeVersionName(params.name ?? null),
       parentVersionId: params.parentVersionId ?? null,
       sourcePrompt: normalizeSourcePrompt(params.sourcePrompt),
@@ -148,16 +139,16 @@ export class PromptVersion {
   }
 
   static hydrate(primitives: PromptVersionPrimitives): PromptVersion {
+    // Validate at the persistence boundary: a malformed label in the store
+    // surfaces as a domain error here instead of silently flowing through.
+    // The parsed VO is discarded — internal state keeps the canonical string.
+    VersionLabel.parse(primitives.version);
     return new PromptVersion({
       id: primitives.id,
       promptId: primitives.promptId,
-      // Parse at the persistence boundary: a malformed label in the store
-      // surfaces as a domain error here instead of silently flowing through
-      // the rest of the aggregate as an unchecked string.
-      version: VersionLabel.parse(primitives.version),
+      version: primitives.version,
       name: normalizeVersionName(primitives.name),
       parentVersionId: primitives.parentVersionId ?? null,
-      // Persisted content was already validated at creation time; trust it.
       sourcePrompt: primitives.sourcePrompt,
       representation: hydrateRepresentation(primitives.representation),
       status: primitives.status,
@@ -198,10 +189,6 @@ export class PromptVersion {
   }
 
   get version(): string {
-    return this.state.version.toString();
-  }
-
-  get versionLabel(): VersionLabel {
     return this.state.version;
   }
 
@@ -281,37 +268,21 @@ export class PromptVersion {
 
   toPrimitives(): PromptVersionPrimitives {
     return {
-      id: this.state.id,
-      promptId: this.state.promptId,
-      version: this.state.version.toString(),
-      name: this.state.name,
-      parentVersionId: this.state.parentVersionId,
-      sourcePrompt: this.state.sourcePrompt,
+      ...this.state,
       representation: this.state.representation.toPrimitives(),
-      status: this.state.status,
-      revision: this.state.revision,
-      createdAt: this.state.createdAt,
-      updatedAt: this.state.updatedAt,
     };
   }
 
   toSnapshot(): PromptVersionSnapshot {
     const expectedRevision = this.state.revision;
-    const nextRevision = expectedRevision + 1;
     return {
-      state: { ...this.toPrimitives(), revision: nextRevision },
+      primitives: { ...this.toPrimitives(), revision: expectedRevision + 1 },
       expectedRevision,
-      nextRevision,
     };
   }
 
-  commit(snapshot: PromptVersionSnapshot): void {
-    if (snapshot.expectedRevision !== this.state.revision) {
-      throw ValidationError(
-        "Cannot commit a stale PromptVersion snapshot: revision advanced since the snapshot was taken",
-      );
-    }
-    this.state = { ...this.state, revision: snapshot.nextRevision };
+  markPersisted(): void {
+    this.state = { ...this.state, revision: this.state.revision + 1 };
   }
 }
 

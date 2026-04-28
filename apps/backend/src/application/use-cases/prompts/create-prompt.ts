@@ -3,6 +3,7 @@ import { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import type { IPromptRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
+import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import type { CreatePromptInputDto } from "../../dto/prompt-dto.js";
 import type {
   PromptSummary,
@@ -22,42 +23,43 @@ export interface CreatePromptResult {
   version: PromptVersionSummary;
 }
 
-// Creates a Prompt root and its initial PromptVersion. Two writes because
-// the two are separate aggregates; ordering is root-first so that on
-// partial failure the dangling prompt is visible (and repairable) rather
-// than a dangling version with no prompt. The root's versionCounter is
-// advanced by `allocateNextVersionLabel()` before the save so hydrate
-// reads see counter=1.
+// Creates a Prompt root and its initial PromptVersion. Both writes live
+// inside a single UoW: either the root (with versionCounter=1) and the
+// matching initial version land together, or nothing lands — a partially
+// created prompt can no longer strand `versionCounter=1` with no version.
 export class CreatePromptUseCase {
   constructor(
     private readonly prompts: IPromptRepository,
     private readonly versions: IPromptVersionRepository,
     private readonly idGenerator: IIdGenerator,
+    private readonly uow: IUnitOfWork,
   ) {}
 
   async execute(command: CreatePromptCommand): Promise<CreatePromptResult> {
-    const prompt = Prompt.create({
-      promptId: this.idGenerator.newId(),
-      ownerId: command.ownerId,
-      name: command.name,
-      description: command.description,
-      taskType: command.taskType,
-    });
-    const label = prompt.allocateNextVersionLabel();
-    const version = PromptVersion.create({
-      id: this.idGenerator.newId(),
-      promptId: prompt.id,
-      version: label,
-      sourcePrompt: command.initialPrompt,
-      parentVersionId: null,
-    });
+    return this.uow.run(async () => {
+      const prompt = Prompt.create({
+        promptId: this.idGenerator.newId(),
+        ownerId: command.ownerId,
+        name: command.name,
+        description: command.description,
+        taskType: command.taskType,
+      });
+      const label = prompt.allocateNextVersionLabel();
+      const version = PromptVersion.create({
+        id: this.idGenerator.newId(),
+        promptId: prompt.id,
+        version: label,
+        sourcePrompt: command.initialPrompt,
+        parentVersionId: null,
+      });
 
-    await this.prompts.save(prompt);
-    await this.versions.save(version);
+      await this.prompts.save(prompt);
+      await this.versions.save(version);
 
-    return {
-      prompt: promptToSummary(prompt),
-      version: versionToSummary(version),
-    };
+      return {
+        prompt: promptToSummary(prompt),
+        version: versionToSummary(version),
+      };
+    });
   }
 }

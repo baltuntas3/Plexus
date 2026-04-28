@@ -3,6 +3,7 @@ import { CreateVersionUseCase } from "../create-version.js";
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
 import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
 import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
+import { NoOpUnitOfWork } from "../../../../__tests__/fakes/no-op-unit-of-work.js";
 
 // createVersion forks when fromVersion is supplied, produces a root version
 // otherwise. The use case resolves `fromVersion` label → version via the
@@ -22,8 +23,9 @@ describe("CreateVersionUseCase", () => {
     prompts = new InMemoryPromptAggregateRepository();
     versions = new InMemoryPromptVersionRepository();
     ids = new InMemoryIdGenerator();
-    createPrompt = new CreatePromptUseCase(prompts, versions, ids);
-    createVersion = new CreateVersionUseCase(prompts, versions, ids);
+    const uow = new NoOpUnitOfWork();
+    createPrompt = new CreatePromptUseCase(prompts, versions, ids, uow);
+    createVersion = new CreateVersionUseCase(prompts, versions, ids, uow);
 
     const { prompt } = await createPrompt.execute({
       ownerId,

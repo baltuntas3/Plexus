@@ -4,6 +4,7 @@ import { PromoteVersionUseCase } from "../promote-version.js";
 import { InMemoryPromptAggregateRepository } from "../../../../__tests__/fakes/in-memory-prompt-aggregate-repository.js";
 import { InMemoryPromptVersionRepository } from "../../../../__tests__/fakes/in-memory-prompt-version-repository.js";
 import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
+import { NoOpUnitOfWork } from "../../../../__tests__/fakes/no-op-unit-of-work.js";
 
 describe("PromoteVersionUseCase", () => {
   let prompts: InMemoryPromptAggregateRepository;
@@ -18,9 +19,10 @@ describe("PromoteVersionUseCase", () => {
     prompts = new InMemoryPromptAggregateRepository();
     versions = new InMemoryPromptVersionRepository();
     const ids = new InMemoryIdGenerator();
-    createPrompt = new CreatePromptUseCase(prompts, versions, ids);
-    createVersion = new CreateVersionUseCase(prompts, versions, ids);
-    promoteVersion = new PromoteVersionUseCase(prompts, versions);
+    const uow = new NoOpUnitOfWork();
+    createPrompt = new CreatePromptUseCase(prompts, versions, ids, uow);
+    createVersion = new CreateVersionUseCase(prompts, versions, ids, uow);
+    promoteVersion = new PromoteVersionUseCase(prompts, versions, uow);
 
     const { prompt } = await createPrompt.execute({
       ownerId,

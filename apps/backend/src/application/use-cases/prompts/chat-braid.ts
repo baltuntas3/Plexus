@@ -1,6 +1,7 @@
 import type { IPromptRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
+import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import { BraidAuthorship } from "../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
@@ -45,6 +46,7 @@ export class ChatBraidUseCase {
     private readonly agents: IBraidChatAgentFactory,
     private readonly linter: GraphLinter,
     private readonly idGenerator: IIdGenerator,
+    private readonly uow: IUnitOfWork,
   ) {}
 
   async execute(command: ChatBraidCommand): Promise<ChatBraidResult> {
@@ -59,6 +61,9 @@ export class ChatBraidUseCase {
     const agent = this.agents.forModel(command.generatorModel);
 
     const currentMermaid = source.braidGraph?.mermaidCode;
+    // LLM call stays outside the UoW: external I/O should not ride inside
+    // a Mongo transaction, and the question branch below is a pure read
+    // path with nothing to commit.
     const chatResult = await agent.chat({
       sourcePrompt: source.sourcePrompt,
       taskType: prompt.taskType,
@@ -78,26 +83,28 @@ export class ChatBraidUseCase {
     );
     const qualityScore = this.linter.lint(graph);
 
-    const label = prompt.allocateNextVersionLabel();
-    const forked = PromptVersion.fork({
-      source,
-      newId: this.idGenerator.newId(),
-      newLabel: label,
-      initialBraid: {
-        graph,
-        authorship: BraidAuthorship.byModel(command.generatorModel),
-      },
+    return this.uow.run(async () => {
+      const label = prompt.allocateNextVersionLabel();
+      const forked = PromptVersion.fork({
+        source,
+        newId: this.idGenerator.newId(),
+        newLabel: label,
+        initialBraid: {
+          graph,
+          authorship: BraidAuthorship.byModel(command.generatorModel),
+        },
+      });
+
+      await this.versions.save(forked);
+      await this.prompts.save(prompt);
+
+      return {
+        type: "diagram",
+        mermaidCode: graph.mermaidCode,
+        newVersionName: forked.version,
+        qualityScore,
+        cost,
+      };
     });
-
-    await this.versions.save(forked);
-    await this.prompts.save(prompt);
-
-    return {
-      type: "diagram",
-      mermaidCode: graph.mermaidCode,
-      newVersionName: forked.version,
-      qualityScore,
-      cost,
-    };
   }
 }

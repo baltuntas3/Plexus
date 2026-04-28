@@ -2,10 +2,10 @@ import { MongoPromptAggregateRepository } from "../infrastructure/persistence/mo
 import { MongoPromptVersionRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-version-repository.js";
 import { MongoPromptQueryService } from "../infrastructure/persistence/mongoose/mongo-prompt-query-service.js";
 import { MongoObjectIdGenerator } from "../infrastructure/persistence/mongoose/object-id-generator.js";
+import { MongoUnitOfWork } from "../infrastructure/persistence/mongoose/mongo-unit-of-work.js";
 import type { IPromptQueryService } from "../application/queries/prompt-query-service.js";
-import type { IPromptRepository } from "../domain/repositories/prompt-aggregate-repository.js";
-import type { IPromptVersionRepository } from "../domain/repositories/prompt-version-repository.js";
 import type { IIdGenerator } from "../domain/services/id-generator.js";
+import type { IUnitOfWork } from "../domain/services/unit-of-work.js";
 import { CreatePromptUseCase } from "../application/use-cases/prompts/create-prompt.js";
 import { ListPromptsUseCase } from "../application/use-cases/prompts/list-prompts.js";
 import { GetPromptUseCase } from "../application/use-cases/prompts/get-prompt.js";
@@ -23,6 +23,11 @@ import type { GraphLinter } from "../application/services/braid/lint/graph-linte
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
 import { BraidChatAgentFactory } from "../application/services/braid/braid-chat-agent-factory.js";
 
+// Context boundary: only the capabilities required by presentation and by
+// adjacent bounded contexts (benchmark reads the published read model) are
+// exposed. Internal ports — write repositories, id generation, UoW — are
+// kept private to the prompt composition so other contexts cannot reach
+// past the use-case surface and mutate Prompt state directly.
 export interface PromptComposition {
   createPrompt: CreatePromptUseCase;
   listPrompts: ListPromptsUseCase;
@@ -36,10 +41,7 @@ export interface PromptComposition {
   lintVersion: LintVersionUseCase;
   updateBraidGraph: UpdateBraidGraphUseCase;
   chatBraid: ChatBraidUseCase;
-  promptAggregateRepository: IPromptRepository;
-  promptVersionRepository: IPromptVersionRepository;
   promptQueryService: IPromptQueryService;
-  idGenerator: IIdGenerator;
 }
 
 export const createPromptComposition = (
@@ -51,24 +53,29 @@ export const createPromptComposition = (
   const versions = new MongoPromptVersionRepository();
   const queries = new MongoPromptQueryService();
   const idGenerator: IIdGenerator = new MongoObjectIdGenerator();
+  const uow: IUnitOfWork = new MongoUnitOfWork();
   const chatAgents = new BraidChatAgentFactory(providers);
 
   return {
-    createPrompt: new CreatePromptUseCase(prompts, versions, idGenerator),
+    createPrompt: new CreatePromptUseCase(prompts, versions, idGenerator, uow),
     listPrompts: new ListPromptsUseCase(queries),
     getPrompt: new GetPromptUseCase(queries),
-    createVersion: new CreateVersionUseCase(prompts, versions, idGenerator),
+    createVersion: new CreateVersionUseCase(prompts, versions, idGenerator, uow),
     listVersions: new ListVersionsUseCase(queries),
     getVersion: new GetVersionUseCase(queries),
-    promoteVersion: new PromoteVersionUseCase(prompts, versions),
+    promoteVersion: new PromoteVersionUseCase(prompts, versions, uow),
     updateVersionName: new UpdateVersionNameUseCase(prompts, versions),
-    generateBraid: new GenerateBraidUseCase(prompts, versions, generator, linter, idGenerator),
+    generateBraid: new GenerateBraidUseCase(
+      prompts,
+      versions,
+      generator,
+      linter,
+      idGenerator,
+      uow,
+    ),
     lintVersion: new LintVersionUseCase(prompts, versions, linter),
-    updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter, idGenerator),
-    chatBraid: new ChatBraidUseCase(prompts, versions, chatAgents, linter, idGenerator),
-    promptAggregateRepository: prompts,
-    promptVersionRepository: versions,
+    updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter, idGenerator, uow),
+    chatBraid: new ChatBraidUseCase(prompts, versions, chatAgents, linter, idGenerator, uow),
     promptQueryService: queries,
-    idGenerator,
   };
 };

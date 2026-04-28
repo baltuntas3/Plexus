@@ -6,6 +6,7 @@ import {
 } from "../../../domain/entities/prompt.js";
 import { PromptAggregateStaleError } from "../../../domain/errors/domain-error.js";
 import { PromptModel } from "./prompt-model.js";
+import { getCurrentSession } from "./transaction-context.js";
 
 interface PromptDocShape {
   _id: Types.ObjectId;
@@ -40,33 +41,42 @@ const toPromptPrimitives = (doc: PromptDocShape): PromptPrimitives => ({
 // not touch the version collection.
 export class MongoPromptAggregateRepository implements IPromptRepository {
   async findById(id: string): Promise<Prompt | null> {
-    const doc = await PromptModel.findById(id).lean<PromptDocShape>();
+    const session = getCurrentSession();
+    const doc = await PromptModel.findById(id, null, { session }).lean<PromptDocShape>();
     return doc ? Prompt.hydrate(toPromptPrimitives(doc)) : null;
   }
 
   async findOwnedById(id: string, ownerId: string): Promise<Prompt | null> {
-    const doc = await PromptModel.findOne({ _id: id, ownerId }).lean<PromptDocShape>();
+    const session = getCurrentSession();
+    const doc = await PromptModel.findOne({ _id: id, ownerId }, null, {
+      session,
+    }).lean<PromptDocShape>();
     return doc ? Prompt.hydrate(toPromptPrimitives(doc)) : null;
   }
 
   async save(prompt: Prompt): Promise<void> {
-    const snapshot = prompt.toSnapshot();
-    const { root, expectedRevision, nextRevision } = snapshot;
+    const { primitives, expectedRevision } = prompt.toSnapshot();
+    const session = getCurrentSession();
 
     if (expectedRevision === 0) {
       try {
-        await PromptModel.create({
-          _id: root.id,
-          name: root.name,
-          description: root.description,
-          taskType: root.taskType,
-          ownerId: root.ownerId,
-          productionVersionId: root.productionVersionId,
-          versionCounter: root.versionCounter,
-          revision: nextRevision,
-          createdAt: root.createdAt,
-          updatedAt: root.updatedAt,
-        });
+        await PromptModel.create(
+          [
+            {
+              _id: primitives.id,
+              name: primitives.name,
+              description: primitives.description,
+              taskType: primitives.taskType,
+              ownerId: primitives.ownerId,
+              productionVersionId: primitives.productionVersionId,
+              versionCounter: primitives.versionCounter,
+              revision: primitives.revision,
+              createdAt: primitives.createdAt,
+              updatedAt: primitives.updatedAt,
+            },
+          ],
+          { session },
+        );
       } catch (err) {
         if (isDuplicateKeyError(err)) {
           throw PromptAggregateStaleError();
@@ -75,26 +85,27 @@ export class MongoPromptAggregateRepository implements IPromptRepository {
       }
     } else {
       const result = await PromptModel.updateOne(
-        { _id: root.id, revision: expectedRevision },
+        { _id: primitives.id, revision: expectedRevision },
         {
           $set: {
-            name: root.name,
-            description: root.description,
-            taskType: root.taskType,
-            ownerId: root.ownerId,
-            productionVersionId: root.productionVersionId,
-            versionCounter: root.versionCounter,
-            revision: nextRevision,
-            updatedAt: root.updatedAt,
+            name: primitives.name,
+            description: primitives.description,
+            taskType: primitives.taskType,
+            ownerId: primitives.ownerId,
+            productionVersionId: primitives.productionVersionId,
+            versionCounter: primitives.versionCounter,
+            revision: primitives.revision,
+            updatedAt: primitives.updatedAt,
           },
         },
+        { session },
       );
       if (result.matchedCount === 0) {
         throw PromptAggregateStaleError();
       }
     }
 
-    prompt.commit(snapshot);
+    prompt.markPersisted();
   }
 }
 

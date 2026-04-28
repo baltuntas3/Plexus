@@ -1,12 +1,12 @@
 import type { TaskType } from "@plexus/shared-types";
-import { ValidationError } from "../errors/domain-error.js";
+import { PromptNotOwnedError, ValidationError } from "../errors/domain-error.js";
 import { VersionLabel } from "../value-objects/version-label.js";
 
 // Prompt is the write-side aggregate root for prompt identity and the
 // "one production per prompt" pointer. Version content is its own aggregate
 // (PromptVersion) referenced by id — the root never loads the version list
-// at write time, so rename/promote/generate do not pay an O(|versions|)
-// hydrate cost.
+// at write time, so promote/generate do not pay an O(|versions|) hydrate
+// cost.
 
 export interface PromptPrimitives {
   id: string;
@@ -29,26 +29,12 @@ export interface PromptPrimitives {
   updatedAt: Date;
 }
 
-// Snapshot the aggregate hands to the repository at save time. Versions live
-// in their own aggregate now, so the snapshot carries only root state —
-// there is no child collection to diff.
+// Snapshot the aggregate hands to the repository at save time.
+// `primitives.revision` is already the post-write value; `expectedRevision`
+// is the WHERE-clause guard used for optimistic concurrency.
 export interface PromptSnapshot {
-  readonly root: PromptPrimitives;
+  readonly primitives: PromptPrimitives;
   readonly expectedRevision: number;
-  readonly nextRevision: number;
-}
-
-interface InternalPromptState {
-  id: string;
-  name: string;
-  description: string;
-  taskType: TaskType;
-  ownerId: string;
-  productionVersionId: string | null;
-  versionCounter: number;
-  revision: number;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface CreatePromptParams {
@@ -62,13 +48,17 @@ export interface CreatePromptParams {
 }
 
 export class Prompt {
-  private constructor(private state: InternalPromptState) {}
+  private constructor(private state: PromptPrimitives) {}
 
   static create(params: CreatePromptParams): Prompt {
+    const name = params.name.trim();
+    if (name.length === 0) {
+      throw ValidationError("Prompt name must not be empty");
+    }
     const now = params.createdAt ?? new Date();
     return new Prompt({
       id: params.promptId,
-      name: params.name,
+      name,
       description: params.description,
       taskType: params.taskType,
       ownerId: params.ownerId,
@@ -137,7 +127,7 @@ export class Prompt {
 
   assertOwnedBy(userId: string): void {
     if (this.state.ownerId !== userId) {
-      throw ValidationError("Caller does not own this prompt");
+      throw PromptNotOwnedError();
     }
   }
 
@@ -149,55 +139,36 @@ export class Prompt {
   // counter. Version creation itself happens in the PromptVersion aggregate;
   // the Prompt root owns only the label-allocation invariant.
   allocateNextVersionLabel(): VersionLabel {
-    const nextCounter = this.state.versionCounter + 1;
-    this.state = { ...this.state, versionCounter: nextCounter };
+    this.state.versionCounter += 1;
     this.touch();
-    return VersionLabel.fromSequence(nextCounter);
+    return VersionLabel.fromSequence(this.state.versionCounter);
   }
 
   setProductionVersion(versionId: string): void {
     if (this.state.productionVersionId === versionId) return;
-    this.state = { ...this.state, productionVersionId: versionId };
+    this.state.productionVersionId = versionId;
     this.touch();
   }
 
   clearProductionVersion(): void {
     if (this.state.productionVersionId === null) return;
-    this.state = { ...this.state, productionVersionId: null };
+    this.state.productionVersionId = null;
     this.touch();
   }
 
   toSnapshot(): PromptSnapshot {
     const expectedRevision = this.state.revision;
-    const nextRevision = expectedRevision + 1;
     return {
-      root: {
-        id: this.state.id,
-        name: this.state.name,
-        description: this.state.description,
-        taskType: this.state.taskType,
-        ownerId: this.state.ownerId,
-        productionVersionId: this.state.productionVersionId,
-        versionCounter: this.state.versionCounter,
-        revision: nextRevision,
-        createdAt: this.state.createdAt,
-        updatedAt: this.state.updatedAt,
-      },
+      primitives: { ...this.state, revision: expectedRevision + 1 },
       expectedRevision,
-      nextRevision,
     };
   }
 
-  commit(snapshot: PromptSnapshot): void {
-    if (snapshot.expectedRevision !== this.state.revision) {
-      throw ValidationError(
-        "Cannot commit a stale snapshot: aggregate revision advanced since the snapshot was taken",
-      );
-    }
-    this.state = { ...this.state, revision: snapshot.nextRevision };
+  markPersisted(): void {
+    this.state.revision += 1;
   }
 
   private touch(): void {
-    this.state = { ...this.state, updatedAt: new Date() };
+    this.state.updatedAt = new Date();
   }
 }

@@ -1,6 +1,7 @@
 import type { IPromptRepository } from "../../../domain/repositories/prompt-aggregate-repository.js";
 import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
+import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import { BraidAuthorship } from "../../../domain/value-objects/braid-authorship.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
@@ -30,37 +31,40 @@ export class UpdateBraidGraphUseCase {
     private readonly versions: IPromptVersionRepository,
     private readonly linter: GraphLinter,
     private readonly idGenerator: IIdGenerator,
+    private readonly uow: IUnitOfWork,
   ) {}
 
   async execute(command: UpdateBraidGraphCommand): Promise<UpdateBraidGraphResult> {
-    const { prompt, version: source } = await loadOwnedPromptAndVersion(
-      this.prompts,
-      this.versions,
-      command.promptId,
-      command.version,
-      command.ownerId,
-    );
-    if (!source.hasBraidRepresentation) {
-      throw ValidationError(
-        "Cannot edit mermaid on a version that has no BRAID graph yet",
+    return this.uow.run(async () => {
+      const { prompt, version: source } = await loadOwnedPromptAndVersion(
+        this.prompts,
+        this.versions,
+        command.promptId,
+        command.version,
+        command.ownerId,
       );
-    }
-    const graph = BraidGraph.parse(command.mermaidCode);
+      if (!source.hasBraidRepresentation) {
+        throw ValidationError(
+          "Cannot edit mermaid on a version that has no BRAID graph yet",
+        );
+      }
+      const graph = BraidGraph.parse(command.mermaidCode);
 
-    const label = prompt.allocateNextVersionLabel();
-    const forked = PromptVersion.fork({
-      source,
-      newId: this.idGenerator.newId(),
-      newLabel: label,
-      initialBraid: {
-        graph,
-        authorship: BraidAuthorship.manual(source.generatorModel),
-      },
+      const label = prompt.allocateNextVersionLabel();
+      const forked = PromptVersion.fork({
+        source,
+        newId: this.idGenerator.newId(),
+        newLabel: label,
+        initialBraid: {
+          graph,
+          authorship: BraidAuthorship.manual(source.generatorModel),
+        },
+      });
+
+      await this.versions.save(forked);
+      await this.prompts.save(prompt);
+
+      return { newVersion: forked.version, qualityScore: this.linter.lint(graph) };
     });
-
-    await this.versions.save(forked);
-    await this.prompts.save(prompt);
-
-    return { newVersion: forked.version, qualityScore: this.linter.lint(graph) };
   }
 }

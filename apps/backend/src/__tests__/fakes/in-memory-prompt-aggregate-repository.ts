@@ -24,15 +24,15 @@ export class InMemoryPromptAggregateRepository implements IPromptRepository {
   }
 
   async save(prompt: Prompt): Promise<void> {
-    const snapshot = prompt.toSnapshot();
+    const { primitives, expectedRevision } = prompt.toSnapshot();
     const stored = this.storedRevisions.get(prompt.id);
-    if (stored !== undefined && stored !== snapshot.expectedRevision) {
+    if (stored !== undefined && stored !== expectedRevision) {
       throw PromptAggregateStaleError();
     }
-    const hydrated = Prompt.hydrate(snapshot.root);
+    const hydrated = Prompt.hydrate(primitives);
     this.prompts.set(prompt.id, hydrated);
-    this.storedRevisions.set(prompt.id, snapshot.nextRevision);
+    this.storedRevisions.set(prompt.id, primitives.revision);
     this.queryService?.seedPromptRoot(hydrated);
-    prompt.commit(snapshot);
+    prompt.markPersisted();
   }
 }

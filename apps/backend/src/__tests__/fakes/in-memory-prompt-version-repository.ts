@@ -26,15 +26,15 @@ export class InMemoryPromptVersionRepository implements IPromptVersionRepository
   }
 
   async save(version: PromptVersion): Promise<void> {
-    const snapshot = version.toSnapshot();
+    const { primitives, expectedRevision } = version.toSnapshot();
     const stored = this.storedRevisions.get(version.id);
-    if (stored !== undefined && stored !== snapshot.expectedRevision) {
+    if (stored !== undefined && stored !== expectedRevision) {
       throw PromptVersionAggregateStaleError();
     }
-    const hydrated = PromptVersion.hydrate(snapshot.state);
+    const hydrated = PromptVersion.hydrate(primitives);
     this.versions.set(version.id, hydrated);
-    this.storedRevisions.set(version.id, snapshot.nextRevision);
+    this.storedRevisions.set(version.id, primitives.revision);
     this.queryService?.seedVersion(hydrated);
-    version.commit(snapshot);
+    version.markPersisted();
   }
 }

@@ -11,6 +11,9 @@ export interface RegisterRequest {
   email: string;
   password: string;
   name: string;
+  // Display name for the organization the new user owns. Server derives a
+  // slug from it and resolves collisions automatically.
+  organizationName: string;
 }
 
 export interface LoginRequest {

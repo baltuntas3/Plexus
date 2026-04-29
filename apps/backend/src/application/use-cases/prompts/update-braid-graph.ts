@@ -8,12 +8,14 @@ import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
-import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
+import { assertVariableIntegrity } from "../../services/prompts/variable-integrity.js";
+import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
 export interface UpdateBraidGraphCommand {
   promptId: string;
   version: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
   mermaidCode: string;
 }
 
@@ -36,12 +38,12 @@ export class UpdateBraidGraphUseCase {
 
   async execute(command: UpdateBraidGraphCommand): Promise<UpdateBraidGraphResult> {
     return this.uow.run(async () => {
-      const { prompt, version: source } = await loadOwnedPromptAndVersion(
+      const { prompt, version: source } = await loadPromptAndVersionInOrganization(
         this.prompts,
         this.versions,
         command.promptId,
         command.version,
-        command.ownerId,
+        command.organizationId,
       );
       if (!source.hasBraidRepresentation) {
         throw ValidationError(
@@ -49,6 +51,16 @@ export class UpdateBraidGraphUseCase {
         );
       }
       const graph = BraidGraph.parse(command.mermaidCode);
+
+      // Variables are inherited from the source; manual mermaid edits must
+      // not reference an undeclared `{{var}}`. Editing the variable list is
+      // a separate flow (CreateVersion with `variables`), so this fork
+      // path validates against the source's set unchanged.
+      assertVariableIntegrity({
+        body: source.sourcePrompt,
+        mermaid: graph.mermaidCode,
+        variables: source.variables,
+      });
 
       const label = prompt.allocateNextVersionLabel();
       const forked = PromptVersion.fork({

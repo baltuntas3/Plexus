@@ -13,7 +13,8 @@ import { BraidGraph } from "../../../../domain/value-objects/braid-graph.js";
 const makePromptAndInitialVersion = (): { prompt: Prompt; v1: PromptVersion } => {
   const prompt = Prompt.create({
     promptId: "prompt-1",
-    ownerId: "u1",
+    organizationId: "org-1",
+    creatorId: "u1",
     name: "p",
     description: "",
     taskType: "general",

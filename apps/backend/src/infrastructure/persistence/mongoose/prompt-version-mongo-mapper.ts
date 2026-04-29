@@ -18,6 +18,13 @@ interface AuthorshipDoc {
   derivedFromModel?: string | null;
 }
 
+interface VariableDoc {
+  name: string;
+  description?: string | null;
+  defaultValue?: string | null;
+  required?: boolean;
+}
+
 export interface PromptVersionDocShape {
   _id: Types.ObjectId;
   promptId: Types.ObjectId;
@@ -33,6 +40,7 @@ export interface PromptVersionDocShape {
     // `authorship` is missing so old documents still hydrate correctly.
     generatorModel?: string | null;
   };
+  variables?: VariableDoc[];
   status: PromptVersionPrimitives["status"];
   revision?: number;
   createdAt: Date;
@@ -77,6 +85,18 @@ const hydrateAuthorship = (
   return { kind: "classical" };
 };
 
+const hydrateVariables = (
+  docs: VariableDoc[] | undefined,
+): PromptVersionPrimitives["variables"] => {
+  if (!docs || docs.length === 0) return [];
+  return docs.map((d) => ({
+    name: d.name,
+    description: d.description ?? null,
+    defaultValue: d.defaultValue ?? null,
+    required: d.required ?? false,
+  }));
+};
+
 export const toVersionPrimitives = (
   doc: PromptVersionDocShape,
 ): PromptVersionPrimitives => ({
@@ -87,6 +107,7 @@ export const toVersionPrimitives = (
   parentVersionId: doc.parentVersionId ? String(doc.parentVersionId) : null,
   sourcePrompt: doc.sourcePrompt,
   representation: hydrateAuthorship(doc.representation),
+  variables: hydrateVariables(doc.variables),
   status: doc.status,
   revision: doc.revision ?? 0,
   createdAt: doc.createdAt,
@@ -128,6 +149,7 @@ export const toVersionSummary = (
     braidGraph,
     braidAuthorship: authorship,
     generatorModel,
+    variables: hydrateVariables(doc.variables),
     executablePrompt: braidGraph ?? doc.sourcePrompt,
     status: doc.status,
     createdAt: doc.createdAt,
@@ -151,6 +173,12 @@ export const toVersionDocSet = (
           authorship: version.representation.authorship,
         }
       : { kind: "classical", graph: null, authorship: null },
+  variables: version.variables.map((v) => ({
+    name: v.name,
+    description: v.description,
+    defaultValue: v.defaultValue,
+    required: v.required,
+  })),
   status: version.status,
   revision: version.revision,
   createdAt: version.createdAt,

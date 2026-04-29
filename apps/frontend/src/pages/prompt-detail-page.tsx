@@ -13,7 +13,7 @@ import {
 import { useAtomValue, useSetAtom } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
 import { notifications } from "@mantine/notifications";
-import type { VersionStatus } from "@plexus/shared-types";
+import { VERSION_STATUSES, type VersionStatus } from "@plexus/shared-types";
 import {
   fetchPromptDetailAtom,
   promoteVersionAtom,
@@ -24,9 +24,17 @@ import { ApiError } from "../lib/api-client.js";
 
 const statusColor: Record<VersionStatus, string> = {
   draft: "gray",
+  development: "blue",
   staging: "yellow",
   production: "green",
 };
+
+// `draft` is the initial state and cannot be re-entered (domain rule).
+// Every other status is reachable in either direction so the workflow
+// supports both promotions and rollback (e.g. `production → staging`).
+const PROMOTABLE_STATUSES: ReadonlyArray<Exclude<VersionStatus, "draft">> = VERSION_STATUSES.filter(
+  (s): s is Exclude<VersionStatus, "draft"> => s !== "draft",
+);
 
 export const PromptDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -122,16 +130,17 @@ export const PromptDetailPage = () => {
               <Table.Td>{new Date(v.createdAt).toLocaleDateString()}</Table.Td>
               <Table.Td>
                 <Group gap="xs">
-                  {v.status !== "staging" && (
-                    <Button size="xs" variant="light" onClick={() => handlePromote(v.version, "staging")}>
-                      → staging
+                  {PROMOTABLE_STATUSES.filter((target) => target !== v.status).map((target) => (
+                    <Button
+                      key={target}
+                      size="xs"
+                      variant={target === "production" ? "filled" : "light"}
+                      color={statusColor[target]}
+                      onClick={() => handlePromote(v.version, target)}
+                    >
+                      → {target}
                     </Button>
-                  )}
-                  {v.status !== "production" && (
-                    <Button size="xs" color="green" onClick={() => handlePromote(v.version, "production")}>
-                      → production
-                    </Button>
-                  )}
+                  ))}
                 </Group>
               </Table.Td>
             </Table.Tr>

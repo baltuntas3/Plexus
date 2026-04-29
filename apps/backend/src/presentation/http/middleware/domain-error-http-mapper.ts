@@ -12,17 +12,21 @@ export const domainErrorCodeToHttpStatus = (code: DomainErrorCode): number => {
     case "BENCHMARK_MATRIX_EMPTY":
     case "BENCHMARK_NO_JUDGES":
     case "BENCHMARK_INVALID_REPETITIONS":
+    case "ORGANIZATION_OWNER_INVARIANT":
       return 400;
     case "UNAUTHORIZED":
       return 401;
     case "FORBIDDEN":
     case "PROMPT_NOT_OWNED":
     case "BENCHMARK_NOT_OWNED":
+    case "ORGANIZATION_MEMBERSHIP_REQUIRED":
       return 403;
     case "NOT_FOUND":
     case "PROMPT_NOT_FOUND":
     case "PROMPT_VERSION_NOT_FOUND":
     case "BENCHMARK_NOT_FOUND":
+    case "ORGANIZATION_NOT_FOUND":
+    case "ORGANIZATION_MEMBER_NOT_FOUND":
       return 404;
     case "CONFLICT":
     case "PROMPT_AGGREGATE_STALE":
@@ -31,6 +35,9 @@ export const domainErrorCodeToHttpStatus = (code: DomainErrorCode): number => {
     case "BENCHMARK_AGGREGATE_STALE":
     case "BENCHMARK_ILLEGAL_TRANSITION":
     case "BENCHMARK_NOT_IN_DRAFT":
+    case "ORGANIZATION_AGGREGATE_STALE":
+    case "ORGANIZATION_MEMBER_AGGREGATE_STALE":
+    case "ORGANIZATION_SLUG_TAKEN":
       return 409;
     case "INTERNAL":
       return 500;

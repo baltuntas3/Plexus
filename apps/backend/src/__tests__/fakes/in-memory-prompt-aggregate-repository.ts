@@ -17,9 +17,12 @@ export class InMemoryPromptAggregateRepository implements IPromptRepository {
     return this.prompts.get(id) ?? null;
   }
 
-  async findOwnedById(id: string, ownerId: string): Promise<Prompt | null> {
+  async findInOrganization(
+    id: string,
+    organizationId: string,
+  ): Promise<Prompt | null> {
     const prompt = this.prompts.get(id);
-    if (!prompt || prompt.ownerId !== ownerId) return null;
+    if (!prompt || prompt.organizationId !== organizationId) return null;
     return prompt;
   }
 

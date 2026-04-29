@@ -23,7 +23,7 @@ const createVersion = (
     sourcePrompt: string;
     braidGraph?: string;
     generatorModel?: string;
-    ownerId?: string;
+    organizationId?: string;
   },
 ): PromptVersionSummary => {
   const now = new Date();
@@ -31,16 +31,17 @@ const createVersion = (
   const resolvedGeneratorModel = braidGraph
     ? params.generatorModel ?? "openai/gpt-oss-120b"
     : null;
-  const ownerId = params.ownerId ?? "u1";
-  // Seed an owning prompt so owner-scoped lookups succeed. The query
-  // service now joins versions to their prompt to enforce ownership, so
-  // orphan version summaries would be invisible to findOwned*.
+  const organizationId = params.organizationId ?? "org-1";
+  // Seed an owning prompt so org-scoped lookups succeed. The query service
+  // joins versions to their prompt to enforce tenant isolation, so orphan
+  // version summaries would be invisible to findVersion*InOrganization.
   queries.seedPromptSummary({
     id: params.promptId,
     name: params.promptId,
     description: "",
     taskType: "general",
-    ownerId,
+    organizationId,
+    creatorId: "u1",
     productionVersion: null,
     createdAt: now,
     updatedAt: now,
@@ -57,6 +58,7 @@ const createVersion = (
       ? { kind: "model", model: resolvedGeneratorModel }
       : null,
     generatorModel: resolvedGeneratorModel,
+    variables: [],
     executablePrompt: braidGraph ?? params.sourcePrompt,
     status: "draft",
     createdAt: now,
@@ -158,7 +160,8 @@ const buildScaffold = async () => {
 // about the knobs it mutates.
 type BenchmarkTestOverrides = {
   name?: string;
-  ownerId?: string;
+  organizationId?: string;
+  creatorId?: string;
   promptVersionIds?: string[];
   solverModels?: string[];
   judgeModels?: string[];
@@ -186,7 +189,8 @@ const queueBenchmark = async (
   const benchmark = Benchmark.create({
     id: `bm-${benchmarkIdSeq++}`,
     name: overrides.name ?? "bm",
-    ownerId: overrides.ownerId ?? "u1",
+    organizationId: overrides.organizationId ?? "org-1",
+    creatorId: overrides.creatorId ?? "u1",
     promptVersionIds: overrides.promptVersionIds ?? [versionId],
     solverModels: overrides.solverModels ?? ["openai/gpt-oss-20b"],
     judgeModels: overrides.judgeModels ?? ["openai/gpt-oss-20b"],

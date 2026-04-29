@@ -17,7 +17,8 @@ import { BenchmarkModel } from "./benchmark-model.js";
 interface BenchmarkSummaryDoc {
   _id: Types.ObjectId;
   name: string;
-  ownerId: Types.ObjectId;
+  organizationId: Types.ObjectId;
+  creatorId: Types.ObjectId;
   promptVersionIds: Types.ObjectId[];
   solverModels: string[];
   judgeModels: string[];
@@ -45,7 +46,8 @@ interface BenchmarkSummaryDoc {
 const toSummary = (doc: BenchmarkSummaryDoc): BenchmarkSummary => ({
   id: String(doc._id),
   name: doc.name,
-  ownerId: String(doc.ownerId),
+  organizationId: String(doc.organizationId),
+  creatorId: String(doc.creatorId),
   promptVersionIds: doc.promptVersionIds.map((x) => String(x)),
   solverModels: doc.solverModels,
   judgeModels: doc.judgeModels,
@@ -77,7 +79,7 @@ export class MongoBenchmarkQueryService implements IBenchmarkQueryService {
   async listBenchmarkSummaries(
     query: ListBenchmarkSummariesQuery,
   ): Promise<BenchmarkSummaryListResult> {
-    const filter = { ownerId: query.ownerId };
+    const filter = { organizationId: query.organizationId };
     const skip = (query.page - 1) * query.pageSize;
     const [docs, total] = await Promise.all([
       BenchmarkModel.find(filter, { testCases: 0 })

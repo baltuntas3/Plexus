@@ -17,11 +17,11 @@ import {
   toPromptVersionDto,
 } from "../mappers/prompt-mappers.js";
 
-const requireUserId = (req: Request): string => {
-  if (!req.userId) {
+const requireAuth = (req: Request): { userId: string; organizationId: string } => {
+  if (!req.userId || !req.organizationId) {
     throw UnauthorizedError();
   }
-  return req.userId;
+  return { userId: req.userId, organizationId: req.organizationId };
 };
 
 const requireParam = (req: Request, name: string): string => {
@@ -36,9 +36,13 @@ export class PromptController {
   constructor(private readonly prompts: PromptComposition) {}
 
   create: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const input = createPromptInputSchema.parse(req.body);
-    const { prompt, version } = await this.prompts.createPrompt.execute({ ...input, ownerId });
+    const { prompt, version } = await this.prompts.createPrompt.execute({
+      ...input,
+      organizationId,
+      userId,
+    });
     res.status(201).json({
       prompt: toPromptDto(prompt),
       version: toPromptVersionDto(version),
@@ -46,9 +50,12 @@ export class PromptController {
   };
 
   list: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { organizationId } = requireAuth(req);
     const query = listPromptsQuerySchema.parse(req.query);
-    const result = await this.prompts.listPrompts.execute({ ...query, ownerId });
+    const result = await this.prompts.listPrompts.execute({
+      ...query,
+      organizationId,
+    });
     res.json({
       items: result.items.map(toPromptDto),
       total: result.total,
@@ -58,32 +65,33 @@ export class PromptController {
   };
 
   get: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
-    const prompt = await this.prompts.getPrompt.execute(id, ownerId);
+    const prompt = await this.prompts.getPrompt.execute(id, organizationId);
     res.json({ prompt: toPromptDto(prompt) });
   };
 
   createVersion: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const input = createVersionInputSchema.parse(req.body);
     const version = await this.prompts.createVersion.execute({
       ...input,
       promptId: id,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.status(201).json({ version: toPromptVersionDto(version) });
   };
 
   listVersions: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const query = listVersionsQuerySchema.parse(req.query);
     const result = await this.prompts.listVersions.execute({
       ...query,
       promptId: id,
-      ownerId,
+      organizationId,
     });
     res.json({
       items: result.items.map(toPromptVersionDto),
@@ -94,19 +102,19 @@ export class PromptController {
   };
 
   getVersion: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const version = requireParam(req, "version");
     const result = await this.prompts.getVersion.execute({
       promptId: id,
       version,
-      ownerId,
+      organizationId,
     });
     res.json({ version: toPromptVersionDto(result) });
   };
 
   promoteVersion: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const version = requireParam(req, "version");
     const input = promoteVersionInputSchema.parse(req.body);
@@ -114,13 +122,14 @@ export class PromptController {
       ...input,
       promptId: id,
       version,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.json({ version: toPromptVersionDto(updated) });
   };
 
   updateVersionName: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const version = requireParam(req, "version");
     const input = updateVersionInputSchema.parse(req.body);
@@ -128,13 +137,14 @@ export class PromptController {
       ...input,
       promptId: id,
       version,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.json({ version: toPromptVersionDto(updated) });
   };
 
   generateBraid: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const version = requireParam(req, "version");
     const input = generateBraidInputSchema.parse(req.body);
@@ -142,7 +152,8 @@ export class PromptController {
       ...input,
       promptId: id,
       version,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.json({
       version: toPromptVersionDto(result.version),
@@ -158,19 +169,20 @@ export class PromptController {
   };
 
   lintVersion: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const version = requireParam(req, "version");
     const score = await this.prompts.lintVersion.execute({
       promptId: id,
       version,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.json({ qualityScore: toGraphQualityScoreDto(score) });
   };
 
   updateBraid: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const version = requireParam(req, "version");
     const input = updateBraidInputSchema.parse(req.body);
@@ -178,7 +190,8 @@ export class PromptController {
       ...input,
       promptId: id,
       version,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.json({
       newVersion: result.newVersion,
@@ -187,7 +200,7 @@ export class PromptController {
   };
 
   chatBraid: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const version = requireParam(req, "version");
     const input = chatBraidInputSchema.parse(req.body);
@@ -195,7 +208,8 @@ export class PromptController {
       ...input,
       promptId: id,
       version,
-      ownerId,
+      organizationId,
+      userId,
     });
     if (result.type === "question") {
       res.json({ type: "question", question: result.question });

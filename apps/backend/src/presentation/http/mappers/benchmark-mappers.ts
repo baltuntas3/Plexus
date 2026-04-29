@@ -16,7 +16,8 @@ type BenchmarkLike = Benchmark | BenchmarkSummary;
 export const toBenchmarkDto = (bm: BenchmarkLike): BenchmarkDto => ({
   id: bm.id,
   name: bm.name,
-  ownerId: bm.ownerId,
+  organizationId: bm.organizationId,
+  creatorId: bm.creatorId,
   promptVersionIds: [...bm.promptVersionIds],
   solverModels: [...bm.solverModels],
   judgeModels: [...bm.judgeModels],

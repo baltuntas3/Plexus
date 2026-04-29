@@ -3,12 +3,13 @@ import type { IPromptVersionRepository } from "../../../domain/repositories/prom
 import { PromptVersionHasNoBraidError } from "../../../domain/errors/domain-error.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
-import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
+import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
 export interface LintVersionCommand {
   promptId: string;
   version: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 export class LintVersionUseCase {
@@ -19,12 +20,12 @@ export class LintVersionUseCase {
   ) {}
 
   async execute(command: LintVersionCommand): Promise<GraphQualityScore> {
-    const { version } = await loadOwnedPromptAndVersion(
+    const { version } = await loadPromptAndVersionInOrganization(
       this.prompts,
       this.versions,
       command.promptId,
       command.version,
-      command.ownerId,
+      command.organizationId,
     );
     if (!version.braidGraph) {
       throw PromptVersionHasNoBraidError();

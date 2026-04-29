@@ -6,7 +6,18 @@ const promptSchema = new Schema(
     name: { type: String, required: true, trim: true },
     description: { type: String, default: "" },
     taskType: { type: String, required: true, enum: TASK_TYPES },
-    ownerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    // Owning organization. All read/write paths filter by this — the
+    // primary tenant boundary.
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: "Organization",
+      required: true,
+      index: true,
+    },
+    // The user who created this prompt. Audit trail only; the prompt is
+    // owned by `organizationId`. Removing the user from the org leaves
+    // this id intact so historical attribution survives.
+    creatorId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     // Canonical reference to the version currently serving production
     // traffic. Label-based display ("v2") is a read-side concern the
     // query service resolves via a lookup.
@@ -25,7 +36,7 @@ const promptSchema = new Schema(
   { timestamps: true },
 );
 
-promptSchema.index({ ownerId: 1, createdAt: -1 });
-promptSchema.index({ ownerId: 1, name: "text", description: "text" });
+promptSchema.index({ organizationId: 1, createdAt: -1 });
+promptSchema.index({ organizationId: 1, name: "text", description: "text" });
 
 export const PromptModel = model("Prompt", promptSchema);

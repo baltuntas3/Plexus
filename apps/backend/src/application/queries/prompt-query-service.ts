@@ -1,5 +1,6 @@
 import type {
   BraidAuthorshipDto,
+  PromptVariableDto,
   TaskType,
   VersionStatus,
 } from "@plexus/shared-types";
@@ -20,7 +21,8 @@ export interface PromptSummary {
   name: string;
   description: string;
   taskType: TaskType;
-  ownerId: string;
+  organizationId: string;
+  creatorId: string;
   productionVersion: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -43,6 +45,7 @@ export interface PromptVersionSummary {
   // the full semantics: model id for "model" authorship, derivedFromModel
   // for "manual" authorship (null when unknown).
   generatorModel: string | null;
+  variables: PromptVariableDto[];
   executablePrompt: string;
   status: VersionStatus;
   createdAt: Date;
@@ -50,7 +53,7 @@ export interface PromptVersionSummary {
 }
 
 export interface ListPromptSummariesQuery {
-  ownerId: string;
+  organizationId: string;
   page: number;
   pageSize: number;
   search?: string;
@@ -61,9 +64,9 @@ export interface PromptSummaryListResult {
   total: number;
 }
 
-export interface ListOwnedVersionSummariesQuery {
+export interface ListVersionSummariesInOrgQuery {
   promptId: string;
-  ownerId: string;
+  organizationId: string;
   page: number;
   pageSize: number;
 }
@@ -74,48 +77,47 @@ export interface VersionSummaryListResult {
 }
 
 export interface IPromptQueryService {
-  listPromptSummaries(query: ListPromptSummariesQuery): Promise<PromptSummaryListResult>;
-  // Collapses "missing prompt" and "not yours" into a single null response so
-  // presentation can uniformly 404 and avoid leaking existence of prompts
-  // owned by others. Callers should not need to compose findById + owner
-  // check themselves.
-  findOwnedPromptSummary(
+  listPromptSummaries(
+    query: ListPromptSummariesQuery,
+  ): Promise<PromptSummaryListResult>;
+  // Collapses "missing prompt" and "belongs to a different org" into a
+  // single null response so presentation can uniformly 404 and avoid
+  // leaking existence of prompts in other tenants.
+  findPromptSummaryInOrganization(
     promptId: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptSummary | null>;
-  // Owner-scoped by-id lookups. A caller that cannot prove ownership sees
-  // the prompts/versions as if they do not exist — the presentation layer
-  // can uniformly 404 without leaking "exists but not yours". Critical
-  // where foreign ids would otherwise cross a bounded-context boundary
-  // (e.g. benchmark creation consuming PromptVersion ids from a request
-  // body).
-  findOwnedPromptSummariesByIds(
+  // Organization-scoped by-id lookups. A caller from another org sees the
+  // prompts/versions as if they do not exist — the presentation layer can
+  // uniformly 404 without leaking cross-tenant existence. Critical where
+  // foreign ids would otherwise cross a bounded-context boundary (e.g.
+  // benchmark creation consuming PromptVersion ids from a request body).
+  findPromptSummariesByIdsInOrganization(
     ids: readonly string[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<Map<string, PromptSummary>>;
-  // Ownership-enforcing list. Returns `null` when the prompt is missing or
-  // owned by someone else — collapses both into a single 404-shaped
-  // response at the query-service boundary so the "owned prompt version
-  // access" rule lives in one place instead of being composed by every
-  // caller (ownership check + list).
-  listOwnedVersionSummaries(
-    query: ListOwnedVersionSummariesQuery,
+  // Org-scoped list. Returns `null` when the prompt is missing or in a
+  // different org — collapses both into a single 404-shaped response at
+  // the query-service boundary so the access rule lives in one place
+  // instead of being composed by every caller.
+  listVersionSummariesInOrganization(
+    query: ListVersionSummariesInOrgQuery,
   ): Promise<VersionSummaryListResult | null>;
-  // Direct (promptId, label) lookup. Expresses the ubiquitous-language
-  // operation "get version vN of this prompt" in one query instead of
-  // forcing callers to list-then-filter. Returns null for missing prompt,
-  // missing label, or foreign owner — presentation uniformly 404s.
-  findOwnedVersionByLabel(
+  // Direct (promptId, label) lookup, org-scoped. Expresses the ubiquitous-
+  // language operation "get version vN of this prompt" in one query instead
+  // of forcing callers to list-then-filter. Returns null for missing prompt,
+  // missing label, or cross-tenant access — presentation uniformly 404s.
+  findVersionByLabelInOrganization(
     promptId: string,
     label: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptVersionSummary | null>;
-  findOwnedVersionSummary(
+  findVersionSummaryInOrganization(
     id: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptVersionSummary | null>;
-  findOwnedVersionSummariesByIds(
+  findVersionSummariesByIdsInOrganization(
     ids: readonly string[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<Map<string, PromptVersionSummary>>;
 }

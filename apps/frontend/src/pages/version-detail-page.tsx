@@ -19,6 +19,7 @@ import {
   TextInput,
   Textarea,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import { useSetAtom, useAtomValue } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
@@ -40,6 +41,7 @@ import { ApiError } from "../lib/api-client.js";
 
 const statusColor: Record<VersionStatus, string> = {
   draft: "gray",
+  development: "blue",
   staging: "yellow",
   production: "green",
 };
@@ -668,6 +670,44 @@ export const VersionDetailPage = () => {
           Back
         </Button>
       </Group>
+
+      {current.variables.length > 0 && (
+        <Paper withBorder p="xs">
+          <Group gap="xs" wrap="wrap">
+            <Text size="xs" fw={600} c="dimmed">
+              Variables:
+            </Text>
+            {current.variables.map((v) => {
+              const detail = [
+                v.description,
+                v.defaultValue ? `default: ${v.defaultValue}` : null,
+              ]
+                .filter((s): s is string => Boolean(s))
+                .join(" — ");
+              const badge = (
+                <Badge
+                  key={v.name}
+                  variant={v.required ? "filled" : "light"}
+                  color="violet"
+                >
+                  {`{{${v.name}}}`}
+                  {v.required ? " *" : ""}
+                </Badge>
+              );
+              return detail ? (
+                <Tooltip key={v.name} label={detail} multiline maw={300}>
+                  {badge}
+                </Tooltip>
+              ) : (
+                badge
+              );
+            })}
+            <Text size="xs" c="dimmed" fs="italic">
+              Values are passed at runtime via the SDK.
+            </Text>
+          </Group>
+        </Paper>
+      )}
 
       <Tabs defaultValue={hasBraid ? "braid" : "classical"}>
         <Tabs.List>

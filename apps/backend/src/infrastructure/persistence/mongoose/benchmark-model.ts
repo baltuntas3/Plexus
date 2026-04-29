@@ -23,7 +23,13 @@ const TEST_GENERATION_MODES = ["shared-core", "diff-seeking", "hybrid"] as const
 const benchmarkSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
-    ownerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: "Organization",
+      required: true,
+      index: true,
+    },
+    creatorId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     promptVersionIds: {
       type: [{ type: Schema.Types.ObjectId, ref: "PromptVersion" }],
       required: true,
@@ -108,6 +114,6 @@ const benchmarkSchema = new Schema(
   { timestamps: { createdAt: true, updatedAt: false } },
 );
 
-benchmarkSchema.index({ ownerId: 1, createdAt: -1 });
+benchmarkSchema.index({ organizationId: 1, createdAt: -1 });
 
 export const BenchmarkModel = model("Benchmark", benchmarkSchema);

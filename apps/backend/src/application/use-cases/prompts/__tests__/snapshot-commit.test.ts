@@ -9,7 +9,8 @@ import { PromptVersion } from "../../../../domain/entities/prompt-version.js";
 const makePrompt = (): Prompt =>
   Prompt.create({
     promptId: "prompt-1",
-    ownerId: "u1",
+    organizationId: "org-1",
+    creatorId: "u1",
     name: "p",
     description: "",
     taskType: "general",

@@ -20,7 +20,14 @@ export type DomainErrorCode =
   | "BENCHMARK_NOT_IN_DRAFT"
   | "BENCHMARK_MATRIX_EMPTY"
   | "BENCHMARK_NO_JUDGES"
-  | "BENCHMARK_INVALID_REPETITIONS";
+  | "BENCHMARK_INVALID_REPETITIONS"
+  | "ORGANIZATION_NOT_FOUND"
+  | "ORGANIZATION_SLUG_TAKEN"
+  | "ORGANIZATION_AGGREGATE_STALE"
+  | "ORGANIZATION_MEMBER_NOT_FOUND"
+  | "ORGANIZATION_MEMBER_AGGREGATE_STALE"
+  | "ORGANIZATION_MEMBERSHIP_REQUIRED"
+  | "ORGANIZATION_OWNER_INVARIANT";
 
 // Domain errors carry a stable `code` (ubiquitous language) and an optional
 // `details` bag. Transport-specific mapping (HTTP status, gRPC code, i18n
@@ -154,3 +161,46 @@ export const BenchmarkInvalidRepetitionsError = (): DomainError =>
     "BENCHMARK_INVALID_REPETITIONS",
     "Benchmark repetitions must be at least 1",
   );
+
+// Organization bounded-context errors.
+export const OrganizationNotFoundError = (): DomainError =>
+  new DomainError("ORGANIZATION_NOT_FOUND", "Organization not found");
+
+export const OrganizationSlugTakenError = (slug: string): DomainError =>
+  new DomainError(
+    "ORGANIZATION_SLUG_TAKEN",
+    `Organization slug "${slug}" is already taken`,
+    { slug },
+  );
+
+export const OrganizationAggregateStaleError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_AGGREGATE_STALE",
+    "Organization was modified by another writer; reload and retry",
+  );
+
+export const OrganizationMemberNotFoundError = (): DomainError =>
+  new DomainError("ORGANIZATION_MEMBER_NOT_FOUND", "Organization member not found");
+
+export const OrganizationMemberAggregateStaleError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_MEMBER_AGGREGATE_STALE",
+    "Organization member was modified by another writer; reload and retry",
+  );
+
+// Surfaced when a request is authenticated but the user has no membership in
+// the active organization (e.g. removed mid-session, or an org-bound URL hit
+// by a foreign user). Distinguished from FORBIDDEN/UNAUTHORIZED so the
+// transport layer can map it to a meaningful 403 message.
+export const OrganizationMembershipRequiredError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_MEMBERSHIP_REQUIRED",
+    "Caller is not a member of this organization",
+  );
+
+// "An organization always has exactly one owner" — surfaced when a transition
+// would break that invariant (e.g. removing the last owner without transferring
+// first, or assigning the `owner` role through `UpdateMemberRole` rather than
+// `TransferOwnership`).
+export const OrganizationOwnerInvariantError = (message: string): DomainError =>
+  new DomainError("ORGANIZATION_OWNER_INVARIANT", message);

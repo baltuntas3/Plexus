@@ -18,7 +18,8 @@ import type { BenchmarkCostForecast } from "../../domain/value-objects/benchmark
 export interface BenchmarkSummary {
   id: string;
   name: string;
-  ownerId: string;
+  organizationId: string;
+  creatorId: string;
   promptVersionIds: string[];
   solverModels: string[];
   judgeModels: string[];
@@ -44,7 +45,7 @@ export interface BenchmarkSummary {
 }
 
 export interface ListBenchmarkSummariesQuery {
-  ownerId: string;
+  organizationId: string;
   page: number;
   pageSize: number;
 }

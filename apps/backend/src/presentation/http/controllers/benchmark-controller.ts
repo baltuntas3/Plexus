@@ -12,9 +12,9 @@ import {
   toBenchmarkDto,
 } from "../mappers/benchmark-mappers.js";
 
-const requireUserId = (req: Request): string => {
-  if (!req.userId) throw UnauthorizedError();
-  return req.userId;
+const requireAuth = (req: Request): { userId: string; organizationId: string } => {
+  if (!req.userId || !req.organizationId) throw UnauthorizedError();
+  return { userId: req.userId, organizationId: req.organizationId };
 };
 
 const requireParam = (req: Request, name: string): string => {
@@ -27,19 +27,23 @@ export class BenchmarkController {
   constructor(private readonly benchmarks: BenchmarkComposition) {}
 
   create: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const input = createBenchmarkSchema.parse(req.body);
     const { benchmark, versionLabels } = await this.benchmarks.createBenchmark.execute({
       ...input,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.status(201).json({ benchmark: toBenchmarkDetailDto(benchmark, [], versionLabels) });
   };
 
   list: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { organizationId } = requireAuth(req);
     const query = listBenchmarksQuerySchema.parse(req.query);
-    const result = await this.benchmarks.listBenchmarks.execute({ ...query, ownerId });
+    const result = await this.benchmarks.listBenchmarks.execute({
+      ...query,
+      organizationId,
+    });
     res.json({
       items: result.items.map(toBenchmarkDto),
       total: result.total,
@@ -49,39 +53,48 @@ export class BenchmarkController {
   };
 
   get: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const { benchmark, results, versionLabels } = await this.benchmarks.getBenchmark.execute({
       benchmarkId: id,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.json({ benchmark: toBenchmarkDetailDto(benchmark, results, versionLabels) });
   };
 
   start: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const result = await this.benchmarks.startBenchmark.execute({
       benchmarkId: id,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.status(202).json(result);
   };
 
   updateTestCases: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const { updates, additions } = updateTestCasesSchema.parse(req.body);
-    await this.benchmarks.updateTestCases.execute({ benchmarkId: id, ownerId, updates, additions });
+    await this.benchmarks.updateTestCases.execute({
+      benchmarkId: id,
+      organizationId,
+      userId,
+      updates,
+      additions,
+    });
     res.status(204).end();
   };
 
   analysis: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
     const analysis = await this.benchmarks.getBenchmarkAnalysis.execute({
       benchmarkId: id,
-      ownerId,
+      organizationId,
+      userId,
     });
     res.json({ analysis: toBenchmarkAnalysisDto(analysis) });
   };
@@ -90,12 +103,13 @@ export class BenchmarkController {
   // events until the benchmark reaches a terminal status, then closes the
   // connection. Auth is enforced at router level.
   stream: RequestHandler = async (req: Request, res: Response) => {
-    const ownerId = requireUserId(req);
+    const { userId, organizationId } = requireAuth(req);
     const id = requireParam(req, "id");
 
     const snapshot = await this.benchmarks.getBenchmark.execute({
       benchmarkId: id,
-      ownerId,
+      organizationId,
+      userId,
     });
 
     res.status(200);
@@ -141,7 +155,8 @@ export class BenchmarkController {
       try {
         const latest = await this.benchmarks.getBenchmark.execute({
           benchmarkId: id,
-          ownerId,
+          organizationId,
+          userId,
         });
         if (
           latest.benchmark.status === "completed" ||

@@ -13,12 +13,14 @@ import type { TokenUsage } from "../../services/ai-provider.js";
 import type { GenerateBraidInputDto } from "../../dto/braid-dto.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import { versionToSummary } from "../../queries/prompt-projections.js";
-import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
+import { assertVariableIntegrity } from "../../services/prompts/variable-integrity.js";
+import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
 export interface GenerateBraidCommand extends GenerateBraidInputDto {
   promptId: string;
   version: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 export interface GenerateBraidResult {
@@ -48,6 +50,15 @@ export class GenerateBraidUseCase {
     // counter advance + forked version save must land atomically.
     const { prompt, source, result, qualityScore } = await this.loadAndGenerate(command);
 
+    // Generator may invent or drop `{{var}}` placeholders despite the
+    // instruction to preserve them; reject the result rather than silently
+    // creating a version with broken substitution.
+    assertVariableIntegrity({
+      body: source.sourcePrompt,
+      mermaid: result.graph.mermaidCode,
+      variables: source.variables,
+    });
+
     return this.uow.run(async () => {
       const label = prompt.allocateNextVersionLabel();
       const forked = PromptVersion.fork({
@@ -75,12 +86,12 @@ export class GenerateBraidUseCase {
   }
 
   private async loadAndGenerate(command: GenerateBraidCommand) {
-    const { prompt, version: source } = await loadOwnedPromptAndVersion(
+    const { prompt, version: source } = await loadPromptAndVersionInOrganization(
       this.prompts,
       this.versions,
       command.promptId,
       command.version,
-      command.ownerId,
+      command.organizationId,
     );
     const result = await this.generator.generate({
       sourcePrompt: source.sourcePrompt,

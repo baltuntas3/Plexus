@@ -28,7 +28,8 @@ export interface BenchmarkProgressDto {
 export interface BenchmarkDto {
   id: string;
   name: string;
-  ownerId: string;
+  organizationId: string;
+  creatorId: string;
   promptVersionIds: string[];
   solverModels: string[];
   judgeModels: string[];

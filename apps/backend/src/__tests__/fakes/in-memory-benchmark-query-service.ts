@@ -17,8 +17,8 @@ export class InMemoryBenchmarkQueryService implements IBenchmarkQueryService {
     query: ListBenchmarkSummariesQuery,
   ): Promise<BenchmarkSummaryListResult> {
     const all = this.repo
-      .allForOwner(query.ownerId)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      .allForOrganization(query.organizationId)
+      .sort((a: Benchmark, b: Benchmark) => b.createdAt.getTime() - a.createdAt.getTime());
     const start = (query.page - 1) * query.pageSize;
     const page = all.slice(start, start + query.pageSize);
     return { items: page.map(toSummary), total: all.length };
@@ -28,7 +28,8 @@ export class InMemoryBenchmarkQueryService implements IBenchmarkQueryService {
 const toSummary = (benchmark: Benchmark): BenchmarkSummary => ({
   id: benchmark.id,
   name: benchmark.name,
-  ownerId: benchmark.ownerId,
+  organizationId: benchmark.organizationId,
+  creatorId: benchmark.creatorId,
   promptVersionIds: [...benchmark.promptVersionIds],
   solverModels: [...benchmark.solverModels],
   judgeModels: [...benchmark.judgeModels],

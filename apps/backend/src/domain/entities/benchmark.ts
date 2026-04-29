@@ -5,8 +5,6 @@ import {
   BenchmarkMatrixEmptyError,
   BenchmarkNoJudgesError,
   BenchmarkNotInDraftError,
-  BenchmarkNotOwnedError,
-  ValidationError,
 } from "../errors/domain-error.js";
 import { BudgetUsd } from "../value-objects/budget-usd.js";
 import { SolverTemperature } from "../value-objects/solver-temperature.js";
@@ -69,7 +67,11 @@ export interface BenchmarkTestCase {
 export interface BenchmarkPrimitives {
   id: string;
   name: string;
-  ownerId: string;
+  // Owning organization. Read/write paths filter by this; benchmarks
+  // never cross org boundaries.
+  organizationId: string;
+  // The user who created this benchmark — audit trail only.
+  creatorId: string;
   promptVersionIds: string[];
   solverModels: string[];
   judgeModels: string[];
@@ -98,16 +100,20 @@ export interface BenchmarkPrimitives {
   completedAt: Date | null;
 }
 
+// Snapshot the aggregate hands to the repository at save time. Mirrors the
+// shape used by Prompt/PromptVersion/Organization aggregates so all
+// repositories speak the same protocol — `primitives.revision` is the
+// post-write value; `expectedRevision` is the WHERE-clause guard.
 export interface BenchmarkSnapshot {
-  readonly state: BenchmarkPrimitives;
+  readonly primitives: BenchmarkPrimitives;
   readonly expectedRevision: number;
-  readonly nextRevision: number;
 }
 
 export interface CreateBenchmarkParams {
   id: string;
   name: string;
-  ownerId: string;
+  organizationId: string;
+  creatorId: string;
   promptVersionIds: string[];
   solverModels: string[];
   judgeModels: string[];
@@ -164,7 +170,8 @@ export class Benchmark {
     return new Benchmark({
       id: params.id,
       name: params.name,
-      ownerId: params.ownerId,
+      organizationId: params.organizationId,
+      creatorId: params.creatorId,
       promptVersionIds: [...params.promptVersionIds],
       solverModels: [...params.solverModels],
       judgeModels: [...params.judgeModels],
@@ -211,8 +218,11 @@ export class Benchmark {
   get name(): string {
     return this.state.name;
   }
-  get ownerId(): string {
-    return this.state.ownerId;
+  get organizationId(): string {
+    return this.state.organizationId;
+  }
+  get creatorId(): string {
+    return this.state.creatorId;
   }
   get promptVersionIds(): readonly string[] {
     return [...this.state.promptVersionIds];
@@ -287,14 +297,6 @@ export class Benchmark {
   }
   get completedAt(): Date | null {
     return this.state.completedAt;
-  }
-
-  // ── Authorization ────────────────────────────────────────────────────────
-
-  assertOwnedBy(userId: string): void {
-    if (this.state.ownerId !== userId) {
-      throw BenchmarkNotOwnedError();
-    }
   }
 
   // ── Draft-only edits ─────────────────────────────────────────────────────
@@ -430,24 +432,17 @@ export class Benchmark {
     }
   }
 
-  // ── Snapshot / commit ────────────────────────────────────────────────────
+  // ── Snapshot / markPersisted ─────────────────────────────────────────────
 
   toSnapshot(): BenchmarkSnapshot {
     const expectedRevision = this.state.revision;
-    const nextRevision = expectedRevision + 1;
     return {
-      state: { ...this.state, revision: nextRevision },
+      primitives: { ...this.state, revision: expectedRevision + 1 },
       expectedRevision,
-      nextRevision,
     };
   }
 
-  commit(snapshot: BenchmarkSnapshot): void {
-    if (snapshot.expectedRevision !== this.state.revision) {
-      throw ValidationError(
-        "Cannot commit a stale snapshot: aggregate revision advanced since the snapshot was taken",
-      );
-    }
-    this.state = { ...this.state, revision: snapshot.nextRevision };
+  markPersisted(): void {
+    this.state = { ...this.state, revision: this.state.revision + 1 };
   }
 }

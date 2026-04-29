@@ -17,7 +17,8 @@ describe("CreateVersionUseCase", () => {
   let createPrompt: CreatePromptUseCase;
   let createVersion: CreateVersionUseCase;
   let promptId: string;
-  const ownerId = "u1";
+  const userId = "u1";
+  const organizationId = "org-1";
 
   beforeEach(async () => {
     prompts = new InMemoryPromptAggregateRepository();
@@ -28,7 +29,8 @@ describe("CreateVersionUseCase", () => {
     createVersion = new CreateVersionUseCase(prompts, versions, ids, uow);
 
     const { prompt } = await createPrompt.execute({
-      ownerId,
+      organizationId,
+      userId,
       name: "p",
       description: "",
       taskType: "general",
@@ -40,7 +42,8 @@ describe("CreateVersionUseCase", () => {
   it("creates a root version when no ancestor is supplied", async () => {
     const v2 = await createVersion.execute({
       promptId,
-      ownerId,
+      organizationId,
+      userId,
       sourcePrompt: "Answer in one sentence.",
     });
     expect(v2.version).toBe("v2");
@@ -51,7 +54,8 @@ describe("CreateVersionUseCase", () => {
   it("records parentVersionId when forking from an existing version", async () => {
     const v2 = await createVersion.execute({
       promptId,
-      ownerId,
+      organizationId,
+      userId,
       sourcePrompt: "Answer in one sentence.",
       fromVersion: "v1",
     });
@@ -64,7 +68,8 @@ describe("CreateVersionUseCase", () => {
     await expect(
       createVersion.execute({
         promptId,
-        ownerId,
+        organizationId,
+      userId,
         sourcePrompt: "x",
         fromVersion: "v99",
       }),

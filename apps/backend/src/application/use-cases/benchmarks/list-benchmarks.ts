@@ -4,7 +4,7 @@ import type {
 } from "../../queries/benchmark-query-service.js";
 
 export interface ListBenchmarksCommand {
-  ownerId: string;
+  organizationId: string;
   page: number;
   pageSize: number;
 }

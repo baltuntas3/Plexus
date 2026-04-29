@@ -3,7 +3,7 @@ import type { ISODateString, Paginated } from "./common.js";
 export const TASK_TYPES = ["general", "math", "creative", "instruction-following", "code"] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
-export const VERSION_STATUSES = ["draft", "staging", "production"] as const;
+export const VERSION_STATUSES = ["draft", "development", "staging", "production"] as const;
 export type VersionStatus = (typeof VERSION_STATUSES)[number];
 
 export interface PromptDto {
@@ -11,7 +11,8 @@ export interface PromptDto {
   name: string;
   description: string;
   taskType: TaskType;
-  ownerId: string;
+  organizationId: string;
+  creatorId: string;
   productionVersion: string | null;
   createdAt: ISODateString;
   updatedAt: ISODateString;
@@ -26,6 +27,13 @@ export interface PromptDto {
 export type BraidAuthorshipDto =
   | { kind: "model"; model: string }
   | { kind: "manual"; derivedFromModel: string | null };
+
+export interface PromptVariableDto {
+  name: string;
+  description: string | null;
+  defaultValue: string | null;
+  required: boolean;
+}
 
 export interface PromptVersionDto {
   id: string;
@@ -50,9 +58,20 @@ export interface PromptVersionDto {
   // unknown). Kept alongside the discriminated field so simple UI rows
   // don't have to branch for the common "show the model name" case.
   generatorModel: string | null;
+  // Template variables referenced via `{{name}}` placeholders in
+  // `sourcePrompt` and BRAID node labels. Empty list means the version uses
+  // no substitution.
+  variables: PromptVariableDto[];
   status: VersionStatus;
   createdAt: ISODateString;
   updatedAt: ISODateString;
+}
+
+export interface PromptVariableInput {
+  name: string;
+  description?: string | null;
+  defaultValue?: string | null;
+  required?: boolean;
 }
 
 export interface CreatePromptRequest {
@@ -60,11 +79,13 @@ export interface CreatePromptRequest {
   description?: string;
   taskType: TaskType;
   initialPrompt: string;
+  variables?: PromptVariableInput[];
 }
 
 export interface CreateVersionRequest {
   sourcePrompt: string;
   name?: string;
+  variables?: PromptVariableInput[];
 }
 
 export interface UpdateVersionRequest {

@@ -22,6 +22,16 @@ const representationSchema = new Schema(
   { _id: false },
 );
 
+const variableSchema = new Schema(
+  {
+    name: { type: String, required: true },
+    description: { type: String, default: null },
+    defaultValue: { type: String, default: null },
+    required: { type: Boolean, required: true, default: false },
+  },
+  { _id: false },
+);
+
 const promptVersionSchema = new Schema(
   {
     promptId: { type: Schema.Types.ObjectId, ref: "Prompt", required: true, index: true },
@@ -42,6 +52,9 @@ const promptVersionSchema = new Schema(
       required: true,
       default: () => ({ kind: "classical", graph: null, authorship: null }),
     },
+    // Template variable definitions. Body and braid node labels reference
+    // them via `{{name}}`; SDK passes values at runtime for substitution.
+    variables: { type: [variableSchema], required: true, default: [] },
     status: { type: String, required: true, enum: VERSION_STATUSES, default: "draft" },
     // Optimistic-concurrency token. Bumped by the PromptVersion repo on
     // each successful save so concurrent writers to the same version

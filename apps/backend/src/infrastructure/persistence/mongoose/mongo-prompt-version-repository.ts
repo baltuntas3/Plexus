@@ -1,6 +1,7 @@
 import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import { PromptVersion } from "../../../domain/entities/prompt-version.js";
 import { PromptVersionAggregateStaleError } from "../../../domain/errors/domain-error.js";
+import { isDuplicateKeyError } from "./mongo-errors.js";
 import { PromptVersionModel } from "./prompt-version-model.js";
 import {
   toVersionDocSet,
@@ -63,12 +64,3 @@ export class MongoPromptVersionRepository implements IPromptVersionRepository {
     version.markPersisted();
   }
 }
-
-const isDuplicateKeyError = (err: unknown): boolean => {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: number }).code === 11000
-  );
-};

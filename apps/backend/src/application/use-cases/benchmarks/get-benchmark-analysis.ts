@@ -18,7 +18,8 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
 export interface GetBenchmarkAnalysisCommand {
   benchmarkId: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 export class GetBenchmarkAnalysisUseCase {
@@ -33,13 +34,13 @@ export class GetBenchmarkAnalysisUseCase {
     const benchmark = await ensureBenchmarkAccess(
       this.benchmarks,
       command.benchmarkId,
-      command.ownerId,
+      command.organizationId,
     );
     const results = await this.results.listByBenchmark(benchmark.id);
     const versionLabels = await buildVersionLabels(
       this.promptQueries,
       [...benchmark.promptVersionIds],
-      benchmark.ownerId,
+      benchmark.organizationId,
     );
     const testCasesById = Object.fromEntries(
       benchmark.testCases.map((tc) => [
@@ -59,9 +60,12 @@ export class GetBenchmarkAnalysisUseCase {
 export const buildVersionLabels = async (
   queries: IPromptQueryService,
   ids: readonly string[],
-  ownerId: string,
+  organizationId: string,
 ): Promise<Record<string, string>> => {
-  const versions = await queries.findOwnedVersionSummariesByIds(ids, ownerId);
+  const versions = await queries.findVersionSummariesByIdsInOrganization(
+    ids,
+    organizationId,
+  );
   const labels: Record<string, string> = {};
   ids.forEach((id, i) => {
     const v = versions.get(id);

@@ -5,8 +5,8 @@ import type {
 import { PromptVersionNotFoundError } from "../../../domain/errors/domain-error.js";
 
 // Read-side lookup by (promptId + label). The query service owns the
-// ownership join and the label→version resolution; missing prompt, missing
-// label, and foreign ownership collapse to the same `null` so id
+// org-scoping and the label→version resolution; missing prompt, missing
+// label, and cross-org access collapse to the same `null` so id
 // enumeration cannot distinguish them.
 export class GetVersionUseCase {
   constructor(private readonly queries: IPromptQueryService) {}
@@ -14,12 +14,12 @@ export class GetVersionUseCase {
   async execute(command: {
     promptId: string;
     version: string;
-    ownerId: string;
+    organizationId: string;
   }): Promise<PromptVersionSummary> {
-    const match = await this.queries.findOwnedVersionByLabel(
+    const match = await this.queries.findVersionByLabelInOrganization(
       command.promptId,
       command.version,
-      command.ownerId,
+      command.organizationId,
     );
     if (!match) {
       throw PromptVersionNotFoundError(command.version);

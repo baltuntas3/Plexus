@@ -39,7 +39,8 @@ const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_BUDGET_USD = 50;
 
 export type CreateBenchmarkCommand = CreateBenchmarkDto & {
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 };
 
 export interface CreateBenchmarkResult {
@@ -59,7 +60,7 @@ export class CreateBenchmarkUseCase {
   async execute(command: CreateBenchmarkCommand): Promise<CreateBenchmarkResult> {
     const resolvedVersions = await this.loadVersions(
       command.promptVersionIds,
-      command.ownerId,
+      command.organizationId,
     );
 
     for (const model of command.solverModels) {
@@ -82,7 +83,10 @@ export class CreateBenchmarkUseCase {
       command.seed !== undefined
         ? BenchmarkSeed.of(command.seed).toNumber()
         : BenchmarkSeed.random().toNumber();
-    const taskType = await this.resolveTaskType(resolvedVersions, command.ownerId);
+    const taskType = await this.resolveTaskType(
+      resolvedVersions,
+      command.organizationId,
+    );
 
     const spec = buildEvaluationSpecFromVersions(
       resolvedVersions,
@@ -114,7 +118,8 @@ export class CreateBenchmarkUseCase {
     const benchmark = Benchmark.create({
       id: this.idGenerator.newId(),
       name: command.name,
-      ownerId: command.ownerId,
+      organizationId: command.organizationId,
+      creatorId: command.userId,
       promptVersionIds: command.promptVersionIds,
       solverModels: command.solverModels,
       judgeModels,
@@ -149,12 +154,12 @@ export class CreateBenchmarkUseCase {
 
   private async resolveTaskType(
     versions: PromptVersionSummary[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<TaskType> {
     const promptIds = [...new Set(versions.map((version) => version.promptId))];
-    const summaries = await this.promptQueries.findOwnedPromptSummariesByIds(
+    const summaries = await this.promptQueries.findPromptSummariesByIdsInOrganization(
       promptIds,
-      ownerId,
+      organizationId,
     );
     const missing = promptIds.filter((id) => !summaries.has(id));
     if (missing.length > 0) {
@@ -171,14 +176,14 @@ export class CreateBenchmarkUseCase {
 
   private async loadVersions(
     ids: string[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptVersionSummary[]> {
-    // Owner-scoped lookup collapses "missing" and "not yours" into a single
-    // 404-shaped response. A caller replaying foreign version ids cannot
-    // tell whether the id exists under a different owner.
-    const resolved = await this.promptQueries.findOwnedVersionSummariesByIds(
+    // Org-scoped lookup collapses "missing" and "in another org" into a
+    // single 404-shaped response. A caller replaying foreign version ids
+    // cannot tell whether the id exists under a different tenant.
+    const resolved = await this.promptQueries.findVersionSummariesByIdsInOrganization(
       ids,
-      ownerId,
+      organizationId,
     );
     for (const id of ids) {
       if (!resolved.has(id)) throw NotFoundError(`PromptVersion ${id} not found`);

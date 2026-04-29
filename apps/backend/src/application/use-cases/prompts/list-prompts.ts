@@ -5,7 +5,7 @@ import type {
 import type { ListPromptsQueryDto } from "../../dto/prompt-dto.js";
 
 export interface ListPromptsCommand extends ListPromptsQueryDto {
-  ownerId: string;
+  organizationId: string;
 }
 
 export class ListPromptsUseCase {
@@ -13,7 +13,7 @@ export class ListPromptsUseCase {
 
   async execute(command: ListPromptsCommand): Promise<PromptSummaryListResult> {
     return this.queries.listPromptSummaries({
-      ownerId: command.ownerId,
+      organizationId: command.organizationId,
       page: command.page,
       pageSize: command.pageSize,
       search: command.search,

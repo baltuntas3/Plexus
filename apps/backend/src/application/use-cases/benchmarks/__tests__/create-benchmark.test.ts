@@ -50,7 +50,8 @@ const buildScaffold = async () => {
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
     promptId: ids.newId(),
-    ownerId: "u1",
+    organizationId: "org-1",
+    creatorId: "u1",
     name: "Prompt",
     description: "desc",
     taskType: "math",
@@ -81,7 +82,8 @@ const baseCommand = (versionId: string) => ({
   promptVersionIds: [versionId],
   solverModels: ["openai/gpt-oss-20b"],
   testCount: 5,
-  ownerId: "u1",
+  organizationId: "org-1",
+  userId: "u1",
 });
 
 describe("CreateBenchmarkUseCase", () => {
@@ -134,7 +136,8 @@ describe("CreateBenchmarkUseCase", () => {
     const { Prompt } = await import("../../../../domain/entities/prompt.js");
     const prompt = Prompt.create({
       promptId: ids.newId(),
-      ownerId: "u1",
+      organizationId: "org-1",
+    creatorId: "u1",
       name: "Prompt",
       description: "",
       taskType: "math",
@@ -211,7 +214,8 @@ describe("CreateBenchmarkUseCase", () => {
     const { Prompt } = await import("../../../../domain/entities/prompt.js");
     const prompt = Prompt.create({
       promptId: ids.newId(),
-      ownerId: "u1",
+      organizationId: "org-1",
+    creatorId: "u1",
       name: "Prompt",
       description: "",
       taskType: "math",

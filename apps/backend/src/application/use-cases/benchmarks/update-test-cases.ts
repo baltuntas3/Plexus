@@ -8,7 +8,8 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
 export interface UpdateTestCasesCommand {
   benchmarkId: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
   updates: Array<{
     id: string;
     input?: string;
@@ -37,7 +38,7 @@ export class UpdateTestCasesUseCase {
     const benchmark = await ensureBenchmarkAccess(
       this.benchmarks,
       command.benchmarkId,
-      command.ownerId,
+      command.organizationId,
     );
     benchmark.editDraftTestCases({
       updates: command.updates,
@@ -49,9 +50,9 @@ export class UpdateTestCasesUseCase {
       })),
     });
 
-    const versionsById = await this.promptQueries.findOwnedVersionSummariesByIds(
+    const versionsById = await this.promptQueries.findVersionSummariesByIdsInOrganization(
       benchmark.promptVersionIds,
-      benchmark.ownerId,
+      benchmark.organizationId,
     );
     const missing = benchmark.promptVersionIds.filter((id) => !versionsById.has(id));
     if (missing.length > 0) {

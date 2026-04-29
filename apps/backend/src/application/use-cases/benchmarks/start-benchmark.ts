@@ -11,7 +11,8 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
 export interface StartBenchmarkCommand {
   benchmarkId: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 export interface StartBenchmarkResult {
@@ -37,11 +38,11 @@ export class StartBenchmarkUseCase {
     const benchmark = await ensureBenchmarkAccess(
       this.benchmarks,
       command.benchmarkId,
-      command.ownerId,
+      command.organizationId,
     );
-    const versionsById = await this.promptQueries.findOwnedVersionSummariesByIds(
+    const versionsById = await this.promptQueries.findVersionSummariesByIdsInOrganization(
       benchmark.promptVersionIds,
-      benchmark.ownerId,
+      benchmark.organizationId,
     );
     const missing = benchmark.promptVersionIds.filter(
       (id) => !versionsById.has(id),

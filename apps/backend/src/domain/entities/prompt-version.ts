@@ -8,6 +8,11 @@ import {
   type BraidAuthorshipSnapshot,
 } from "../value-objects/braid-authorship.js";
 import { BraidGraph } from "../value-objects/braid-graph.js";
+import {
+  PromptVariable,
+  type PromptVariableSnapshot,
+  assertUniqueVariableNames,
+} from "../value-objects/prompt-variable.js";
 import { VersionLabel } from "../value-objects/version-label.js";
 
 // PromptVersion is its own aggregate root.
@@ -46,6 +51,11 @@ export interface PromptVersionPrimitives {
   parentVersionId: string | null;
   sourcePrompt: string;
   representation: PromptRepresentationPrimitives;
+  // Template variable definitions for this version. Body and braid node
+  // labels reference them via `{{name}}`. Reference→definition integrity is
+  // enforced by use cases (cross-field rule), not in the aggregate, so the
+  // domain stays free of body parsing concerns.
+  variables: PromptVariableSnapshot[];
   status: VersionStatus;
   revision: number;
   createdAt: Date;
@@ -70,6 +80,7 @@ export interface CreatePromptVersionParams {
   // rather than a bare model string so manual edits do not masquerade as
   // LLM-generated content.
   initialBraid?: { graph: BraidGraph; authorship: BraidAuthorship };
+  variables?: readonly PromptVariable[];
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -106,10 +117,12 @@ export class BraidPromptRepresentation {
 export type PromptRepresentation = ClassicalPromptRepresentation | BraidPromptRepresentation;
 
 // Internal state shape mirrors `PromptVersionPrimitives` exactly except for
-// `representation`, which is kept as a parsed class instance so getters
-// like `braidGraph` can return the VO without re-parsing on every access.
-type InternalState = Omit<PromptVersionPrimitives, "representation"> & {
+// `representation` (parsed class instance so getters like `braidGraph` return
+// the VO without re-parsing) and `variables` (VO list so callers see typed
+// instances rather than raw snapshot data).
+type InternalState = Omit<PromptVersionPrimitives, "representation" | "variables"> & {
   representation: PromptRepresentation;
+  variables: PromptVariable[];
 };
 
 export class PromptVersion {
@@ -123,6 +136,8 @@ export class PromptVersion {
           params.initialBraid.authorship,
         )
       : new ClassicalPromptRepresentation();
+    const variables = [...(params.variables ?? [])];
+    assertUniqueVariableNames(variables);
     return new PromptVersion({
       id: params.id,
       promptId: params.promptId,
@@ -131,6 +146,7 @@ export class PromptVersion {
       parentVersionId: params.parentVersionId ?? null,
       sourcePrompt: normalizeSourcePrompt(params.sourcePrompt),
       representation,
+      variables,
       status: "draft",
       revision: 0,
       createdAt: now,
@@ -143,6 +159,8 @@ export class PromptVersion {
     // surfaces as a domain error here instead of silently flowing through.
     // The parsed VO is discarded — internal state keeps the canonical string.
     VersionLabel.parse(primitives.version);
+    const variables = primitives.variables.map(PromptVariable.fromSnapshot);
+    assertUniqueVariableNames(variables);
     return new PromptVersion({
       id: primitives.id,
       promptId: primitives.promptId,
@@ -151,6 +169,7 @@ export class PromptVersion {
       parentVersionId: primitives.parentVersionId ?? null,
       sourcePrompt: primitives.sourcePrompt,
       representation: hydrateRepresentation(primitives.representation),
+      variables,
       status: primitives.status,
       revision: primitives.revision,
       createdAt: primitives.createdAt,
@@ -160,7 +179,8 @@ export class PromptVersion {
 
   // Fork with a new id and label — the content is either carried from the
   // source (classical) or replaced with a new braid. `parentVersionId` is
-  // set from the source so lineage is preserved.
+  // set from the source so lineage is preserved. Variables also default to
+  // the source's set; callers can override with `variables` to add/remove.
   static fork(params: {
     source: PromptVersion;
     newId: string;
@@ -168,6 +188,7 @@ export class PromptVersion {
     sourcePrompt?: string;
     name?: string | null;
     initialBraid?: { graph: BraidGraph; authorship: BraidAuthorship };
+    variables?: readonly PromptVariable[];
   }): PromptVersion {
     return PromptVersion.create({
       id: params.newId,
@@ -177,6 +198,7 @@ export class PromptVersion {
       name: params.name ?? null,
       parentVersionId: params.source.id,
       initialBraid: params.initialBraid,
+      variables: params.variables ?? params.source.variables,
     });
   }
 
@@ -222,6 +244,10 @@ export class PromptVersion {
 
   get hasBraidRepresentation(): boolean {
     return this.state.representation.kind === "braid";
+  }
+
+  get variables(): readonly PromptVariable[] {
+    return this.state.variables;
   }
 
   get executablePrompt(): string {
@@ -270,6 +296,7 @@ export class PromptVersion {
     return {
       ...this.state,
       representation: this.state.representation.toPrimitives(),
+      variables: this.state.variables.map((v) => v.toSnapshot()),
     };
   }
 

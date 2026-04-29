@@ -12,12 +12,14 @@ import {
 import type { BenchmarkCostForecast } from "../../../domain/value-objects/benchmark-cost-forecast.js";
 import { BenchmarkAggregateStaleError } from "../../../domain/errors/domain-error.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
+import { isDuplicateKeyError } from "./mongo-errors.js";
 import { BenchmarkModel } from "./benchmark-model.js";
 
 interface BenchmarkDocShape {
   _id: Types.ObjectId;
   name: string;
-  ownerId: Types.ObjectId;
+  organizationId: Types.ObjectId;
+  creatorId: Types.ObjectId;
   promptVersionIds: Types.ObjectId[];
   solverModels: string[];
   judgeModels: string[];
@@ -53,7 +55,8 @@ interface BenchmarkDocShape {
 const toPrimitives = (doc: BenchmarkDocShape): BenchmarkPrimitives => ({
   id: String(doc._id),
   name: doc.name,
-  ownerId: String(doc.ownerId),
+  organizationId: String(doc.organizationId),
+  creatorId: String(doc.creatorId),
   promptVersionIds: doc.promptVersionIds.map((x) => String(x)),
   solverModels: doc.solverModels,
   judgeModels: doc.judgeModels,
@@ -99,51 +102,54 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
     return Benchmark.hydrate(toPrimitives(doc));
   }
 
-  async findOwnedById(id: string, ownerId: string): Promise<Benchmark | null> {
+  async findInOrganization(
+    id: string,
+    organizationId: string,
+  ): Promise<Benchmark | null> {
     // Composite filter: missing and foreign collapse to the same null so
     // existence is not leaked via 403 vs 404 to id-enumeration.
     const doc = await BenchmarkModel.findOne({
       _id: id,
-      ownerId,
+      organizationId,
     }).lean<BenchmarkDocShape>();
     if (!doc) return null;
     return Benchmark.hydrate(toPrimitives(doc));
   }
 
   async save(benchmark: Benchmark): Promise<void> {
-    const snapshot = benchmark.toSnapshot();
-    const { state, expectedRevision, nextRevision } = snapshot;
+    const { primitives, expectedRevision } = benchmark.toSnapshot();
 
     if (expectedRevision === 0) {
       try {
         await BenchmarkModel.create({
-          _id: state.id,
-          name: state.name,
-          ownerId: state.ownerId,
-          promptVersionIds: state.promptVersionIds,
-          solverModels: state.solverModels,
-          judgeModels: state.judgeModels,
-          generatorModel: state.generatorModel,
-          testGenerationMode: state.testGenerationMode,
-          analysisModel: state.analysisModel,
-          taskType: state.taskType,
-          costForecast: state.costForecast,
-          testCount: state.testCount,
-          repetitions: state.repetitions,
-          solverTemperature: state.solverTemperature,
-          seed: state.seed,
-          testCases: state.testCases,
-          concurrency: state.concurrency,
-          cellTimeoutMs: state.cellTimeoutMs,
-          budgetUsd: state.budgetUsd,
-          status: state.status,
-          progress: state.progress,
-          jobId: state.jobId,
-          error: state.error,
-          revision: nextRevision,
-          createdAt: state.createdAt,
-          startedAt: state.startedAt,
-          completedAt: state.completedAt,
+          _id: primitives.id,
+          name: primitives.name,
+          organizationId: primitives.organizationId,
+          creatorId: primitives.creatorId,
+          promptVersionIds: primitives.promptVersionIds,
+          solverModels: primitives.solverModels,
+          judgeModels: primitives.judgeModels,
+          generatorModel: primitives.generatorModel,
+          testGenerationMode: primitives.testGenerationMode,
+          analysisModel: primitives.analysisModel,
+          taskType: primitives.taskType,
+          costForecast: primitives.costForecast,
+          testCount: primitives.testCount,
+          repetitions: primitives.repetitions,
+          solverTemperature: primitives.solverTemperature,
+          seed: primitives.seed,
+          testCases: primitives.testCases,
+          concurrency: primitives.concurrency,
+          cellTimeoutMs: primitives.cellTimeoutMs,
+          budgetUsd: primitives.budgetUsd,
+          status: primitives.status,
+          progress: primitives.progress,
+          jobId: primitives.jobId,
+          error: primitives.error,
+          revision: primitives.revision,
+          createdAt: primitives.createdAt,
+          startedAt: primitives.startedAt,
+          completedAt: primitives.completedAt,
         });
       } catch (err) {
         if (isDuplicateKeyError(err)) {
@@ -153,33 +159,33 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
       }
     } else {
       const result = await BenchmarkModel.updateOne(
-        { _id: state.id, revision: expectedRevision },
+        { _id: primitives.id, revision: expectedRevision },
         {
           $set: {
-            name: state.name,
-            promptVersionIds: state.promptVersionIds,
-            solverModels: state.solverModels,
-            judgeModels: state.judgeModels,
-            generatorModel: state.generatorModel,
-            testGenerationMode: state.testGenerationMode,
-            analysisModel: state.analysisModel,
-            taskType: state.taskType,
-            costForecast: state.costForecast,
-            testCount: state.testCount,
-            repetitions: state.repetitions,
-            solverTemperature: state.solverTemperature,
-            seed: state.seed,
-            testCases: state.testCases,
-            concurrency: state.concurrency,
-            cellTimeoutMs: state.cellTimeoutMs,
-            budgetUsd: state.budgetUsd,
-            status: state.status,
-            progress: state.progress,
-            jobId: state.jobId,
-            error: state.error,
-            revision: nextRevision,
-            startedAt: state.startedAt,
-            completedAt: state.completedAt,
+            name: primitives.name,
+            promptVersionIds: primitives.promptVersionIds,
+            solverModels: primitives.solverModels,
+            judgeModels: primitives.judgeModels,
+            generatorModel: primitives.generatorModel,
+            testGenerationMode: primitives.testGenerationMode,
+            analysisModel: primitives.analysisModel,
+            taskType: primitives.taskType,
+            costForecast: primitives.costForecast,
+            testCount: primitives.testCount,
+            repetitions: primitives.repetitions,
+            solverTemperature: primitives.solverTemperature,
+            seed: primitives.seed,
+            testCases: primitives.testCases,
+            concurrency: primitives.concurrency,
+            cellTimeoutMs: primitives.cellTimeoutMs,
+            budgetUsd: primitives.budgetUsd,
+            status: primitives.status,
+            progress: primitives.progress,
+            jobId: primitives.jobId,
+            error: primitives.error,
+            revision: primitives.revision,
+            startedAt: primitives.startedAt,
+            completedAt: primitives.completedAt,
           },
         },
       );
@@ -188,16 +194,7 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
       }
     }
 
-    benchmark.commit(snapshot);
+    benchmark.markPersisted();
   }
 }
-
-const isDuplicateKeyError = (err: unknown): boolean => {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: number }).code === 11000
-  );
-};
 

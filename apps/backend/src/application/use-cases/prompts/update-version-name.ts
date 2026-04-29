@@ -3,12 +3,13 @@ import type { IPromptVersionRepository } from "../../../domain/repositories/prom
 import type { UpdateVersionInputDto } from "../../dto/prompt-dto.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import { versionToSummary } from "../../queries/prompt-projections.js";
-import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
+import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
 export interface UpdateVersionNameCommand extends UpdateVersionInputDto {
   promptId: string;
   version: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 // Pure metadata mutation: the version aggregate renames itself, the Prompt
@@ -20,12 +21,12 @@ export class UpdateVersionNameUseCase {
   ) {}
 
   async execute(command: UpdateVersionNameCommand): Promise<PromptVersionSummary> {
-    const { version } = await loadOwnedPromptAndVersion(
+    const { version } = await loadPromptAndVersionInOrganization(
       this.prompts,
       this.versions,
       command.promptId,
       command.version,
-      command.ownerId,
+      command.organizationId,
     );
     version.rename(command.name);
     await this.versions.save(version);

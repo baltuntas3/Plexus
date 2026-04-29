@@ -1,7 +1,7 @@
 import type {
   IPromptQueryService,
-  ListOwnedVersionSummariesQuery,
   ListPromptSummariesQuery,
+  ListVersionSummariesInOrgQuery,
   PromptSummary,
   PromptSummaryListResult,
   PromptVersionSummary,
@@ -30,7 +30,8 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
         name: prompt.name,
         description: prompt.description,
         taskType: prompt.taskType,
-        ownerId: prompt.ownerId,
+        organizationId: prompt.organizationId,
+        creatorId: prompt.creatorId,
         createdAt: prompt.createdAt,
         updatedAt: prompt.updatedAt,
       },
@@ -53,7 +54,8 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
         name: summary.name,
         description: summary.description,
         taskType: summary.taskType,
-        ownerId: summary.ownerId,
+        organizationId: summary.organizationId,
+        creatorId: summary.creatorId,
         createdAt: summary.createdAt,
         updatedAt: summary.updatedAt,
       },
@@ -80,7 +82,7 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
 
   async listPromptSummaries(query: ListPromptSummariesQuery): Promise<PromptSummaryListResult> {
     const owned = [...this.summaries.values()]
-      .filter((entry) => entry.summary.ownerId === query.ownerId)
+      .filter((entry) => entry.summary.organizationId === query.organizationId)
       .filter((entry) =>
         query.search
           ? entry.summary.name.toLowerCase().includes(query.search.toLowerCase())
@@ -92,34 +94,34 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     return { items: owned.slice(start, start + query.pageSize), total: owned.length };
   }
 
-  async findOwnedPromptSummary(
+  async findPromptSummaryInOrganization(
     promptId: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptSummary | null> {
     const entry = this.summaries.get(promptId);
-    if (!entry || entry.summary.ownerId !== ownerId) return null;
+    if (!entry || entry.summary.organizationId !== organizationId) return null;
     return this.project(entry);
   }
 
-  async findOwnedPromptSummariesByIds(
+  async findPromptSummariesByIdsInOrganization(
     ids: readonly string[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<Map<string, PromptSummary>> {
     const result = new Map<string, PromptSummary>();
     for (const id of ids) {
       const entry = this.summaries.get(id);
-      if (entry && entry.summary.ownerId === ownerId) {
+      if (entry && entry.summary.organizationId === organizationId) {
         result.set(id, this.project(entry));
       }
     }
     return result;
   }
 
-  async listOwnedVersionSummaries(
-    query: ListOwnedVersionSummariesQuery,
+  async listVersionSummariesInOrganization(
+    query: ListVersionSummariesInOrgQuery,
   ): Promise<VersionSummaryListResult | null> {
     const entry = this.summaries.get(query.promptId);
-    if (!entry || entry.summary.ownerId !== query.ownerId) return null;
+    if (!entry || entry.summary.organizationId !== query.organizationId) return null;
     const all = [...this.versions.values()]
       .filter((version) => version.promptId === query.promptId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -127,40 +129,40 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     return { items: all.slice(start, start + query.pageSize), total: all.length };
   }
 
-  async findOwnedVersionByLabel(
+  async findVersionByLabelInOrganization(
     promptId: string,
     label: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptVersionSummary | null> {
     const entry = this.summaries.get(promptId);
-    if (!entry || entry.summary.ownerId !== ownerId) return null;
+    if (!entry || entry.summary.organizationId !== organizationId) return null;
     const match = [...this.versions.values()].find(
       (version) => version.promptId === promptId && version.version === label,
     );
     return match ?? null;
   }
 
-  async findOwnedVersionSummary(
+  async findVersionSummaryInOrganization(
     id: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptVersionSummary | null> {
     const version = this.versions.get(id);
     if (!version) return null;
     const entry = this.summaries.get(version.promptId);
-    if (!entry || entry.summary.ownerId !== ownerId) return null;
+    if (!entry || entry.summary.organizationId !== organizationId) return null;
     return version;
   }
 
-  async findOwnedVersionSummariesByIds(
+  async findVersionSummariesByIdsInOrganization(
     ids: readonly string[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<Map<string, PromptVersionSummary>> {
     const result = new Map<string, PromptVersionSummary>();
     for (const id of ids) {
       const version = this.versions.get(id);
       if (!version) continue;
       const entry = this.summaries.get(version.promptId);
-      if (!entry || entry.summary.ownerId !== ownerId) continue;
+      if (!entry || entry.summary.organizationId !== organizationId) continue;
       result.set(id, version);
     }
     return result;
@@ -179,6 +181,7 @@ const toVersionSummary = (version: PromptVersion): PromptVersionSummary => {
     braidGraph,
     braidAuthorship: version.braidAuthorship?.toSnapshot() ?? null,
     generatorModel: version.generatorModel,
+    variables: version.variables.map((v) => v.toSnapshot()),
     executablePrompt: version.executablePrompt,
     status: version.status,
     createdAt: version.createdAt,

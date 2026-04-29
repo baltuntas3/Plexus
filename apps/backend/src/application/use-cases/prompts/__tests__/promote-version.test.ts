@@ -13,7 +13,8 @@ describe("PromoteVersionUseCase", () => {
   let createVersion: CreateVersionUseCase;
   let promoteVersion: PromoteVersionUseCase;
   let promptId: string;
-  const ownerId = "user-1";
+  const userId = "user-1";
+  const organizationId = "org-1";
 
   beforeEach(async () => {
     prompts = new InMemoryPromptAggregateRepository();
@@ -25,7 +26,8 @@ describe("PromoteVersionUseCase", () => {
     promoteVersion = new PromoteVersionUseCase(prompts, versions, uow);
 
     const { prompt } = await createPrompt.execute({
-      ownerId,
+      organizationId,
+      userId,
       name: "Summarizer",
       description: "",
       taskType: "general",
@@ -38,7 +40,8 @@ describe("PromoteVersionUseCase", () => {
     const updated = await promoteVersion.execute({
       promptId,
       version: "v1",
-      ownerId,
+      organizationId,
+      userId,
       targetStatus: "staging",
     });
     expect(updated.status).toBe("staging");
@@ -48,7 +51,8 @@ describe("PromoteVersionUseCase", () => {
     await promoteVersion.execute({
       promptId,
       version: "v1",
-      ownerId,
+      organizationId,
+      userId,
       targetStatus: "production",
     });
     const prompt = await prompts.findById(promptId);
@@ -60,19 +64,22 @@ describe("PromoteVersionUseCase", () => {
     await promoteVersion.execute({
       promptId,
       version: "v1",
-      ownerId,
+      organizationId,
+      userId,
       targetStatus: "production",
     });
 
     await createVersion.execute({
       promptId,
-      ownerId,
+      organizationId,
+      userId,
       sourcePrompt: "Updated prompt",
     });
     await promoteVersion.execute({
       promptId,
       version: "v2",
-      ownerId,
+      organizationId,
+      userId,
       targetStatus: "production",
     });
 
@@ -85,12 +92,13 @@ describe("PromoteVersionUseCase", () => {
     expect(prompt?.productionVersionId).toBe(v2?.id);
   });
 
-  it("hides other users' prompts behind a not-found response (no existence leak)", async () => {
+  it("hides other organizations' prompts behind a not-found response (no existence leak)", async () => {
     await expect(
       promoteVersion.execute({
         promptId,
         version: "v1",
-        ownerId: "other-user",
+        organizationId: "other-org",
+        userId: "other-user",
         targetStatus: "staging",
       }),
     ).rejects.toMatchObject({ code: "PROMPT_NOT_FOUND" });
@@ -101,7 +109,8 @@ describe("PromoteVersionUseCase", () => {
       promoteVersion.execute({
         promptId,
         version: "v99",
-        ownerId,
+        organizationId,
+      userId,
         targetStatus: "staging",
       }),
     ).rejects.toMatchObject({ code: "PROMPT_VERSION_NOT_FOUND" });
@@ -111,14 +120,16 @@ describe("PromoteVersionUseCase", () => {
     await promoteVersion.execute({
       promptId,
       version: "v1",
-      ownerId,
+      organizationId,
+      userId,
       targetStatus: "staging",
     });
     await expect(
       promoteVersion.execute({
         promptId,
         version: "v1",
-        ownerId,
+        organizationId,
+      userId,
         targetStatus: "draft",
       }),
     ).rejects.toMatchObject({

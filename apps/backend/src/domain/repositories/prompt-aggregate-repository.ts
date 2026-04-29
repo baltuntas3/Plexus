@@ -6,13 +6,13 @@ import type { Prompt } from "../entities/prompt.js";
 // regardless of version history depth.
 export interface IPromptRepository {
   // Unscoped lookup. Reserved for internal/system paths that legitimately
-  // operate across ownership boundaries. User-facing write use cases must
-  // use `findOwnedById`.
+  // operate across organization boundaries. User-facing write use cases
+  // must use `findInOrganization`.
   findById(id: string): Promise<Prompt | null>;
-  // Owner-scoped lookup. Collapses "missing" and "owned by someone else"
-  // into a single `null` so callers cannot accidentally leak prompt
-  // existence via id enumeration.
-  findOwnedById(id: string, ownerId: string): Promise<Prompt | null>;
+  // Organization-scoped lookup. Collapses "missing" and "belongs to a
+  // different org" into a single `null` so callers cannot accidentally
+  // leak prompt existence via id enumeration across tenants.
+  findInOrganization(id: string, organizationId: string): Promise<Prompt | null>;
   // Advances the aggregate's revision on success and throws
   // PromptAggregateStaleError on optimistic-concurrency failure.
   save(prompt: Prompt): Promise<void>;

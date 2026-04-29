@@ -8,7 +8,8 @@ import { buildVersionLabels } from "./get-benchmark-analysis.js";
 
 export interface GetBenchmarkCommand {
   benchmarkId: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 // Version labels travel alongside the benchmark so every UI surface —
@@ -31,14 +32,14 @@ export class GetBenchmarkUseCase {
     const benchmark = await ensureBenchmarkAccess(
       this.benchmarks,
       command.benchmarkId,
-      command.ownerId,
+      command.organizationId,
     );
     const [results, versionLabels] = await Promise.all([
       this.results.listByBenchmark(benchmark.id),
       buildVersionLabels(
         this.promptQueries,
         [...benchmark.promptVersionIds],
-        benchmark.ownerId,
+        benchmark.organizationId,
       ),
     ]);
     return { benchmark, results, versionLabels };

@@ -1,5 +1,5 @@
 import type { TaskType } from "@plexus/shared-types";
-import { PromptNotOwnedError, ValidationError } from "../errors/domain-error.js";
+import { ValidationError } from "../errors/domain-error.js";
 import { VersionLabel } from "../value-objects/version-label.js";
 
 // Prompt is the write-side aggregate root for prompt identity and the
@@ -13,7 +13,14 @@ export interface PromptPrimitives {
   name: string;
   description: string;
   taskType: TaskType;
-  ownerId: string;
+  // Owning organization. All read/write paths filter by this; cross-org
+  // access is impossible by construction (no aggregate exposes a query
+  // path that ignores it).
+  organizationId: string;
+  // The user who created this prompt — audit trail only. The prompt is
+  // owned by the organization, not the user; removing the user from the
+  // org leaves this id intact so historical attribution survives.
+  creatorId: string;
   // Canonical reference to the version currently serving production traffic.
   // Label-based display (`productionVersion: "v2"`) is a read-projection
   // concern resolved by the query service, not a field the aggregate tracks.
@@ -39,7 +46,8 @@ export interface PromptSnapshot {
 
 export interface CreatePromptParams {
   promptId: string;
-  ownerId: string;
+  organizationId: string;
+  creatorId: string;
   name: string;
   description: string;
   taskType: TaskType;
@@ -61,7 +69,8 @@ export class Prompt {
       name,
       description: params.description,
       taskType: params.taskType,
-      ownerId: params.ownerId,
+      organizationId: params.organizationId,
+      creatorId: params.creatorId,
       productionVersionId: null,
       versionCounter: 0,
       revision: 0,
@@ -71,18 +80,7 @@ export class Prompt {
   }
 
   static hydrate(prompt: PromptPrimitives): Prompt {
-    return new Prompt({
-      id: prompt.id,
-      name: prompt.name,
-      description: prompt.description,
-      taskType: prompt.taskType,
-      ownerId: prompt.ownerId,
-      productionVersionId: prompt.productionVersionId,
-      versionCounter: prompt.versionCounter,
-      revision: prompt.revision,
-      createdAt: prompt.createdAt,
-      updatedAt: prompt.updatedAt,
-    });
+    return new Prompt({ ...prompt });
   }
 
   get id(): string {
@@ -101,8 +99,12 @@ export class Prompt {
     return this.state.taskType;
   }
 
-  get ownerId(): string {
-    return this.state.ownerId;
+  get organizationId(): string {
+    return this.state.organizationId;
+  }
+
+  get creatorId(): string {
+    return this.state.creatorId;
   }
 
   get productionVersionId(): string | null {
@@ -123,12 +125,6 @@ export class Prompt {
 
   get updatedAt(): Date {
     return this.state.updatedAt;
-  }
-
-  assertOwnedBy(userId: string): void {
-    if (this.state.ownerId !== userId) {
-      throw PromptNotOwnedError();
-    }
   }
 
   isProductionVersion(versionId: string): boolean {

@@ -5,6 +5,7 @@ import {
   type PromptPrimitives,
 } from "../../../domain/entities/prompt.js";
 import { PromptAggregateStaleError } from "../../../domain/errors/domain-error.js";
+import { isDuplicateKeyError } from "./mongo-errors.js";
 import { PromptModel } from "./prompt-model.js";
 import { getCurrentSession } from "./transaction-context.js";
 
@@ -13,7 +14,8 @@ interface PromptDocShape {
   name: string;
   description: string;
   taskType: PromptPrimitives["taskType"];
-  ownerId: Types.ObjectId;
+  organizationId: Types.ObjectId;
+  creatorId: Types.ObjectId;
   productionVersionId: Types.ObjectId | null;
   versionCounter?: number;
   revision: number;
@@ -26,7 +28,8 @@ const toPromptPrimitives = (doc: PromptDocShape): PromptPrimitives => ({
   name: doc.name,
   description: doc.description,
   taskType: doc.taskType,
-  ownerId: String(doc.ownerId),
+  organizationId: String(doc.organizationId),
+  creatorId: String(doc.creatorId),
   productionVersionId: doc.productionVersionId
     ? String(doc.productionVersionId)
     : null,
@@ -46,11 +49,16 @@ export class MongoPromptAggregateRepository implements IPromptRepository {
     return doc ? Prompt.hydrate(toPromptPrimitives(doc)) : null;
   }
 
-  async findOwnedById(id: string, ownerId: string): Promise<Prompt | null> {
+  async findInOrganization(
+    id: string,
+    organizationId: string,
+  ): Promise<Prompt | null> {
     const session = getCurrentSession();
-    const doc = await PromptModel.findOne({ _id: id, ownerId }, null, {
-      session,
-    }).lean<PromptDocShape>();
+    const doc = await PromptModel.findOne(
+      { _id: id, organizationId },
+      null,
+      { session },
+    ).lean<PromptDocShape>();
     return doc ? Prompt.hydrate(toPromptPrimitives(doc)) : null;
   }
 
@@ -67,7 +75,8 @@ export class MongoPromptAggregateRepository implements IPromptRepository {
               name: primitives.name,
               description: primitives.description,
               taskType: primitives.taskType,
-              ownerId: primitives.ownerId,
+              organizationId: primitives.organizationId,
+              creatorId: primitives.creatorId,
               productionVersionId: primitives.productionVersionId,
               versionCounter: primitives.versionCounter,
               revision: primitives.revision,
@@ -91,7 +100,8 @@ export class MongoPromptAggregateRepository implements IPromptRepository {
             name: primitives.name,
             description: primitives.description,
             taskType: primitives.taskType,
-            ownerId: primitives.ownerId,
+            organizationId: primitives.organizationId,
+            creatorId: primitives.creatorId,
             productionVersionId: primitives.productionVersionId,
             versionCounter: primitives.versionCounter,
             revision: primitives.revision,
@@ -108,12 +118,3 @@ export class MongoPromptAggregateRepository implements IPromptRepository {
     prompt.markPersisted();
   }
 }
-
-const isDuplicateKeyError = (err: unknown): boolean => {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: number }).code === 11000
-  );
-};

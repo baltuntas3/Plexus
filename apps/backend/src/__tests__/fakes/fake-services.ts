@@ -28,7 +28,14 @@ export class FakeTokenService implements ITokenService {
 
   verifyAccessToken(token: string): AccessTokenPayload {
     if (!token.startsWith("access:")) throw new Error("invalid token");
-    return { sub: token.slice("access:".length), email: "test@example.com" };
+    // Roundtrip from the most recent payload so tests that issue with a
+    // specific organizationId see it back on verify. Falls back to a
+    // deterministic dummy for callers that fabricate a token without ever
+    // issuing one.
+    const sub = token.slice("access:".length);
+    const last = [...this.issued].reverse().find((p) => p.sub === sub);
+    if (last) return { ...last };
+    return { sub, email: "test@example.com", organizationId: "org-test" };
   }
 
   verifyRefreshToken(token: string): RefreshTokenPayload {

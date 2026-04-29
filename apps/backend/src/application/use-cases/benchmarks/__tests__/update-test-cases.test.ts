@@ -16,7 +16,8 @@ const buildDraftBenchmark = async (
   const { Prompt } = await import("../../../../domain/entities/prompt.js");
   const prompt = Prompt.create({
     promptId: ids.newId(),
-    ownerId: "u1",
+    organizationId: "org-1",
+    creatorId: "u1",
     name: "Prompt",
     description: "",
     taskType: "general",
@@ -33,7 +34,8 @@ const buildDraftBenchmark = async (
   const benchmark = Benchmark.create({
     id: ids.newId(),
     name: "bm",
-    ownerId: "u1",
+    organizationId: "org-1",
+    creatorId: "u1",
     promptVersionIds: [version.id],
     solverModels: ["openai/gpt-oss-20b"],
     judgeModels: ["openai/gpt-oss-20b"],
@@ -87,7 +89,8 @@ describe("UpdateTestCasesUseCase", () => {
 
     await useCase.execute({
       benchmarkId: bm.id,
-      ownerId: "u1",
+      organizationId: "org-1",
+      userId: "u1",
       updates: [
         { id: "tc1", expectedOutput: "answer one" },
         { id: "tc2", expectedOutput: null },
@@ -105,7 +108,8 @@ describe("UpdateTestCasesUseCase", () => {
 
     await useCase.execute({
       benchmarkId: bm.id,
-      ownerId: "u1",
+      organizationId: "org-1",
+      userId: "u1",
       updates: [],
       additions: [{ input: "manual?", expectedOutput: null, category: "adversarial" }],
     });
@@ -120,7 +124,8 @@ describe("UpdateTestCasesUseCase", () => {
 
     await useCase.execute({
       benchmarkId: bm.id,
-      ownerId: "u1",
+      organizationId: "org-1",
+      userId: "u1",
       updates: [{ id: "tc1", input: "q1? ".repeat(200), expectedOutput: null }],
       additions: [],
     });
@@ -139,15 +144,27 @@ describe("UpdateTestCasesUseCase", () => {
     await benchmarks.save(loaded!);
 
     await expect(
-      useCase.execute({ benchmarkId: bm.id, ownerId: "u1", updates: [], additions: [] }),
+      useCase.execute({
+        benchmarkId: bm.id,
+        organizationId: "org-1",
+        userId: "u1",
+        updates: [],
+        additions: [],
+      }),
     ).rejects.toMatchObject({ code: "BENCHMARK_NOT_IN_DRAFT" });
   });
 
-  it("hides other users' benchmarks behind a not-found response (no existence leak)", async () => {
+  it("hides other organizations' benchmarks behind a not-found response (no existence leak)", async () => {
     const { useCase, bm } = await buildHarness();
 
     await expect(
-      useCase.execute({ benchmarkId: bm.id, ownerId: "other", updates: [], additions: [] }),
+      useCase.execute({
+        benchmarkId: bm.id,
+        organizationId: "other-org",
+        userId: "other",
+        updates: [],
+        additions: [],
+      }),
     ).rejects.toMatchObject({ code: "BENCHMARK_NOT_FOUND" });
   });
 });

@@ -2,7 +2,7 @@ import { Types } from "mongoose";
 import type { TaskType } from "@plexus/shared-types";
 import type {
   IPromptQueryService,
-  ListOwnedVersionSummariesQuery,
+  ListVersionSummariesInOrgQuery,
   ListPromptSummariesQuery,
   PromptSummary,
   PromptSummaryListResult,
@@ -21,7 +21,8 @@ interface PromptSummaryDoc {
   name: string;
   description: string;
   taskType: TaskType;
-  ownerId: Types.ObjectId;
+  organizationId: Types.ObjectId;
+  creatorId: Types.ObjectId;
   productionVersionId: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
@@ -57,7 +58,8 @@ const toSummary = (
   name: doc.name,
   description: doc.description,
   taskType: doc.taskType,
-  ownerId: String(doc.ownerId),
+  organizationId: String(doc.organizationId),
+  creatorId: String(doc.creatorId),
   productionVersion: doc.productionVersionId
     ? labelLookup.get(String(doc.productionVersionId)) ?? null
     : null,
@@ -67,7 +69,7 @@ const toSummary = (
 
 export class MongoPromptQueryService implements IPromptQueryService {
   async listPromptSummaries(query: ListPromptSummariesQuery): Promise<PromptSummaryListResult> {
-    const filter: Record<string, unknown> = { ownerId: query.ownerId };
+    const filter: Record<string, unknown> = { organizationId: query.organizationId };
     if (query.search && query.search.length > 0) {
       filter.name = { $regex: query.search, $options: "i" };
     }
@@ -88,26 +90,29 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return { items: docs.map((doc) => toSummary(doc, labels)), total };
   }
 
-  async findOwnedPromptSummary(
+  async findPromptSummaryInOrganization(
     promptId: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptSummary | null> {
-    const doc = await PromptModel.findOne({ _id: promptId, ownerId }).lean<PromptSummaryDoc>();
+    const doc = await PromptModel.findOne({
+      _id: promptId,
+      organizationId,
+    }).lean<PromptSummaryDoc>();
     if (!doc) return null;
     const labels = await resolveProductionLabels([doc.productionVersionId]);
     return toSummary(doc, labels);
   }
 
-  async findOwnedPromptSummariesByIds(
+  async findPromptSummariesByIdsInOrganization(
     ids: readonly string[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<Map<string, PromptSummary>> {
     if (ids.length === 0) {
       return new Map();
     }
     const docs = await PromptModel.find({
       _id: { $in: ids },
-      ownerId,
+      organizationId,
     }).lean<PromptSummaryDoc[]>();
     const labels = await resolveProductionLabels(
       docs.map((doc) => doc.productionVersionId),
@@ -120,12 +125,12 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return map;
   }
 
-  async listOwnedVersionSummaries(
-    query: ListOwnedVersionSummariesQuery,
+  async listVersionSummariesInOrganization(
+    query: ListVersionSummariesInOrgQuery,
   ): Promise<VersionSummaryListResult | null> {
     const owned = await PromptModel.exists({
       _id: query.promptId,
-      ownerId: query.ownerId,
+      organizationId: query.organizationId,
     });
     if (!owned) return null;
 
@@ -142,12 +147,12 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return { items: docs.map(toVersionSummary), total };
   }
 
-  async findOwnedVersionByLabel(
+  async findVersionByLabelInOrganization(
     promptId: string,
     label: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptVersionSummary | null> {
-    const owned = await PromptModel.exists({ _id: promptId, ownerId });
+    const owned = await PromptModel.exists({ _id: promptId, organizationId });
     if (!owned) return null;
     const doc = await PromptVersionModel.findOne({
       promptId,
@@ -156,23 +161,23 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return doc ? toVersionSummary(doc) : null;
   }
 
-  async findOwnedVersionSummary(
+  async findVersionSummaryInOrganization(
     id: string,
-    ownerId: string,
+    organizationId: string,
   ): Promise<PromptVersionSummary | null> {
     const doc = await PromptVersionModel.findById(id).lean<PromptVersionDocShape>();
     if (!doc) return null;
     const owned = await PromptModel.exists({
       _id: doc.promptId,
-      ownerId,
+      organizationId,
     });
     if (!owned) return null;
     return toVersionSummary(doc);
   }
 
-  async findOwnedVersionSummariesByIds(
+  async findVersionSummariesByIdsInOrganization(
     ids: readonly string[],
-    ownerId: string,
+    organizationId: string,
   ): Promise<Map<string, PromptVersionSummary>> {
     if (ids.length === 0) {
       return new Map();
@@ -184,17 +189,17 @@ export class MongoPromptQueryService implements IPromptQueryService {
       return new Map();
     }
     const promptIds = [...new Set(versionDocs.map((doc) => String(doc.promptId)))];
-    const ownedPromptDocs = await PromptModel.find({
+    const inOrgPromptDocs = await PromptModel.find({
       _id: { $in: promptIds },
-      ownerId,
+      organizationId,
     })
       .select({ _id: 1 })
       .lean<{ _id: Types.ObjectId }[]>();
-    const ownedPromptIds = new Set(ownedPromptDocs.map((doc) => String(doc._id)));
+    const inOrgPromptIds = new Set(inOrgPromptDocs.map((doc) => String(doc._id)));
 
     const map = new Map<string, PromptVersionSummary>();
     for (const doc of versionDocs) {
-      if (!ownedPromptIds.has(String(doc.promptId))) continue;
+      if (!inOrgPromptIds.has(String(doc.promptId))) continue;
       const summary = toVersionSummary(doc);
       map.set(summary.id, summary);
     }

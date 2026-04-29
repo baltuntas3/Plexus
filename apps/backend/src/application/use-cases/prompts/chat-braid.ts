@@ -10,7 +10,8 @@ import type { GraphQualityScore } from "../../../domain/value-objects/graph-qual
 import { calculateCost } from "../../services/model-registry.js";
 import type { IBraidChatAgentFactory } from "../../services/braid/braid-chat-agent-factory.js";
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
-import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
+import { assertVariableIntegrity } from "../../services/prompts/variable-integrity.js";
+import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
 // Refinement vs. initial-generation is a domain fact — "does this version
 // already carry a BRAID?" — not something the client should assert. The
@@ -24,7 +25,8 @@ import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
 export interface ChatBraidCommand {
   promptId: string;
   version: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
   userMessage: string;
   generatorModel: string;
 }
@@ -50,12 +52,12 @@ export class ChatBraidUseCase {
   ) {}
 
   async execute(command: ChatBraidCommand): Promise<ChatBraidResult> {
-    const { prompt, version: source } = await loadOwnedPromptAndVersion(
+    const { prompt, version: source } = await loadPromptAndVersionInOrganization(
       this.prompts,
       this.versions,
       command.promptId,
       command.version,
-      command.ownerId,
+      command.organizationId,
     );
 
     const agent = this.agents.forModel(command.generatorModel);
@@ -76,6 +78,13 @@ export class ChatBraidUseCase {
     }
 
     const graph = BraidGraph.parse(chatResult.mermaidCode);
+    // Same protection as GenerateBraid: agent must preserve declared
+    // variables. Rejected here before fork-on-save instead of after.
+    assertVariableIntegrity({
+      body: source.sourcePrompt,
+      mermaid: graph.mermaidCode,
+      variables: source.variables,
+    });
     const cost = calculateCost(
       command.generatorModel,
       chatResult.totalInputTokens,

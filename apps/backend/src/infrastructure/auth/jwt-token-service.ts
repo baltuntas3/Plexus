@@ -31,11 +31,15 @@ export class JwtTokenService implements ITokenService {
     if (typeof decoded !== "object" || decoded === null) {
       throw new Error("Invalid token payload");
     }
-    const { sub, email } = decoded as Record<string, unknown>;
-    if (typeof sub !== "string" || typeof email !== "string") {
+    const { sub, email, organizationId } = decoded as Record<string, unknown>;
+    if (
+      typeof sub !== "string" ||
+      typeof email !== "string" ||
+      typeof organizationId !== "string"
+    ) {
       throw new Error("Malformed access token");
     }
-    return { sub, email };
+    return { sub, email, organizationId };
   }
 
   verifyRefreshToken(token: string): RefreshTokenPayload {

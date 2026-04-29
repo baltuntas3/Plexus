@@ -1,11 +1,26 @@
 import { z } from "zod";
 import { TASK_TYPES, VERSION_STATUSES } from "@plexus/shared-types";
 
+// Shared variable shape used by create/update boundaries. Keeps the public
+// API consistent with `PromptVariableInput` in shared-types.
+export const promptVariableInputSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "Variable name must match [a-zA-Z_][a-zA-Z0-9_]*")
+    .max(64),
+  description: z.string().trim().max(500).nullish(),
+  defaultValue: z.string().max(2000).nullish(),
+  required: z.boolean().optional().default(false),
+});
+export type PromptVariableInputDto = z.infer<typeof promptVariableInputSchema>;
+
 export const createPromptInputSchema = z.object({
   name: z.string().min(1).max(120),
   description: z.string().max(1000).optional().default(""),
   taskType: z.enum(TASK_TYPES),
   initialPrompt: z.string().min(1).max(20_000),
+  variables: z.array(promptVariableInputSchema).optional(),
 });
 export type CreatePromptInputDto = z.infer<typeof createPromptInputSchema>;
 
@@ -20,6 +35,10 @@ export const createVersionInputSchema = z.object({
     .string()
     .regex(/^v\d+$/, "fromVersion must be a version label like v1")
     .optional(),
+  // When omitted, the new version inherits the parent's variables (or empty
+  // for fresh roots). When provided, it replaces the variable list — the
+  // caller is fully responsible for the new shape.
+  variables: z.array(promptVariableInputSchema).optional(),
 });
 export type CreateVersionInputDto = z.infer<typeof createVersionInputSchema>;
 

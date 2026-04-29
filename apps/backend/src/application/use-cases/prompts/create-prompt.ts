@@ -4,6 +4,7 @@ import type { IPromptRepository } from "../../../domain/repositories/prompt-aggr
 import type { IPromptVersionRepository } from "../../../domain/repositories/prompt-version-repository.js";
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
+import { PromptVariable } from "../../../domain/value-objects/prompt-variable.js";
 import type { CreatePromptInputDto } from "../../dto/prompt-dto.js";
 import type {
   PromptSummary,
@@ -13,9 +14,11 @@ import {
   promptToSummary,
   versionToSummary,
 } from "../../queries/prompt-projections.js";
+import { assertVariableIntegrity } from "../../services/prompts/variable-integrity.js";
 
 export interface CreatePromptCommand extends CreatePromptInputDto {
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 export interface CreatePromptResult {
@@ -36,10 +39,21 @@ export class CreatePromptUseCase {
   ) {}
 
   async execute(command: CreatePromptCommand): Promise<CreatePromptResult> {
+    const variables = (command.variables ?? []).map((v) =>
+      PromptVariable.create({
+        name: v.name,
+        description: v.description ?? null,
+        defaultValue: v.defaultValue ?? null,
+        required: v.required ?? false,
+      }),
+    );
+    assertVariableIntegrity({ body: command.initialPrompt, variables });
+
     return this.uow.run(async () => {
       const prompt = Prompt.create({
         promptId: this.idGenerator.newId(),
-        ownerId: command.ownerId,
+        organizationId: command.organizationId,
+        creatorId: command.userId,
         name: command.name,
         description: command.description,
         taskType: command.taskType,
@@ -51,6 +65,7 @@ export class CreatePromptUseCase {
         version: label,
         sourcePrompt: command.initialPrompt,
         parentVersionId: null,
+        variables,
       });
 
       await this.prompts.save(prompt);

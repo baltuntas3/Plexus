@@ -7,6 +7,7 @@ declare global {
     interface Request {
       userId?: string;
       userEmail?: string;
+      organizationId?: string;
     }
   }
 }
@@ -22,6 +23,7 @@ export const createRequireAuth = (tokens: ITokenService): RequestHandler => {
       const payload = tokens.verifyAccessToken(token);
       req.userId = payload.sub;
       req.userEmail = payload.email;
+      req.organizationId = payload.organizationId;
       return next();
     } catch {
       return next(UnauthorizedError("Invalid access token"));

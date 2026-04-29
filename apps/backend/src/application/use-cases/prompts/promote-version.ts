@@ -4,12 +4,13 @@ import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import type { PromoteVersionInputDto } from "../../dto/prompt-dto.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import { versionToSummary } from "../../queries/prompt-projections.js";
-import { loadOwnedPromptAndVersion } from "./load-owned-prompt.js";
+import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
 export interface PromoteVersionCommand extends PromoteVersionInputDto {
   promptId: string;
   version: string;
-  ownerId: string;
+  organizationId: string;
+  userId: string;
 }
 
 // Cross-aggregate orchestration for the "one production per prompt"
@@ -29,12 +30,12 @@ export class PromoteVersionUseCase {
 
   async execute(command: PromoteVersionCommand): Promise<PromptVersionSummary> {
     return this.uow.run(async () => {
-      const { prompt, version: target } = await loadOwnedPromptAndVersion(
+      const { prompt, version: target } = await loadPromptAndVersionInOrganization(
         this.prompts,
         this.versions,
         command.promptId,
         command.version,
-        command.ownerId,
+        command.organizationId,
       );
 
       if (command.targetStatus === "production") {

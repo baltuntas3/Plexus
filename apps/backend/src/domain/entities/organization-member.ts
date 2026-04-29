@@ -110,6 +110,22 @@ export class OrganizationMember {
     this.state = { ...this.state, role: newRole };
   }
 
+  // Escape hatch reserved for the `TransferOwnership` use case. Bypasses
+  // the `changeRole` guard precisely because the orchestrating use case
+  // is what preserves the "exactly one owner" invariant: it flips the
+  // outgoing owner ("demote") and the incoming member ("promote") in the
+  // same UoW alongside the Organization root's pointer. Direct callers
+  // outside that use case violate the invariant.
+  applyOwnershipTransfer(direction: "promote" | "demote"): void {
+    if (direction === "promote") {
+      if (this.state.role === "owner") return;
+      this.state = { ...this.state, role: "owner" };
+    } else {
+      if (this.state.role !== "owner") return;
+      this.state = { ...this.state, role: "admin" };
+    }
+  }
+
   toSnapshot(): OrganizationMemberSnapshot {
     const expectedRevision = this.state.revision;
     return {

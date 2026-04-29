@@ -95,6 +95,14 @@ export class Organization {
     return this.state.updatedAt;
   }
 
+  // Pointer-only mutation, paired with two `OrganizationMember` updates
+  // by the `TransferOwnership` use case inside a single UoW so the
+  // root's `ownerId` and the member rows never disagree.
+  setOwnerId(newOwnerId: string): void {
+    if (this.state.ownerId === newOwnerId) return;
+    this.state = { ...this.state, ownerId: newOwnerId, updatedAt: new Date() };
+  }
+
   toSnapshot(): OrganizationSnapshot {
     const expectedRevision = this.state.revision;
     return {

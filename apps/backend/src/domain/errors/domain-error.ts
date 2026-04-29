@@ -27,7 +27,14 @@ export type DomainErrorCode =
   | "ORGANIZATION_MEMBER_NOT_FOUND"
   | "ORGANIZATION_MEMBER_AGGREGATE_STALE"
   | "ORGANIZATION_MEMBERSHIP_REQUIRED"
-  | "ORGANIZATION_OWNER_INVARIANT";
+  | "ORGANIZATION_OWNER_INVARIANT"
+  | "ORGANIZATION_INVITATION_NOT_FOUND"
+  | "ORGANIZATION_INVITATION_NOT_ACTIVE"
+  | "ORGANIZATION_INVITATION_EXPIRED"
+  | "ORGANIZATION_INVITATION_AGGREGATE_STALE"
+  | "ORGANIZATION_INVITATION_EMAIL_MISMATCH"
+  | "ORGANIZATION_INVITATION_ALREADY_PENDING"
+  | "ORGANIZATION_LAST_OWNER";
 
 // Domain errors carry a stable `code` (ubiquitous language) and an optional
 // `details` bag. Transport-specific mapping (HTTP status, gRPC code, i18n
@@ -204,3 +211,59 @@ export const OrganizationMembershipRequiredError = (): DomainError =>
 // `TransferOwnership`).
 export const OrganizationOwnerInvariantError = (message: string): DomainError =>
   new DomainError("ORGANIZATION_OWNER_INVARIANT", message);
+
+// Surfaced when removing the only owner without transfer first. Distinct
+// from the generic owner-invariant error so the UI can offer a "transfer
+// then remove" remediation flow.
+export const OrganizationLastOwnerError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_LAST_OWNER",
+    "Cannot remove the last owner of an organization without first transferring ownership",
+  );
+
+export const OrganizationInvitationNotFoundError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_INVITATION_NOT_FOUND",
+    "Invitation not found",
+  );
+
+// Pending → accepted/cancelled/expired is one-way; this fires when a
+// caller tries to act on an already-resolved invitation.
+export const OrganizationInvitationNotActiveError = (
+  status: string,
+): DomainError =>
+  new DomainError(
+    "ORGANIZATION_INVITATION_NOT_ACTIVE",
+    `Invitation is no longer pending (status: ${status})`,
+    { status },
+  );
+
+export const OrganizationInvitationExpiredError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_INVITATION_EXPIRED",
+    "Invitation has expired; ask an admin to send a new one",
+  );
+
+export const OrganizationInvitationAggregateStaleError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_INVITATION_AGGREGATE_STALE",
+    "Invitation was modified by another writer; reload and retry",
+  );
+
+// Token + email pair must match. The link can only be redeemed by the
+// invited address; otherwise a leaked link would be a free pass into the
+// org. Caller-email comes from the authenticated user, not the request body.
+export const OrganizationInvitationEmailMismatchError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_INVITATION_EMAIL_MISMATCH",
+    "This invitation was issued to a different email address",
+  );
+
+// `(organizationId, email)` already has a pending invitation. Admins must
+// cancel the existing one before issuing a new one — keeps the audit log
+// linear and prevents simultaneous active links to the same recipient.
+export const OrganizationInvitationAlreadyPendingError = (): DomainError =>
+  new DomainError(
+    "ORGANIZATION_INVITATION_ALREADY_PENDING",
+    "A pending invitation already exists for this email; cancel it before issuing a new one",
+  );

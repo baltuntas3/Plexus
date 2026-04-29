@@ -1,6 +1,8 @@
 import { LoginUserUseCase } from "../login-user.js";
+import { Organization } from "../../../../domain/entities/organization.js";
 import { OrganizationMember } from "../../../../domain/entities/organization-member.js";
 import { InMemoryUserRepository } from "../../../../__tests__/fakes/in-memory-user-repository.js";
+import { InMemoryOrganizationRepository } from "../../../../__tests__/fakes/in-memory-organization-repository.js";
 import { InMemoryOrganizationMemberRepository } from "../../../../__tests__/fakes/in-memory-organization-member-repository.js";
 import {
   FakePasswordHasher,
@@ -10,6 +12,7 @@ import {
 describe("LoginUserUseCase", () => {
   let users: InMemoryUserRepository;
   let memberships: InMemoryOrganizationMemberRepository;
+  let organizations: InMemoryOrganizationRepository;
   let hasher: FakePasswordHasher;
   let tokens: FakeTokenService;
   let useCase: LoginUserUseCase;
@@ -18,9 +21,16 @@ describe("LoginUserUseCase", () => {
   beforeEach(async () => {
     users = new InMemoryUserRepository();
     memberships = new InMemoryOrganizationMemberRepository();
+    organizations = new InMemoryOrganizationRepository();
     hasher = new FakePasswordHasher();
     tokens = new FakeTokenService();
-    useCase = new LoginUserUseCase(users, memberships, hasher, tokens);
+    useCase = new LoginUserUseCase(
+      users,
+      memberships,
+      organizations,
+      hasher,
+      tokens,
+    );
 
     const created = await users.create({
       email: "alice@example.com",
@@ -29,8 +39,15 @@ describe("LoginUserUseCase", () => {
     });
     userId = created.id;
 
-    // Seed the canonical "user has one organization" state. Login picks the
-    // first membership, so the active org claim is deterministic.
+    // Seed the canonical "user has one organization" state. Login picks
+    // the first membership, so the active org claim is deterministic.
+    const org = Organization.create({
+      organizationId: "org-1",
+      name: "Acme",
+      slug: "acme",
+      ownerId: userId,
+    });
+    await organizations.save(org);
     const member = OrganizationMember.create({
       id: "m-1",
       organizationId: "org-1",
@@ -40,14 +57,16 @@ describe("LoginUserUseCase", () => {
     await memberships.save(member);
   });
 
-  it("returns user, organizationId, and tokens on valid credentials", async () => {
+  it("returns user, organization, and tokens on valid credentials", async () => {
     const result = await useCase.execute({
       email: "alice@example.com",
       password: "secret123",
     });
 
     expect(result.user.email).toBe("alice@example.com");
-    expect(result.organizationId).toBe("org-1");
+    expect(result.organization.id).toBe("org-1");
+    expect(result.organization.name).toBe("Acme");
+    expect(result.organization.slug).toBe("acme");
     expect(result.tokens.accessToken).toMatch(/^access:/);
   });
 

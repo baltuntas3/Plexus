@@ -13,6 +13,10 @@ export const domainErrorCodeToHttpStatus = (code: DomainErrorCode): number => {
     case "BENCHMARK_NO_JUDGES":
     case "BENCHMARK_INVALID_REPETITIONS":
     case "ORGANIZATION_OWNER_INVARIANT":
+    case "ORGANIZATION_LAST_OWNER":
+    case "ORGANIZATION_INVITATION_NOT_ACTIVE":
+    case "ORGANIZATION_INVITATION_EXPIRED":
+    case "ORGANIZATION_INVITATION_EMAIL_MISMATCH":
       return 400;
     case "UNAUTHORIZED":
       return 401;
@@ -27,6 +31,7 @@ export const domainErrorCodeToHttpStatus = (code: DomainErrorCode): number => {
     case "BENCHMARK_NOT_FOUND":
     case "ORGANIZATION_NOT_FOUND":
     case "ORGANIZATION_MEMBER_NOT_FOUND":
+    case "ORGANIZATION_INVITATION_NOT_FOUND":
       return 404;
     case "CONFLICT":
     case "PROMPT_AGGREGATE_STALE":
@@ -38,6 +43,8 @@ export const domainErrorCodeToHttpStatus = (code: DomainErrorCode): number => {
     case "ORGANIZATION_AGGREGATE_STALE":
     case "ORGANIZATION_MEMBER_AGGREGATE_STALE":
     case "ORGANIZATION_SLUG_TAKEN":
+    case "ORGANIZATION_INVITATION_AGGREGATE_STALE":
+    case "ORGANIZATION_INVITATION_ALREADY_PENDING":
       return 409;
     case "INTERNAL":
       return 500;

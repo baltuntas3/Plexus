@@ -11,6 +11,10 @@ import { LoginUserUseCase } from "../application/use-cases/auth/login-user.js";
 import { RefreshTokensUseCase } from "../application/use-cases/auth/refresh-tokens.js";
 import { GetCurrentUserUseCase } from "../application/use-cases/auth/get-current-user.js";
 import type { ITokenService } from "../application/services/token-service.js";
+import {
+  createRequirePermission,
+  type RequirePermission,
+} from "../presentation/http/middleware/require-permission.js";
 
 export interface AuthComposition {
   registerUser: RegisterUserUseCase;
@@ -18,6 +22,10 @@ export interface AuthComposition {
   refreshTokens: RefreshTokensUseCase;
   getCurrentUser: GetCurrentUserUseCase;
   tokenService: ITokenService;
+  // Factory exposed alongside the token service so router builders can
+  // declaratively gate each route on a single permission. Defense-in-depth:
+  // every call also re-validates the caller's membership against the DB.
+  requirePermission: RequirePermission;
 }
 
 export const createAuthComposition = (): AuthComposition => {
@@ -44,9 +52,16 @@ export const createAuthComposition = (): AuthComposition => {
       idGenerator,
       uow,
     ),
-    loginUser: new LoginUserUseCase(users, memberships, hasher, tokenService),
+    loginUser: new LoginUserUseCase(
+      users,
+      memberships,
+      organizations,
+      hasher,
+      tokenService,
+    ),
     refreshTokens: new RefreshTokensUseCase(users, memberships, tokenService),
     getCurrentUser: new GetCurrentUserUseCase(users),
     tokenService,
+    requirePermission: createRequirePermission(memberships),
   };
 };

@@ -1,12 +1,17 @@
-import { AppShell, Burger, Group, NavLink, Text, Button } from "@mantine/core";
+import { AppShell, Badge, Burger, Group, NavLink, Text, Button } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAtomValue, useSetAtom } from "jotai";
-import { logoutAtom, userAtom } from "../atoms/auth.atoms.js";
+import {
+  currentOrganizationAtom,
+  logoutAtom,
+  userAtom,
+} from "../atoms/auth.atoms.js";
 
 export const AppLayout = () => {
   const [opened, { toggle }] = useDisclosure();
   const user = useAtomValue(userAtom);
+  const organization = useAtomValue(currentOrganizationAtom);
   const logout = useSetAtom(logoutAtom);
   const navigate = useNavigate();
   const location = useLocation();
@@ -27,6 +32,11 @@ export const AppLayout = () => {
           <Group>
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
             <Text fw={700}>Plexus</Text>
+            {organization && (
+              <Badge variant="light" color="blue" size="sm">
+                {organization.name}
+              </Badge>
+            )}
           </Group>
           <Group>
             {user && <Text size="sm">{user.email}</Text>}

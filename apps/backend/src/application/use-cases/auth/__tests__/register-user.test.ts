@@ -47,15 +47,15 @@ describe("RegisterUserUseCase", () => {
 
     expect(result.user.email).toBe("alice@example.com");
     expect(result.user.name).toBe("Alice");
-    expect(result.organizationId).toBeDefined();
+    expect(result.organization.id).toBeDefined();
     expect(result.tokens.accessToken).toMatch(/^access:/);
     expect(result.tokens.refreshToken).toMatch(/^refresh:/);
     expect(tokens.issuedCount).toBe(1);
 
-    const org = await organizations.findById(result.organizationId);
+    const org = await organizations.findById(result.organization.id);
     expect(org?.slug).toBe("acme");
     const member = await memberships.findByOrganizationAndUser(
-      result.organizationId,
+      result.organization.id,
       result.user.id,
     );
     expect(member?.role).toBe("owner");
@@ -109,8 +109,8 @@ describe("RegisterUserUseCase", () => {
       // resolution should pick "acme-2" so registration never fails on
       // a name a user typed.
     });
-    const firstOrg = await organizations.findById(first.organizationId);
-    const secondOrg = await organizations.findById(second.organizationId);
+    const firstOrg = await organizations.findById(first.organization.id);
+    const secondOrg = await organizations.findById(second.organization.id);
     expect(firstOrg?.slug).toBe("acme");
     expect(secondOrg?.slug).toBe("acme-2");
   });

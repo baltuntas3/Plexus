@@ -43,3 +43,57 @@ export interface OrganizationMemberDto {
   invitedBy: string | null;
   joinedAt: ISODateString;
 }
+
+export const INVITATION_STATUSES = [
+  "pending",
+  "accepted",
+  "cancelled",
+  "expired",
+] as const;
+export type OrganizationInvitationStatus = (typeof INVITATION_STATUSES)[number];
+
+// Public-facing invitation projection. The redemption token itself is
+// **never** included — only the recipient (via email) gets the plaintext
+// link out-of-band; the API only exposes the invitation metadata so admins
+// can see "who is pending" without being handed a way to impersonate them.
+export interface OrganizationInvitationDto {
+  id: string;
+  organizationId: string;
+  email: string;
+  role: OrganizationRole;
+  invitedBy: string;
+  status: OrganizationInvitationStatus;
+  expiresAt: ISODateString;
+  createdAt: ISODateString;
+  resolvedAt: ISODateString | null;
+}
+
+export const MEMBERSHIP_EVENT_TYPES = [
+  "invited",
+  "cancelled",
+  "joined",
+  "role_changed",
+  "removed",
+  "ownership_transferred",
+] as const;
+export type OrganizationMembershipEventType =
+  (typeof MEMBERSHIP_EVENT_TYPES)[number];
+
+// Append-only audit log row. One per membership-changing operation. UI
+// renders these on the Members tab as a "Geçmiş" timeline; future
+// integrations (export, SIEM forwarding) read off the same shape.
+export interface OrganizationMembershipEventDto {
+  id: string;
+  organizationId: string;
+  eventType: OrganizationMembershipEventType;
+  actorUserId: string;
+  // Either the affected member's userId (joined/role_changed/removed/
+  // ownership_transferred) or null when the event targets an email that
+  // has not yet accepted (invited/cancelled). `targetEmail` carries the
+  // recipient address in those cases.
+  targetUserId: string | null;
+  targetEmail: string | null;
+  oldRole: OrganizationRole | null;
+  newRole: OrganizationRole | null;
+  occurredAt: ISODateString;
+}

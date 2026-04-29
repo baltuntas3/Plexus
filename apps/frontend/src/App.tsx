@@ -7,6 +7,9 @@ import { ProtectedRoute } from "./components/protected-route.js";
 const LoginPage = lazy(async () => ({
   default: (await import("./pages/login-page.js")).LoginPage,
 }));
+const RegisterPage = lazy(async () => ({
+  default: (await import("./pages/register-page.js")).RegisterPage,
+}));
 const DashboardPage = lazy(async () => ({
   default: (await import("./pages/dashboard-page.js")).DashboardPage,
 }));
@@ -37,6 +40,7 @@ export const App = () => {
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
         <Route
           element={
             <ProtectedRoute>

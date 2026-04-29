@@ -16,7 +16,7 @@ import type { RegisterInput } from "../../dto/auth-dto.js";
 
 export interface RegisterUserResult {
   user: PublicUser;
-  organizationId: string;
+  organization: Organization;
   tokens: { accessToken: string; refreshToken: string };
 }
 
@@ -70,17 +70,17 @@ export class RegisterUserUseCase {
       });
       await this.memberships.save(member);
 
-      return { user, organizationId: organization.id };
+      return { user, organization };
     });
 
     const tokens = this.tokens.issueTokenPair({
       sub: result.user.id,
       email: result.user.email,
-      organizationId: result.organizationId,
+      organizationId: result.organization.id,
     });
     return {
       user: toPublicUser(result.user),
-      organizationId: result.organizationId,
+      organization: result.organization,
       tokens,
     };
   }

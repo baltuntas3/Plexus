@@ -29,8 +29,22 @@ export const createApp = (deps: AppDependencies): Express => {
   });
 
   app.use("/auth", createAuthRouter(deps.auth));
-  app.use("/prompts", createPromptRouter(deps.prompts, deps.auth.tokenService));
-  app.use("/benchmarks", createBenchmarkRouter(deps.benchmarks, deps.auth.tokenService));
+  app.use(
+    "/prompts",
+    createPromptRouter(
+      deps.prompts,
+      deps.auth.tokenService,
+      deps.auth.requirePermission,
+    ),
+  );
+  app.use(
+    "/benchmarks",
+    createBenchmarkRouter(
+      deps.benchmarks,
+      deps.auth.tokenService,
+      deps.auth.requirePermission,
+    ),
+  );
   app.use("/models", createModelsRouter(deps.auth.tokenService));
 
   app.use(errorHandler);

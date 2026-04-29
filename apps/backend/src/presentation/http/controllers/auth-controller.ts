@@ -6,8 +6,13 @@ import {
 } from "../../../application/dto/auth-dto.js";
 import { UnauthorizedError } from "../../../domain/errors/domain-error.js";
 import type { AuthComposition } from "../../../composition/auth-composition.js";
+import type { Organization } from "../../../domain/entities/organization.js";
 import type { PublicUser } from "../../../domain/entities/user.js";
-import type { AuthResponse, UserDto } from "@plexus/shared-types";
+import type {
+  AuthResponse,
+  OrganizationDto,
+  UserDto,
+} from "@plexus/shared-types";
 
 const toUserDto = (user: PublicUser): UserDto => ({
   id: user.id,
@@ -16,20 +21,37 @@ const toUserDto = (user: PublicUser): UserDto => ({
   createdAt: user.createdAt.toISOString(),
 });
 
+const toOrganizationDto = (org: Organization): OrganizationDto => ({
+  id: org.id,
+  name: org.name,
+  slug: org.slug,
+  ownerId: org.ownerId,
+  createdAt: org.createdAt.toISOString(),
+  updatedAt: org.updatedAt.toISOString(),
+});
+
 export class AuthController {
   constructor(private readonly auth: AuthComposition) {}
 
   register: RequestHandler = async (req: Request, res: Response) => {
     const input = registerInputSchema.parse(req.body);
-    const { user, tokens } = await this.auth.registerUser.execute(input);
-    const response: AuthResponse = { user: toUserDto(user), tokens };
+    const { user, organization, tokens } = await this.auth.registerUser.execute(input);
+    const response: AuthResponse = {
+      user: toUserDto(user),
+      organization: toOrganizationDto(organization),
+      tokens,
+    };
     res.status(201).json(response);
   };
 
   login: RequestHandler = async (req: Request, res: Response) => {
     const input = loginInputSchema.parse(req.body);
-    const { user, tokens } = await this.auth.loginUser.execute(input);
-    const response: AuthResponse = { user: toUserDto(user), tokens };
+    const { user, organization, tokens } = await this.auth.loginUser.execute(input);
+    const response: AuthResponse = {
+      user: toUserDto(user),
+      organization: toOrganizationDto(organization),
+      tokens,
+    };
     res.json(response);
   };
 

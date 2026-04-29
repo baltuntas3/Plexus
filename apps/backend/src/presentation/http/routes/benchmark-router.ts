@@ -4,10 +4,12 @@ import { createRequireAuth } from "../middleware/require-auth.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import type { BenchmarkComposition } from "../../../composition/benchmark-composition.js";
 import type { ITokenService } from "../../../application/services/token-service.js";
+import type { RequirePermission } from "../middleware/require-permission.js";
 
 export const createBenchmarkRouter = (
   benchmarks: BenchmarkComposition,
   tokens: ITokenService,
+  requirePermission: RequirePermission,
 ): Router => {
   const router = Router();
   const controller = new BenchmarkController(benchmarks);
@@ -15,13 +17,33 @@ export const createBenchmarkRouter = (
 
   router.use(requireAuth);
 
-  router.post("/", asyncHandler(controller.create));
-  router.get("/", asyncHandler(controller.list));
-  router.get("/:id", asyncHandler(controller.get));
-  router.patch("/:id/test-cases", asyncHandler(controller.updateTestCases));
-  router.post("/:id/start", asyncHandler(controller.start));
-  router.get("/:id/analysis", asyncHandler(controller.analysis));
-  router.get("/:id/stream", asyncHandler(controller.stream));
+  router.post(
+    "/",
+    requirePermission("benchmark:create"),
+    asyncHandler(controller.create),
+  );
+  router.get("/", requirePermission("benchmark:read"), asyncHandler(controller.list));
+  router.get("/:id", requirePermission("benchmark:read"), asyncHandler(controller.get));
+  router.patch(
+    "/:id/test-cases",
+    requirePermission("benchmark:edit"),
+    asyncHandler(controller.updateTestCases),
+  );
+  router.post(
+    "/:id/start",
+    requirePermission("benchmark:edit"),
+    asyncHandler(controller.start),
+  );
+  router.get(
+    "/:id/analysis",
+    requirePermission("benchmark:read"),
+    asyncHandler(controller.analysis),
+  );
+  router.get(
+    "/:id/stream",
+    requirePermission("benchmark:read"),
+    asyncHandler(controller.stream),
+  );
 
   return router;
 };

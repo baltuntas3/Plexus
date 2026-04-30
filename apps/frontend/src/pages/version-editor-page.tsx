@@ -16,12 +16,6 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
 import { Editor, type Monaco, type OnMount } from "@monaco-editor/react";
-
-// Editor instance & decoration types are not exported by `@monaco-editor/react`,
-// so we derive them from the `OnMount` callback signature instead of pulling
-// in `monaco-editor` directly (which is a peer dep we don't bundle).
-type EditorInstance = Parameters<OnMount>[0];
-type DeltaDecoration = Parameters<EditorInstance["deltaDecorations"]>[1][number];
 import { notifications } from "@mantine/notifications";
 import type { PromptVariableInput } from "@plexus/shared-types";
 import {
@@ -41,36 +35,15 @@ import {
   validateVariableList,
 } from "../components/variables-panel.js";
 import { parseVariableReferences } from "../lib/parse-variable-references.js";
+import {
+  ensurePlaceholderStyles,
+  paintPlaceholderDecorations,
+  type EditorInstance,
+} from "../lib/monaco-placeholder-decorations.js";
+import { hasVariableListChanged } from "../lib/variable-diff.js";
 import { ApiError } from "../lib/api-client.js";
 
 const SNAPSHOT_DEBOUNCE_MS = 1500;
-const PLACEHOLDER_PATTERN = /\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}/g;
-
-// Monaco decoration class. Defined globally and applied as a CSS rule via
-// the monaco theme so the inline `{{var}}` highlight survives editor
-// remounts. Color picked to read on the vs-dark theme.
-const PLACEHOLDER_STYLE_ID = "plexus-placeholder-style";
-
-const ensurePlaceholderStyles = () => {
-  if (typeof document === "undefined") return;
-  if (document.getElementById(PLACEHOLDER_STYLE_ID)) return;
-  const style = document.createElement("style");
-  style.id = PLACEHOLDER_STYLE_ID;
-  style.textContent = `
-    .plexus-placeholder-known {
-      background-color: rgba(64, 192, 87, 0.2);
-      border-radius: 2px;
-      font-weight: 600;
-    }
-    .plexus-placeholder-unknown {
-      background-color: rgba(250, 82, 82, 0.25);
-      border-radius: 2px;
-      font-weight: 600;
-      text-decoration: underline wavy rgba(250, 82, 82, 0.7);
-    }
-  `;
-  document.head.appendChild(style);
-};
 
 interface EditorViewProps {
   promptId: string;
@@ -92,6 +65,11 @@ const EditorView = ({ promptId }: EditorViewProps) => {
   const [saving, setSaving] = useState(false);
   const [variables, setVariables] = useState<PromptVariableInput[]>([]);
   const [parentVariables, setParentVariables] = useState<PromptVariableInput[]>([]);
+  // Label of the version we're forking from. Sent as `fromVersion` so the
+  // backend records `parentVersionId` (lineage) and inherits the parent's
+  // variable set when the user makes no explicit edits to it. Null only
+  // for prompts with zero versions (a legacy/edge case).
+  const [parentVersionLabel, setParentVersionLabel] = useState<string | null>(null);
   const [debouncedContent] = useDebouncedValue(draft?.current ?? "", SNAPSHOT_DEBOUNCE_MS);
 
   const monacoRef = useRef<Monaco | null>(null);
@@ -120,6 +98,7 @@ const EditorView = ({ promptId }: EditorViewProps) => {
         initDraft({ promptId, baseContent });
         setParentVariables(inheritedVariables);
         setVariables(inheritedVariables);
+        setParentVersionLabel(latest?.version ?? null);
       })
       .catch((err: unknown) => {
         const message = err instanceof ApiError ? err.message : "Failed to load";
@@ -152,46 +131,17 @@ const EditorView = ({ promptId }: EditorViewProps) => {
   );
 
   // Repaint placeholder decorations whenever the body or declared set
-  // changes. Known-but-undeclared references render in red; declared ones in
-  // green. Pure visual feedback — backend integrity check is the source of
-  // truth at save time.
+  // changes. Pure visual feedback — backend integrity check is the source
+  // of truth at save time.
   useEffect(() => {
     const monaco = monacoRef.current;
     const editor = editorRef.current;
     if (!monaco || !editor) return;
-    const model = editor.getModel();
-    if (!model) return;
-    const text = model.getValue();
-    const newDecorations: DeltaDecoration[] = [];
-    for (const match of text.matchAll(PLACEHOLDER_PATTERN)) {
-      const start = match.index ?? 0;
-      const end = start + match[0].length;
-      const startPos = model.getPositionAt(start);
-      const endPos = model.getPositionAt(end);
-      const inner = match[0].slice(2, -2).trim();
-      const isKnown = declaredNames.has(inner);
-      newDecorations.push({
-        range: new monaco.Range(
-          startPos.lineNumber,
-          startPos.column,
-          endPos.lineNumber,
-          endPos.column,
-        ),
-        options: {
-          inlineClassName: isKnown
-            ? "plexus-placeholder-known"
-            : "plexus-placeholder-unknown",
-          hoverMessage: {
-            value: isKnown
-              ? `Declared variable: \`${inner}\``
-              : `Undeclared placeholder \`${inner}\` — add it to Variables before saving.`,
-          },
-        },
-      });
-    }
-    decorationsRef.current = editor.deltaDecorations(
+    decorationsRef.current = paintPlaceholderDecorations(
+      monaco,
+      editor,
+      declaredNames,
       decorationsRef.current,
-      newDecorations,
     );
   }, [draft?.current, declaredNames]);
 
@@ -204,23 +154,10 @@ const EditorView = ({ promptId }: EditorViewProps) => {
     updateDraftCurrent({ promptId, content: value ?? "" });
   };
 
-  const variablesChanged = useMemo(() => {
-    if (variables.length !== parentVariables.length) return true;
-    for (let i = 0; i < variables.length; i += 1) {
-      const a = variables[i];
-      const b = parentVariables[i];
-      if (!a || !b) return true;
-      if (
-        a.name !== b.name ||
-        (a.description ?? null) !== (b.description ?? null) ||
-        (a.defaultValue ?? null) !== (b.defaultValue ?? null) ||
-        (a.required ?? false) !== (b.required ?? false)
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }, [variables, parentVariables]);
+  const variablesChanged = useMemo(
+    () => hasVariableListChanged(variables, parentVariables),
+    [variables, parentVariables],
+  );
 
   const handleSave = async () => {
     if (!draft) return;
@@ -240,13 +177,15 @@ const EditorView = ({ promptId }: EditorViewProps) => {
     }
     setSaving(true);
     try {
-      // Send `variables` only when the list was actually edited; otherwise
-      // omit the field so the backend keeps the parent's set unchanged
-      // (CreateVersion's inheritance semantics).
+      // Always fork from the latest version so the new version records
+      // `parentVersionId` (lineage) and — when the user did not edit the
+      // variable list — inherits the parent's variables on the backend
+      // side. Variables sent explicitly only when the user touched them.
       const version = await createVersion({
         promptId,
         input: {
           sourcePrompt: draft.current,
+          ...(parentVersionLabel ? { fromVersion: parentVersionLabel } : {}),
           ...(variablesChanged
             ? {
                 variables: variables.map((v) => ({

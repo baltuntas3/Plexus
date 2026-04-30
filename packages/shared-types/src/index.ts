@@ -5,4 +5,7 @@ export * from "./common.js";
 export * from "./lint.js";
 export * from "./model.js";
 export * from "./organization.js";
+export * from "./permissions.js";
 export * from "./prompt.js";
+export * from "./variable-template.js";
+export * from "./version-approval.js";

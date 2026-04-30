@@ -9,16 +9,26 @@ export class InMemoryPromptVersionRepository implements IPromptVersionRepository
 
   constructor(private readonly queryService?: InMemoryPromptQueryService) {}
 
-  async findById(id: string): Promise<PromptVersion | null> {
-    return this.versions.get(id) ?? null;
+  async findInOrganization(
+    id: string,
+    organizationId: string,
+  ): Promise<PromptVersion | null> {
+    const v = this.versions.get(id);
+    if (!v) return null;
+    return v.organizationId === organizationId ? v : null;
   }
 
-  async findByPromptAndLabel(
+  async findByPromptAndLabelInOrganization(
     promptId: string,
     label: string,
+    organizationId: string,
   ): Promise<PromptVersion | null> {
     for (const version of this.versions.values()) {
-      if (version.promptId === promptId && version.version === label) {
+      if (
+        version.promptId === promptId &&
+        version.version === label &&
+        version.organizationId === organizationId
+      ) {
         return version;
       }
     }

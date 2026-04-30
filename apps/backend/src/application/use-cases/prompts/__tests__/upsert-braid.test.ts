@@ -22,6 +22,7 @@ const makePromptAndInitialVersion = (): { prompt: Prompt; v1: PromptVersion } =>
   const v1 = PromptVersion.create({
     id: "v1-id",
     promptId: prompt.id,
+      organizationId: prompt.organizationId,
     version: prompt.allocateNextVersionLabel(),
     sourcePrompt: "Answer concisely.",
   });

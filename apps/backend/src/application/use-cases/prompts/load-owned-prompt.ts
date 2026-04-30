@@ -35,7 +35,11 @@ export const loadPromptAndVersionInOrganization = async (
   organizationId: string,
 ): Promise<{ prompt: Prompt; version: PromptVersion }> => {
   const prompt = await loadPromptInOrganization(prompts, promptId, organizationId);
-  const version = await versions.findByPromptAndLabel(promptId, label);
+  const version = await versions.findByPromptAndLabelInOrganization(
+    promptId,
+    label,
+    organizationId,
+  );
   if (!version) {
     throw PromptVersionNotFoundError(label);
   }

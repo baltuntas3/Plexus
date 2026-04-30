@@ -1,9 +1,8 @@
+import { VARIABLE_NAME_PATTERN } from "@plexus/shared-types";
 import { ValidationError } from "../errors/domain-error.js";
 
-// Variable name format: must start with letter or underscore, then letters,
-// digits, underscores. Mirrors the `{{name}}` placeholder grammar parsed by
-// `extractVariableReferences` so the two cannot drift apart.
-const NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+// Name grammar imported from shared-types so the domain validator and the
+// `{{name}}` placeholder parser cannot drift apart.
 
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 500;
@@ -35,9 +34,9 @@ export class PromptVariable {
     required?: boolean;
   }): PromptVariable {
     const name = params.name.trim();
-    if (!NAME_PATTERN.test(name)) {
+    if (!VARIABLE_NAME_PATTERN.test(name)) {
       throw ValidationError(
-        `Variable name "${params.name}" is invalid; must match ${NAME_PATTERN}`,
+        `Variable name "${params.name}" is invalid; must match ${VARIABLE_NAME_PATTERN}`,
       );
     }
     if (name.length > MAX_NAME_LENGTH) {

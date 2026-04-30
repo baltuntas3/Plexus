@@ -60,6 +60,7 @@ const buildScaffold = async () => {
   const version = PromptVersion.create({
     id: ids.newId(),
     promptId: prompt.id,
+      organizationId: prompt.organizationId,
     version: label,
     sourcePrompt: "Answer.",
   });
@@ -145,12 +146,14 @@ describe("CreateBenchmarkUseCase", () => {
     const classical = PromptVersion.create({
       id: ids.newId(),
       promptId: prompt.id,
+      organizationId: prompt.organizationId,
       version: prompt.allocateNextVersionLabel(),
       sourcePrompt: "Classical instructions.",
     });
     const v2 = PromptVersion.create({
       id: ids.newId(),
       promptId: prompt.id,
+      organizationId: prompt.organizationId,
       version: prompt.allocateNextVersionLabel(),
       sourcePrompt: "Outdated classical prompt.",
       parentVersionId: classical.id,
@@ -223,12 +226,14 @@ describe("CreateBenchmarkUseCase", () => {
     const v1 = PromptVersion.create({
       id: ids.newId(),
       promptId: prompt.id,
+      organizationId: prompt.organizationId,
       version: prompt.allocateNextVersionLabel(),
       sourcePrompt: "Only answer in English.",
     });
     const v2 = PromptVersion.create({
       id: ids.newId(),
       promptId: prompt.id,
+      organizationId: prompt.organizationId,
       version: prompt.allocateNextVersionLabel(),
       sourcePrompt: "Answer in Turkish when asked.",
     });

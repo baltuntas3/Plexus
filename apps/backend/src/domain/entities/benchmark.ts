@@ -224,14 +224,20 @@ export class Benchmark {
   get creatorId(): string {
     return this.state.creatorId;
   }
+  // Read getters expose `readonly` views without per-call defensive
+  // copies — same convention used by `PromptVersion.variables` and
+  // `VersionApprovalRequest.approvals`. Hot reads (benchmark detail
+  // pages, runner progress polling) hit these repeatedly; cloning every
+  // time was wasted allocation and the `readonly` contract is enough to
+  // catch accidental mutations at compile time.
   get promptVersionIds(): readonly string[] {
-    return [...this.state.promptVersionIds];
+    return this.state.promptVersionIds;
   }
   get solverModels(): readonly string[] {
-    return [...this.state.solverModels];
+    return this.state.solverModels;
   }
   get judgeModels(): readonly string[] {
-    return [...this.state.judgeModels];
+    return this.state.judgeModels;
   }
   get generatorModel(): string {
     return this.state.generatorModel;
@@ -272,13 +278,11 @@ export class Benchmark {
   get status(): BenchmarkStatus {
     return this.state.status;
   }
-  get progress(): BenchmarkProgress {
-    return { ...this.state.progress };
+  get progress(): Readonly<BenchmarkProgress> {
+    return this.state.progress;
   }
-  // Defensive copy: `readonly` is shallow in TS so returning the live array
-  // would still let a caller `push` into aggregate state.
-  get testCases(): readonly BenchmarkTestCase[] {
-    return this.state.testCases.map((tc) => ({ ...tc }));
+  get testCases(): readonly Readonly<BenchmarkTestCase>[] {
+    return this.state.testCases;
   }
   get jobId(): string | null {
     return this.state.jobId;

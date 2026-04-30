@@ -1,5 +1,6 @@
 import type { Request, RequestHandler, Response } from "express";
 import {
+  compareVersionsQuerySchema,
   createPromptInputSchema,
   createVersionInputSchema,
   listPromptsQuerySchema,
@@ -8,7 +9,6 @@ import {
   updateVersionInputSchema,
 } from "../../../application/dto/prompt-dto.js";
 import { chatBraidInputSchema, generateBraidInputSchema, updateBraidInputSchema } from "../../../application/dto/braid-dto.js";
-import { UnauthorizedError, ValidationError } from "../../../domain/errors/domain-error.js";
 import type { PromptComposition } from "../../../composition/prompt-composition.js";
 import {
   toBraidGraphDto,
@@ -16,27 +16,13 @@ import {
   toPromptDto,
   toPromptVersionDto,
 } from "../mappers/prompt-mappers.js";
-
-const requireAuth = (req: Request): { userId: string; organizationId: string } => {
-  if (!req.userId || !req.organizationId) {
-    throw UnauthorizedError();
-  }
-  return { userId: req.userId, organizationId: req.organizationId };
-};
-
-const requireParam = (req: Request, name: string): string => {
-  const value = req.params[name];
-  if (!value) {
-    throw ValidationError(`Missing path parameter: ${name}`);
-  }
-  return value;
-};
+import { getAuthContext, getRequiredParam } from "../utils/request-context.js";
 
 export class PromptController {
   constructor(private readonly prompts: PromptComposition) {}
 
   create: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
+    const { userId, organizationId } = getAuthContext(req);
     const input = createPromptInputSchema.parse(req.body);
     const { prompt, version } = await this.prompts.createPrompt.execute({
       ...input,
@@ -50,7 +36,7 @@ export class PromptController {
   };
 
   list: RequestHandler = async (req: Request, res: Response) => {
-    const { organizationId } = requireAuth(req);
+    const { organizationId } = getAuthContext(req);
     const query = listPromptsQuerySchema.parse(req.query);
     const result = await this.prompts.listPrompts.execute({
       ...query,
@@ -65,15 +51,15 @@ export class PromptController {
   };
 
   get: RequestHandler = async (req: Request, res: Response) => {
-    const { organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
+    const { organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
     const prompt = await this.prompts.getPrompt.execute(id, organizationId);
     res.json({ prompt: toPromptDto(prompt) });
   };
 
   createVersion: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
     const input = createVersionInputSchema.parse(req.body);
     const version = await this.prompts.createVersion.execute({
       ...input,
@@ -85,8 +71,8 @@ export class PromptController {
   };
 
   listVersions: RequestHandler = async (req: Request, res: Response) => {
-    const { organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
+    const { organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
     const query = listVersionsQuerySchema.parse(req.query);
     const result = await this.prompts.listVersions.execute({
       ...query,
@@ -102,9 +88,9 @@ export class PromptController {
   };
 
   getVersion: RequestHandler = async (req: Request, res: Response) => {
-    const { organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
-    const version = requireParam(req, "version");
+    const { organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
+    const version = getRequiredParam(req,"version");
     const result = await this.prompts.getVersion.execute({
       promptId: id,
       version,
@@ -114,9 +100,9 @@ export class PromptController {
   };
 
   promoteVersion: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
-    const version = requireParam(req, "version");
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
+    const version = getRequiredParam(req,"version");
     const input = promoteVersionInputSchema.parse(req.body);
     const updated = await this.prompts.promoteVersion.execute({
       ...input,
@@ -129,9 +115,9 @@ export class PromptController {
   };
 
   updateVersionName: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
-    const version = requireParam(req, "version");
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
+    const version = getRequiredParam(req,"version");
     const input = updateVersionInputSchema.parse(req.body);
     const updated = await this.prompts.updateVersionName.execute({
       ...input,
@@ -144,9 +130,9 @@ export class PromptController {
   };
 
   generateBraid: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
-    const version = requireParam(req, "version");
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
+    const version = getRequiredParam(req,"version");
     const input = generateBraidInputSchema.parse(req.body);
     const result = await this.prompts.generateBraid.execute({
       ...input,
@@ -169,9 +155,9 @@ export class PromptController {
   };
 
   lintVersion: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
-    const version = requireParam(req, "version");
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
+    const version = getRequiredParam(req,"version");
     const score = await this.prompts.lintVersion.execute({
       promptId: id,
       version,
@@ -182,9 +168,9 @@ export class PromptController {
   };
 
   updateBraid: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
-    const version = requireParam(req, "version");
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
+    const version = getRequiredParam(req,"version");
     const input = updateBraidInputSchema.parse(req.body);
     const result = await this.prompts.updateBraidGraph.execute({
       ...input,
@@ -200,9 +186,9 @@ export class PromptController {
   };
 
   chatBraid: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = requireAuth(req);
-    const id = requireParam(req, "id");
-    const version = requireParam(req, "version");
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req,"id");
+    const version = getRequiredParam(req,"version");
     const input = chatBraidInputSchema.parse(req.body);
     const result = await this.prompts.chatBraid.execute({
       ...input,
@@ -221,6 +207,29 @@ export class PromptController {
       newVersion: result.newVersionName,
       qualityScore: toGraphQualityScoreDto(result.qualityScore),
       usage: { totalUsd: result.cost.totalUsd },
+    });
+  };
+
+  // Side-by-side comparison between two versions of the same prompt.
+  // Body and graph diffs are rendered client-side (Monaco DiffEditor /
+  // mermaid-text diff); the server pre-computes only the variables
+  // diff because its name-set semantics are non-trivial.
+  compareVersions: RequestHandler = async (req: Request, res: Response) => {
+    const { organizationId } = getAuthContext(req);
+    const promptId = getRequiredParam(req, "id");
+    const query = compareVersionsQuerySchema.parse(req.query);
+    const result = await this.prompts.compareVersions.execute({
+      promptId,
+      organizationId,
+      baseVersion: query.base,
+      targetVersion: query.target,
+    });
+    res.json({
+      comparison: {
+        base: toPromptVersionDto(result.base),
+        target: toPromptVersionDto(result.target),
+        variablesDiff: result.variablesDiff,
+      },
     });
   };
 

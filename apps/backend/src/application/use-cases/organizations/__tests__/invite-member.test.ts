@@ -1,5 +1,6 @@
 import { InviteMemberUseCase } from "../invite-member.js";
 import { CancelInvitationUseCase } from "../cancel-invitation.js";
+import { hashInvitationToken } from "../../../services/invitation-token.js";
 import { InMemoryOrganizationInvitationRepository } from "../../../../__tests__/fakes/in-memory-organization-invitation-repository.js";
 import { InMemoryOrganizationMembershipEventRepository } from "../../../../__tests__/fakes/in-memory-organization-membership-event-repository.js";
 import { InMemoryIdGenerator } from "../../../../__tests__/fakes/in-memory-id-generator.js";
@@ -32,10 +33,17 @@ describe("InviteMember", () => {
     expect(result.invitation.email).toBe("alice@example.com");
     expect(result.invitation.status).toBe("pending");
     expect(result.invitation.role).toBe("editor");
-    expect(result.invitation.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(new Date(result.invitation.expiresAt).getTime()).toBeGreaterThan(
+      Date.now(),
+    );
 
+    // The aggregate persists the SHA-256 hash of the plaintext token; the
+    // use case must wire the two together so the redemption path
+    // (`hashInvitationToken(input) → findByTokenHash`) succeeds. DTO
+    // intentionally does not expose `tokenHash`, so we reach into the
+    // stored aggregate to verify the invariant.
     const stored = await invitations.findById(result.invitation.id);
-    expect(stored?.tokenHash).toBe(result.invitation.tokenHash);
+    expect(stored?.tokenHash).toBe(hashInvitationToken(result.plaintextToken));
 
     const log = await events.listByOrganization("org-1");
     expect(log).toHaveLength(1);
@@ -59,7 +67,8 @@ describe("InviteMember", () => {
       role: "viewer",
     });
     expect(a.plaintextToken).not.toEqual(b.plaintextToken);
-    expect(a.invitation.tokenHash).not.toEqual(b.invitation.tokenHash);
+    // Hash uniqueness follows from plaintext uniqueness (SHA-256 is
+    // deterministic); the plaintext check is the load-bearing one.
   });
 
   it("rejects a second pending invitation for the same email until cancelled", async () => {

@@ -1,6 +1,6 @@
 import type { IUserRepository } from "../../../domain/repositories/user-repository.js";
 import { NotFoundError } from "../../../domain/errors/domain-error.js";
-import { toPublicUser, type PublicUser } from "../../../domain/entities/user.js";
+import { toPublicUser, type PublicUser } from "../../queries/user-projections.js";
 
 export class GetCurrentUserUseCase {
   constructor(private readonly users: IUserRepository) {}

@@ -17,18 +17,23 @@ import { VersionLabel } from "../value-objects/version-label.js";
 
 // PromptVersion is its own aggregate root.
 //
-// Content (sourcePrompt, representation) is immutable — every graph edit is
-// a fork that creates a new version with its own id, never a rewrite. This
+// Content (sourcePrompt, braid graph) is immutable — every graph edit is a
+// fork that creates a new version with its own id, never a rewrite. This
 // keeps BenchmarkResult → PromptVersion links stable: an old row always
 // resolves to the exact content that was evaluated, not whatever the
 // content has been mutated to since.
 //
 // Only metadata mutates in place: `name` (user-facing label) and `status`
-// (workflow: draft / staging / production). The "one production per prompt"
+// (workflow: draft / development / staging / production — `draft` is the
+// initial state and cannot be re-entered). The "one production per prompt"
 // invariant is held by the Prompt root (productionVersionId); the version's
 // own `status` is the user-facing workflow state that a promote orchestrates
 // across the two aggregates.
 
+// Persistence-shape discriminated union. Kept around so the mongo mapper
+// has a stable contract; internally the aggregate stores a nullable braid
+// VO pair instead of a class hierarchy (the previous wrapper classes added
+// no behaviour beyond getter delegation, so they were YAGNI).
 export interface ClassicalPromptRepresentationPrimitives {
   kind: "classical";
 }
@@ -46,6 +51,12 @@ export type PromptRepresentationPrimitives =
 export interface PromptVersionPrimitives {
   id: string;
   promptId: string;
+  // Owning organization, denormalised from the parent Prompt root. Stored
+  // on every version doc so repository queries can filter by `organizationId`
+  // directly (defense-in-depth) instead of joining through Prompt — the
+  // version repo's port now refuses to return a row that isn't scoped to the
+  // caller's tenant. Set at create time and inherited on fork; never mutated.
+  organizationId: string;
   version: string;
   name: string | null;
   parentVersionId: string | null;
@@ -70,6 +81,7 @@ export interface PromptVersionSnapshot {
 export interface CreatePromptVersionParams {
   id: string;
   promptId: string;
+  organizationId: string;
   version: VersionLabel;
   sourcePrompt: string;
   name?: string | null;
@@ -79,73 +91,53 @@ export interface CreatePromptVersionParams {
   // is itself a fork — is required to attach a braid. Authorship is a VO
   // rather than a bare model string so manual edits do not masquerade as
   // LLM-generated content.
-  initialBraid?: { graph: BraidGraph; authorship: BraidAuthorship };
+  initialBraid?: BraidContent;
   variables?: readonly PromptVariable[];
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-export class ClassicalPromptRepresentation {
-  readonly kind = "classical";
-
-  toPrimitives(): ClassicalPromptRepresentationPrimitives {
-    return { kind: this.kind };
-  }
+// Pair the braid graph with its authorship. When non-null the version is
+// braid-flavoured; null means classical. Replaces the prior wrapper-class
+// hierarchy whose only "behaviour" was delegating to these two fields.
+interface BraidContent {
+  graph: BraidGraph;
+  authorship: BraidAuthorship;
 }
 
-export class BraidPromptRepresentation {
-  readonly kind = "braid";
-
-  constructor(
-    public readonly graph: BraidGraph,
-    public readonly authorship: BraidAuthorship,
-  ) {}
-
-  get executablePrompt(): string {
-    return this.graph.mermaidCode;
-  }
-
-  toPrimitives(): BraidPromptRepresentationPrimitives {
-    return {
-      kind: this.kind,
-      graph: this.graph.mermaidCode,
-      authorship: this.authorship.toSnapshot(),
-    };
-  }
-}
-
-export type PromptRepresentation = ClassicalPromptRepresentation | BraidPromptRepresentation;
-
-// Internal state shape mirrors `PromptVersionPrimitives` exactly except for
-// `representation` (parsed class instance so getters like `braidGraph` return
-// the VO without re-parsing) and `variables` (VO list so callers see typed
-// instances rather than raw snapshot data).
-type InternalState = Omit<PromptVersionPrimitives, "representation" | "variables"> & {
-  representation: PromptRepresentation;
+interface InternalState {
+  id: string;
+  promptId: string;
+  organizationId: string;
+  version: string;
+  name: string | null;
+  parentVersionId: string | null;
+  sourcePrompt: string;
+  // Null = classical version. Non-null = braid version with the parsed VOs.
+  braid: BraidContent | null;
   variables: PromptVariable[];
-};
+  status: VersionStatus;
+  revision: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export class PromptVersion {
   private constructor(private state: InternalState) {}
 
   static create(params: CreatePromptVersionParams): PromptVersion {
     const now = params.createdAt ?? new Date();
-    const representation: PromptRepresentation = params.initialBraid
-      ? new BraidPromptRepresentation(
-          params.initialBraid.graph,
-          params.initialBraid.authorship,
-        )
-      : new ClassicalPromptRepresentation();
     const variables = [...(params.variables ?? [])];
     assertUniqueVariableNames(variables);
     return new PromptVersion({
       id: params.id,
       promptId: params.promptId,
+      organizationId: params.organizationId,
       version: params.version.toString(),
       name: normalizeVersionName(params.name ?? null),
       parentVersionId: params.parentVersionId ?? null,
       sourcePrompt: normalizeSourcePrompt(params.sourcePrompt),
-      representation,
+      braid: params.initialBraid ?? null,
       variables,
       status: "draft",
       revision: 0,
@@ -164,11 +156,12 @@ export class PromptVersion {
     return new PromptVersion({
       id: primitives.id,
       promptId: primitives.promptId,
+      organizationId: primitives.organizationId,
       version: primitives.version,
       name: normalizeVersionName(primitives.name),
       parentVersionId: primitives.parentVersionId ?? null,
       sourcePrompt: primitives.sourcePrompt,
-      representation: hydrateRepresentation(primitives.representation),
+      braid: hydrateBraid(primitives.representation),
       variables,
       status: primitives.status,
       revision: primitives.revision,
@@ -187,12 +180,13 @@ export class PromptVersion {
     newLabel: VersionLabel;
     sourcePrompt?: string;
     name?: string | null;
-    initialBraid?: { graph: BraidGraph; authorship: BraidAuthorship };
+    initialBraid?: BraidContent;
     variables?: readonly PromptVariable[];
   }): PromptVersion {
     return PromptVersion.create({
       id: params.newId,
       promptId: params.source.promptId,
+      organizationId: params.source.organizationId,
       version: params.newLabel,
       sourcePrompt: params.sourcePrompt ?? params.source.sourcePrompt,
       name: params.name ?? null,
@@ -208,6 +202,10 @@ export class PromptVersion {
 
   get promptId(): string {
     return this.state.promptId;
+  }
+
+  get organizationId(): string {
+    return this.state.organizationId;
   }
 
   get version(): string {
@@ -227,23 +225,19 @@ export class PromptVersion {
   }
 
   get braidGraph(): BraidGraph | null {
-    return this.state.representation.kind === "braid" ? this.state.representation.graph : null;
+    return this.state.braid?.graph ?? null;
   }
 
   get braidAuthorship(): BraidAuthorship | null {
-    return this.state.representation.kind === "braid"
-      ? this.state.representation.authorship
-      : null;
+    return this.state.braid?.authorship ?? null;
   }
 
   get generatorModel(): string | null {
-    return this.state.representation.kind === "braid"
-      ? this.state.representation.authorship.displayModel
-      : null;
+    return this.state.braid?.authorship.displayModel ?? null;
   }
 
   get hasBraidRepresentation(): boolean {
-    return this.state.representation.kind === "braid";
+    return this.state.braid !== null;
   }
 
   get variables(): readonly PromptVariable[] {
@@ -251,9 +245,7 @@ export class PromptVersion {
   }
 
   get executablePrompt(): string {
-    return this.state.representation.kind === "braid"
-      ? this.state.representation.graph.mermaidCode
-      : this.state.sourcePrompt;
+    return this.state.braid?.graph.mermaidCode ?? this.state.sourcePrompt;
   }
 
   get status(): VersionStatus {
@@ -294,9 +286,19 @@ export class PromptVersion {
 
   toPrimitives(): PromptVersionPrimitives {
     return {
-      ...this.state,
-      representation: this.state.representation.toPrimitives(),
+      id: this.state.id,
+      promptId: this.state.promptId,
+      organizationId: this.state.organizationId,
+      version: this.state.version,
+      name: this.state.name,
+      parentVersionId: this.state.parentVersionId,
+      sourcePrompt: this.state.sourcePrompt,
+      representation: braidToPrimitives(this.state.braid),
       variables: this.state.variables.map((v) => v.toSnapshot()),
+      status: this.state.status,
+      revision: this.state.revision,
+      createdAt: this.state.createdAt,
+      updatedAt: this.state.updatedAt,
     };
   }
 
@@ -326,14 +328,23 @@ const normalizeVersionName = (name: string | null): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-const hydrateRepresentation = (
+const hydrateBraid = (
   representation: PromptRepresentationPrimitives,
-): PromptRepresentation => {
-  if (representation.kind === "classical") {
-    return new ClassicalPromptRepresentation();
-  }
-  return new BraidPromptRepresentation(
-    BraidGraph.parse(representation.graph),
-    BraidAuthorship.fromSnapshot(representation.authorship),
-  );
+): BraidContent | null => {
+  if (representation.kind === "classical") return null;
+  return {
+    graph: BraidGraph.parse(representation.graph),
+    authorship: BraidAuthorship.fromSnapshot(representation.authorship),
+  };
+};
+
+const braidToPrimitives = (
+  braid: BraidContent | null,
+): PromptRepresentationPrimitives => {
+  if (braid === null) return { kind: "classical" };
+  return {
+    kind: "braid",
+    graph: braid.graph.mermaidCode,
+    authorship: braid.authorship.toSnapshot(),
+  };
 };

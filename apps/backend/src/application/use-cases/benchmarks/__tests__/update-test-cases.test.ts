@@ -25,6 +25,7 @@ const buildDraftBenchmark = async (
   const version = PromptVersion.create({
     id: ids.newId(),
     promptId: prompt.id,
+      organizationId: prompt.organizationId,
     version: prompt.allocateNextVersionLabel(),
     sourcePrompt: "Answer.",
   });

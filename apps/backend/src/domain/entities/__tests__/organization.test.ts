@@ -43,6 +43,53 @@ describe("Organization aggregate", () => {
     expect(org.revision).toBe(1);
   });
 
+  it("starts with no approval policy", () => {
+    const org = Organization.create({
+      organizationId: "o1",
+      name: "x",
+      slug: "x-org",
+      ownerId: "u1",
+    });
+    expect(org.approvalPolicy).toBeNull();
+  });
+
+  it("setApprovalPolicy installs and clears the gate", () => {
+    const org = Organization.create({
+      organizationId: "o1",
+      name: "x",
+      slug: "x-org",
+      ownerId: "u1",
+    });
+    org.setApprovalPolicy({ requiredApprovals: 2 });
+    expect(org.approvalPolicy?.requiredApprovals).toBe(2);
+    org.setApprovalPolicy(null);
+    expect(org.approvalPolicy).toBeNull();
+  });
+
+  it("setApprovalPolicy is a no-op when the value is unchanged", () => {
+    const org = Organization.create({
+      organizationId: "o1",
+      name: "x",
+      slug: "x-org",
+      ownerId: "u1",
+    });
+    org.setApprovalPolicy({ requiredApprovals: 3 });
+    const before = org.updatedAt;
+    org.setApprovalPolicy({ requiredApprovals: 3 });
+    expect(org.updatedAt).toBe(before);
+  });
+
+  it("setApprovalPolicy rejects out-of-range or non-integer thresholds", () => {
+    const org = Organization.create({
+      organizationId: "o1",
+      name: "x",
+      slug: "x-org",
+      ownerId: "u1",
+    });
+    expect(() => org.setApprovalPolicy({ requiredApprovals: 0 })).toThrow(/between/);
+    expect(() => org.setApprovalPolicy({ requiredApprovals: 11 })).toThrow(/between/);
+    expect(() => org.setApprovalPolicy({ requiredApprovals: 2.5 })).toThrow(/integer/);
+  });
 });
 
 describe("slugifyOrganizationName", () => {

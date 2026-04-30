@@ -1,3 +1,4 @@
+import type { OrganizationInvitationDto } from "@plexus/shared-types";
 import { OrganizationInvitation } from "../../../domain/entities/organization-invitation.js";
 import { OrganizationMembershipEvent } from "../../../domain/entities/organization-membership-event.js";
 import type { IOrganizationInvitationRepository } from "../../../domain/repositories/organization-invitation-repository.js";
@@ -6,6 +7,7 @@ import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import { generateInvitationToken } from "../../services/invitation-token.js";
 import type { InviteMemberInputDto } from "../../dto/organization-dto.js";
+import { toInvitationDto } from "../../queries/organization-projections.js";
 
 export interface InviteMemberCommand extends InviteMemberInputDto {
   organizationId: string;
@@ -15,7 +17,10 @@ export interface InviteMemberCommand extends InviteMemberInputDto {
 }
 
 export interface InviteMemberResult {
-  invitation: OrganizationInvitation;
+  // Public DTO — caller never sees the raw aggregate or the persisted
+  // `tokenHash`. Mapping happens here so every invitation projection
+  // (issue, list, future audit views) uses one shape from one place.
+  invitation: OrganizationInvitationDto;
   // Plaintext token returned exactly once. Caller forwards it to the
   // recipient via the invitation link; storage never sees the
   // plaintext, only its SHA-256 hash.
@@ -68,6 +73,6 @@ export class InviteMemberUseCase {
       await this.events.append(event);
     });
 
-    return { invitation, plaintextToken: plaintext };
+    return { invitation: toInvitationDto(invitation), plaintextToken: plaintext };
   }
 }

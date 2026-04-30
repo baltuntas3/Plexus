@@ -1,5 +1,11 @@
 import { ValidationError } from "../errors/domain-error.js";
 
+// Canonical version-label format. Exported so application-layer Zod
+// schemas can validate the same shape at the HTTP boundary without
+// duplicating the regex — boundary and domain stay in lock-step if the
+// format ever changes (e.g. `v1.2` semver).
+export const VERSION_LABEL_PATTERN = /^v\d+$/;
+
 // Canonical label format ("v1", "v2", ...) for prompt versions. Acts as a
 // produce/parse guard so a raw string from HTTP or the DB cannot silently
 // flow into aggregate state with a malformed shape, and so the "v{n}" format
@@ -16,7 +22,7 @@ export class VersionLabel {
   }
 
   static parse(raw: string): VersionLabel {
-    if (!/^v\d+$/.test(raw)) {
+    if (!VERSION_LABEL_PATTERN.test(raw)) {
       throw ValidationError(`Invalid version label: ${raw}`);
     }
     return new VersionLabel(raw);

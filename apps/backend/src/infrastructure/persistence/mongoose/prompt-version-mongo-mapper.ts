@@ -28,6 +28,7 @@ interface VariableDoc {
 export interface PromptVersionDocShape {
   _id: Types.ObjectId;
   promptId: Types.ObjectId;
+  organizationId: Types.ObjectId;
   version: string;
   name: string | null;
   parentVersionId: Types.ObjectId | null;
@@ -102,6 +103,7 @@ export const toVersionPrimitives = (
 ): PromptVersionPrimitives => ({
   id: String(doc._id),
   promptId: String(doc.promptId),
+  organizationId: String(doc.organizationId),
   version: doc.version,
   name: doc.name ?? null,
   parentVersionId: doc.parentVersionId ? String(doc.parentVersionId) : null,
@@ -161,6 +163,7 @@ export const toVersionDocSet = (
   version: PromptVersionPrimitives,
 ): Record<string, unknown> => ({
   promptId: version.promptId,
+  organizationId: version.organizationId,
   version: version.version,
   name: version.name,
   parentVersionId: version.parentVersionId,

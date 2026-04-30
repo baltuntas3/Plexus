@@ -57,6 +57,11 @@ export const AppLayout = () => {
           active={location.pathname.startsWith("/prompts")}
           onClick={() => navigate("/prompts")}
         />
+        <NavLink
+          label="Organization"
+          active={location.pathname.startsWith("/organization")}
+          onClick={() => navigate("/organization/settings")}
+        />
       </AppShell.Navbar>
       <AppShell.Main>
         <Outlet />

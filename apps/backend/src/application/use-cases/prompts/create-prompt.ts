@@ -62,6 +62,7 @@ export class CreatePromptUseCase {
       const version = PromptVersion.create({
         id: this.idGenerator.newId(),
         promptId: prompt.id,
+        organizationId: prompt.organizationId,
         version: label,
         sourcePrompt: command.initialPrompt,
         parentVersionId: null,

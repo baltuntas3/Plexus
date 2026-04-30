@@ -35,6 +35,16 @@ const variableSchema = new Schema(
 const promptVersionSchema = new Schema(
   {
     promptId: { type: Schema.Types.ObjectId, ref: "Prompt", required: true, index: true },
+    // Denormalised owner from the parent Prompt — versions inherit it at
+    // create/fork time and never mutate it. Repository reads filter on
+    // this directly so cross-tenant lookups are rejected without joining
+    // through Prompt (defense-in-depth).
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: "Organization",
+      required: true,
+      index: true,
+    },
     version: { type: String, required: true },
     name: { type: String, default: null },
     // Lineage pointer. Null for the first version of a prompt; set to the
@@ -68,5 +78,8 @@ const promptVersionSchema = new Schema(
 promptVersionSchema.index({ promptId: 1, version: 1 }, { unique: true });
 promptVersionSchema.index({ promptId: 1, status: 1 });
 promptVersionSchema.index({ promptId: 1, createdAt: -1 });
+// Org-scoped read paths use this index when filtering versions across an
+// org (e.g. cross-prompt lookups during benchmark seeding).
+promptVersionSchema.index({ organizationId: 1, createdAt: -1 });
 
 export const PromptVersionModel = model("PromptVersion", promptVersionSchema);

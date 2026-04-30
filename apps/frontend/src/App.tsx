@@ -10,6 +10,12 @@ const LoginPage = lazy(async () => ({
 const RegisterPage = lazy(async () => ({
   default: (await import("./pages/register-page.js")).RegisterPage,
 }));
+const AcceptInvitationPage = lazy(async () => ({
+  default: (await import("./pages/accept-invitation-page.js")).AcceptInvitationPage,
+}));
+const OrgSettingsPage = lazy(async () => ({
+  default: (await import("./pages/org-settings-page.js")).OrgSettingsPage,
+}));
 const DashboardPage = lazy(async () => ({
   default: (await import("./pages/dashboard-page.js")).DashboardPage,
 }));
@@ -24,6 +30,9 @@ const VersionEditorPage = lazy(async () => ({
 }));
 const VersionDetailPage = lazy(async () => ({
   default: (await import("./pages/version-detail-page.js")).VersionDetailPage,
+}));
+const VersionComparisonPage = lazy(async () => ({
+  default: (await import("./pages/version-comparison-page.js")).VersionComparisonPage,
 }));
 const BenchmarkDetailPage = lazy(async () => ({
   default: (await import("./pages/benchmark-detail-page.js")).BenchmarkDetailPage,
@@ -41,6 +50,7 @@ export const App = () => {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/invitations/accept" element={<AcceptInvitationPage />} />
         <Route
           element={
             <ProtectedRoute>
@@ -53,7 +63,9 @@ export const App = () => {
           <Route path="/prompts/:id" element={<PromptDetailPage />} />
           <Route path="/prompts/:id/versions/new" element={<VersionEditorPage />} />
           <Route path="/prompts/:id/versions/:version" element={<VersionDetailPage />} />
+          <Route path="/prompts/:id/compare" element={<VersionComparisonPage />} />
           <Route path="/benchmarks/:id" element={<BenchmarkDetailPage />} />
+          <Route path="/organization/settings" element={<OrgSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

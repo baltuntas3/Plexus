@@ -18,6 +18,19 @@ export const ORGANIZATION_ROLES = [
 ] as const;
 export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
 
+// Roles that can be assigned through invitations and role updates.
+// `owner` is intentionally excluded — ownership is transferred via the
+// dedicated `TransferOwnership` flow, never assigned in place. Shared
+// across backend Zod schemas, frontend role pickers, and admin UI lists
+// so the owner-exclusion rule lives in exactly one source of truth.
+export const ASSIGNABLE_ROLES = [
+  "admin",
+  "editor",
+  "approver",
+  "viewer",
+] as const satisfies ReadonlyArray<Exclude<OrganizationRole, "owner">>;
+export type AssignableOrganizationRole = (typeof ASSIGNABLE_ROLES)[number];
+
 export interface OrganizationDto {
   id: string;
   name: string;
@@ -28,8 +41,24 @@ export interface OrganizationDto {
   // on the org for the common "who founded / currently owns this" lookup
   // without joining the membership collection.
   ownerId: string;
+  // Optional production-promotion gate. When null, `→ production`
+  // promotions go through directly via the `version:promote` permission;
+  // when present, those promotions are routed through the
+  // `VersionApprovalRequest` workflow and resolve automatically once
+  // `requiredApprovals` distinct approvers have voted.
+  approvalPolicy: ApprovalPolicyDto | null;
   createdAt: ISODateString;
   updatedAt: ISODateString;
+}
+
+// Production-promotion gate. Currently a single threshold; encoded as a
+// VO so the future "per-prompt overrides" or "approval window" features
+// extend this shape without a migration of the surrounding fields.
+export interface ApprovalPolicyDto {
+  // Distinct approvers required before a `→ production` request
+  // auto-promotes. Bounded 1..10 — one approver is the minimum useful
+  // gate, ten is an arbitrary cap to keep the UI list-rendering finite.
+  requiredApprovals: number;
 }
 
 export interface OrganizationMemberDto {

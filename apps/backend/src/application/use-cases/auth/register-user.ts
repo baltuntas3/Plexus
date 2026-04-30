@@ -11,7 +11,7 @@ import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import type { IPasswordHasher } from "../../services/password-hasher.js";
 import type { ITokenService } from "../../services/token-service.js";
 import { ConflictError } from "../../../domain/errors/domain-error.js";
-import { toPublicUser, type PublicUser } from "../../../domain/entities/user.js";
+import { toPublicUser, type PublicUser } from "../../queries/user-projections.js";
 import type { RegisterInput } from "../../dto/auth-dto.js";
 
 export interface RegisterUserResult {

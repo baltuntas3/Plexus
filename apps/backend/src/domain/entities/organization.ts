@@ -1,4 +1,4 @@
-import type { OrganizationRole } from "@plexus/shared-types";
+import type { ApprovalPolicyDto, OrganizationRole } from "@plexus/shared-types";
 import { ValidationError } from "../errors/domain-error.js";
 
 // Slug grammar: URL-safe, lowercase, hyphen-separated. The pattern is
@@ -9,6 +9,13 @@ const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 const NAME_MIN = 1;
 const NAME_MAX = 120;
+
+// 1: minimum useful production gate (one approver). 10: arbitrary upper
+// bound that keeps the eventual approver-list UI finite. Lifted to
+// constants so the future "per-org-tier max" lookup can swap them
+// without hunting magic numbers.
+const MIN_REQUIRED_APPROVALS = 1;
+const MAX_REQUIRED_APPROVALS = 10;
 
 // Aggregate root for the registration unit of the platform. Every other
 // aggregate (Prompt, Benchmark, Dataset, ...) carries an `organizationId`
@@ -26,6 +33,10 @@ export interface OrganizationPrimitives {
   name: string;
   slug: string;
   ownerId: string;
+  // Null until an owner/admin sets it. When present, `→ production`
+  // promotions are routed through the `VersionApprovalRequest` workflow
+  // instead of resolving directly via `version:promote`.
+  approvalPolicy: ApprovalPolicyDto | null;
   revision: number;
   createdAt: Date;
   updatedAt: Date;
@@ -41,6 +52,7 @@ export interface CreateOrganizationParams {
   name: string;
   slug: string;
   ownerId: string;
+  approvalPolicy?: ApprovalPolicyDto | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -51,12 +63,16 @@ export class Organization {
   static create(params: CreateOrganizationParams): Organization {
     const name = normalizeName(params.name);
     const slug = normalizeSlug(params.slug);
+    const approvalPolicy = params.approvalPolicy
+      ? normalizeApprovalPolicy(params.approvalPolicy)
+      : null;
     const now = params.createdAt ?? new Date();
     return new Organization({
       id: params.organizationId,
       name,
       slug,
       ownerId: params.ownerId,
+      approvalPolicy,
       revision: 0,
       createdAt: now,
       updatedAt: params.updatedAt ?? now,
@@ -83,6 +99,10 @@ export class Organization {
     return this.state.ownerId;
   }
 
+  get approvalPolicy(): ApprovalPolicyDto | null {
+    return this.state.approvalPolicy;
+  }
+
   get revision(): number {
     return this.state.revision;
   }
@@ -101,6 +121,24 @@ export class Organization {
   setOwnerId(newOwnerId: string): void {
     if (this.state.ownerId === newOwnerId) return;
     this.state = { ...this.state, ownerId: newOwnerId, updatedAt: new Date() };
+  }
+
+  // `null` clears the gate: subsequent `→ production` promotions go
+  // through the direct `version:promote` path again. Existing in-flight
+  // approval requests are unaffected — they keep their snapshot of the
+  // threshold they were created under (see `VersionApprovalRequest`).
+  setApprovalPolicy(policy: ApprovalPolicyDto | null): void {
+    const next = policy ? normalizeApprovalPolicy(policy) : null;
+    const current = this.state.approvalPolicy;
+    if (next === null && current === null) return;
+    if (
+      next !== null
+      && current !== null
+      && next.requiredApprovals === current.requiredApprovals
+    ) {
+      return;
+    }
+    this.state = { ...this.state, approvalPolicy: next, updatedAt: new Date() };
   }
 
   toSnapshot(): OrganizationSnapshot {
@@ -132,6 +170,21 @@ const normalizeSlug = (raw: string): string => {
     );
   }
   return lowered;
+};
+
+const normalizeApprovalPolicy = (policy: ApprovalPolicyDto): ApprovalPolicyDto => {
+  if (!Number.isInteger(policy.requiredApprovals)) {
+    throw ValidationError("requiredApprovals must be an integer");
+  }
+  if (
+    policy.requiredApprovals < MIN_REQUIRED_APPROVALS
+    || policy.requiredApprovals > MAX_REQUIRED_APPROVALS
+  ) {
+    throw ValidationError(
+      `requiredApprovals must be between ${MIN_REQUIRED_APPROVALS} and ${MAX_REQUIRED_APPROVALS}`,
+    );
+  }
+  return { requiredApprovals: policy.requiredApprovals };
 };
 
 // Unicode combining diacritical marks block (U+0300..U+036F). After NFKD

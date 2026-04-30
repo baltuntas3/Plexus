@@ -7,6 +7,7 @@ import { createPromptComposition } from "./composition/prompt-composition.js";
 import { createAIComposition } from "./composition/ai-composition.js";
 import { createBraidComposition } from "./composition/braid-composition.js";
 import { createBenchmarkComposition } from "./composition/benchmark-composition.js";
+import { createOrganizationComposition } from "./composition/organization-composition.js";
 import { InProcessJobQueue } from "./infrastructure/queue/in-process-job-queue.js";
 
 const bootstrap = async (): Promise<void> => {
@@ -23,7 +24,8 @@ const bootstrap = async (): Promise<void> => {
     },
   });
   const benchmarks = createBenchmarkComposition(ai.factory, queue, prompts.promptQueryService);
-  const app = createApp({ auth, prompts, benchmarks });
+  const organizations = createOrganizationComposition();
+  const app = createApp({ auth, prompts, benchmarks, organizations });
 
   const server = app.listen(env.PORT, () => {
     logger.info(`API listening on http://localhost:${env.PORT}`);

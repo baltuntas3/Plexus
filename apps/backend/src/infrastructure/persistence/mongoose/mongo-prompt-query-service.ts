@@ -128,13 +128,21 @@ export class MongoPromptQueryService implements IPromptQueryService {
   async listVersionSummariesInOrganization(
     query: ListVersionSummariesInOrgQuery,
   ): Promise<VersionSummaryListResult | null> {
+    // Prompt-existence pre-check distinguishes "no such prompt for this
+    // org" (→ null, becomes a 404) from "prompt exists but has no
+    // versions" (→ empty list). The version filter itself is org-scoped
+    // via the denormalised field, so a foreign org's versions cannot
+    // leak through even if the pre-check were bypassed.
     const owned = await PromptModel.exists({
       _id: query.promptId,
       organizationId: query.organizationId,
     });
     if (!owned) return null;
 
-    const filter = { promptId: query.promptId };
+    const filter = {
+      promptId: query.promptId,
+      organizationId: query.organizationId,
+    };
     const skip = (query.page - 1) * query.pageSize;
     const [docs, total] = await Promise.all([
       PromptVersionModel.find(filter)
@@ -152,11 +160,10 @@ export class MongoPromptQueryService implements IPromptQueryService {
     label: string,
     organizationId: string,
   ): Promise<PromptVersionSummary | null> {
-    const owned = await PromptModel.exists({ _id: promptId, organizationId });
-    if (!owned) return null;
     const doc = await PromptVersionModel.findOne({
       promptId,
       version: label,
+      organizationId,
     }).lean<PromptVersionDocShape>();
     return doc ? toVersionSummary(doc) : null;
   }
@@ -165,14 +172,11 @@ export class MongoPromptQueryService implements IPromptQueryService {
     id: string,
     organizationId: string,
   ): Promise<PromptVersionSummary | null> {
-    const doc = await PromptVersionModel.findById(id).lean<PromptVersionDocShape>();
-    if (!doc) return null;
-    const owned = await PromptModel.exists({
-      _id: doc.promptId,
+    const doc = await PromptVersionModel.findOne({
+      _id: id,
       organizationId,
-    });
-    if (!owned) return null;
-    return toVersionSummary(doc);
+    }).lean<PromptVersionDocShape>();
+    return doc ? toVersionSummary(doc) : null;
   }
 
   async findVersionSummariesByIdsInOrganization(
@@ -182,24 +186,15 @@ export class MongoPromptQueryService implements IPromptQueryService {
     if (ids.length === 0) {
       return new Map();
     }
+    // Single org-scoped query — no two-step join needed since the version
+    // doc carries `organizationId` directly. Foreign tenant ids fall out
+    // of the result set silently.
     const versionDocs = await PromptVersionModel.find({
       _id: { $in: ids },
-    }).lean<PromptVersionDocShape[]>();
-    if (versionDocs.length === 0) {
-      return new Map();
-    }
-    const promptIds = [...new Set(versionDocs.map((doc) => String(doc.promptId)))];
-    const inOrgPromptDocs = await PromptModel.find({
-      _id: { $in: promptIds },
       organizationId,
-    })
-      .select({ _id: 1 })
-      .lean<{ _id: Types.ObjectId }[]>();
-    const inOrgPromptIds = new Set(inOrgPromptDocs.map((doc) => String(doc._id)));
-
+    }).lean<PromptVersionDocShape[]>();
     const map = new Map<string, PromptVersionSummary>();
     for (const doc of versionDocs) {
-      if (!inOrgPromptIds.has(String(doc.promptId))) continue;
       const summary = toVersionSummary(doc);
       map.set(summary.id, summary);
     }

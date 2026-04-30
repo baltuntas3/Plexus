@@ -1,19 +1,11 @@
 import { z } from "zod";
-import { ORGANIZATION_ROLES } from "@plexus/shared-types";
+import { ASSIGNABLE_ROLES } from "@plexus/shared-types";
 
-// Roles assignable through invitations and role updates. `owner` is
-// excluded from both — ownership is transferred via the dedicated
-// `TransferOwnership` flow, never assigned in place.
-const ASSIGNABLE_ROLES = ORGANIZATION_ROLES.filter(
-  (r): r is "admin" | "editor" | "approver" | "viewer" => r !== "owner",
-);
+// Owner-exclusion lives in the shared-types `ASSIGNABLE_ROLES` const so
+// the rule is one source of truth across backend Zod, frontend pickers,
+// and admin UI lists. This schema is a thin runtime gate over that tuple.
 const assignableRoleSchema = z.enum(
-  ASSIGNABLE_ROLES as [
-    "admin",
-    "editor",
-    "approver",
-    "viewer",
-  ],
+  ASSIGNABLE_ROLES as unknown as ["admin", "editor", "approver", "viewer"],
 );
 
 export const inviteMemberInputSchema = z.object({
@@ -41,3 +33,12 @@ export const transferOwnershipInputSchema = z.object({
   newOwnerUserId: z.string().min(1),
 });
 export type TransferOwnershipInputDto = z.infer<typeof transferOwnershipInputSchema>;
+
+// `requiredApprovals: null` clears the policy and re-enables direct
+// `→ production` promotion. Range bounds (1..10, integer) are enforced
+// inside the `Organization` aggregate so the schema is intentionally
+// permissive on number range — the entity is the single source of truth.
+export const setApprovalPolicyInputSchema = z.object({
+  requiredApprovals: z.number().int().nullable(),
+});
+export type SetApprovalPolicyInputDto = z.infer<typeof setApprovalPolicyInputSchema>;

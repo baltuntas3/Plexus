@@ -135,21 +135,31 @@ export class Prompt {
   // counter. Version creation itself happens in the PromptVersion aggregate;
   // the Prompt root owns only the label-allocation invariant.
   allocateNextVersionLabel(): VersionLabel {
-    this.state.versionCounter += 1;
-    this.touch();
-    return VersionLabel.fromSequence(this.state.versionCounter);
+    const nextCounter = this.state.versionCounter + 1;
+    this.state = {
+      ...this.state,
+      versionCounter: nextCounter,
+      updatedAt: new Date(),
+    };
+    return VersionLabel.fromSequence(nextCounter);
   }
 
   setProductionVersion(versionId: string): void {
     if (this.state.productionVersionId === versionId) return;
-    this.state.productionVersionId = versionId;
-    this.touch();
+    this.state = {
+      ...this.state,
+      productionVersionId: versionId,
+      updatedAt: new Date(),
+    };
   }
 
   clearProductionVersion(): void {
     if (this.state.productionVersionId === null) return;
-    this.state.productionVersionId = null;
-    this.touch();
+    this.state = {
+      ...this.state,
+      productionVersionId: null,
+      updatedAt: new Date(),
+    };
   }
 
   toSnapshot(): PromptSnapshot {
@@ -161,10 +171,6 @@ export class Prompt {
   }
 
   markPersisted(): void {
-    this.state.revision += 1;
-  }
-
-  private touch(): void {
-    this.state.updatedAt = new Date();
+    this.state = { ...this.state, revision: this.state.revision + 1 };
   }
 }

@@ -12,12 +12,12 @@ import {
 // scope. Same user can hold different roles in different orgs.
 //
 // Ownership rule: the `owner` role cannot be set or cleared via
-// `changeRole`. That transition is reserved for the `TransferOwnership`
-// use case (Faz 1B-C) which will atomically update two member rows plus
-// the org root pointer in a single UoW; the escape-hatch mutation method
-// will be added on this aggregate at the same time. Until then the
-// aggregate's invariant — "exactly one owner, never assigned in place" —
-// is enforced by `changeRole` rejecting any owner-touching transition.
+// `changeRole`. The cross-aggregate "exactly one owner" invariant lives
+// in the `transferOrganizationOwnership` domain service (under
+// `domain/services/`); that service is the only legitimate caller of
+// `applyOwnershipTransfer` below. The aggregate enforces what it can
+// (rejecting any owner-touching transition through `changeRole`) and
+// trusts the domain service for the cross-aggregate dance.
 
 export interface OrganizationMemberPrimitives {
   id: string;
@@ -110,12 +110,12 @@ export class OrganizationMember {
     this.state = { ...this.state, role: newRole };
   }
 
-  // Escape hatch reserved for the `TransferOwnership` use case. Bypasses
-  // the `changeRole` guard precisely because the orchestrating use case
-  // is what preserves the "exactly one owner" invariant: it flips the
-  // outgoing owner ("demote") and the incoming member ("promote") in the
-  // same UoW alongside the Organization root's pointer. Direct callers
-  // outside that use case violate the invariant.
+  // Restricted to the `transferOrganizationOwnership` domain service.
+  // That service is what preserves the cross-aggregate "exactly one owner"
+  // invariant by pairing the outgoing demote, the incoming promote, and
+  // the org root pointer flip — each individually here is meaningless
+  // out of context. TypeScript has no package-private modifier; the
+  // restriction is enforced by convention and a single grep audit point.
   applyOwnershipTransfer(direction: "promote" | "demote"): void {
     if (direction === "promote") {
       if (this.state.role === "owner") return;

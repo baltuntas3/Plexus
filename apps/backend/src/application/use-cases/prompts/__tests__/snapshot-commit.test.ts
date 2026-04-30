@@ -50,6 +50,7 @@ describe("PromptVersion snapshot/markPersisted", () => {
     return PromptVersion.create({
       id: "v1-id",
       promptId: prompt.id,
+      organizationId: prompt.organizationId,
       version: label,
       sourcePrompt: "Answer concisely.",
     });

@@ -30,6 +30,14 @@ export const createPromptRouter = (
     requirePermission("version:read"),
     asyncHandler(controller.getVersion),
   );
+  // `?base=v1&target=v2` query — kept as query string rather than
+  // path segments because the comparison is symmetric in URL terms
+  // (no canonical "owner" ordering in the path).
+  router.get(
+    "/:id/versions-compare",
+    requirePermission("version:read"),
+    asyncHandler(controller.compareVersions),
+  );
   router.post(
     "/:id/versions/:version/lint",
     requirePermission("version:read"),
@@ -42,7 +50,7 @@ export const createPromptRouter = (
   // Version-level writes.
   router.post(
     "/:id/versions",
-    requirePermission("version:create"),
+    requirePermission("version:edit"),
     asyncHandler(controller.createVersion),
   );
   router.patch(

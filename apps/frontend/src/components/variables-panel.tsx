@@ -10,7 +10,7 @@ import {
   TextInput,
   Tooltip,
 } from "@mantine/core";
-import type { PromptVariableInput } from "@plexus/shared-types";
+import { isValidVariableName, type PromptVariableInput } from "@plexus/shared-types";
 
 // Definition-only editor. Runtime values are passed via the SDK
 // (`client.prompt(id).run({ vars: {...} })`); this panel never accepts a
@@ -20,10 +20,6 @@ import type { PromptVariableInput } from "@plexus/shared-types";
 // - invalid name → red border + tooltip
 // - duplicate name across rows → red border + "duplicate" badge
 // - referenced in body but not declared → "+" suggestion to add the name
-
-const NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-const isValidName = (name: string): boolean => NAME_PATTERN.test(name.trim());
 
 interface VariableRowMeta {
   duplicate: boolean;
@@ -44,7 +40,7 @@ const computeRowMeta = (
     const name = v.name.trim();
     return {
       duplicate: name.length > 0 && (counts.get(name) ?? 0) > 1,
-      invalid: name.length > 0 && !isValidName(name),
+      invalid: name.length > 0 && !isValidVariableName(name),
       unreferenced: name.length > 0 && !referenced.has(name),
     };
   });
@@ -237,7 +233,7 @@ export const validateVariableList = (
     if (name.length === 0) {
       return `Variable #${i + 1} has no name`;
     }
-    if (!isValidName(name)) {
+    if (!isValidVariableName(name)) {
       return `Variable "${v.name}" has an invalid name`;
     }
     if (seen.has(name)) {

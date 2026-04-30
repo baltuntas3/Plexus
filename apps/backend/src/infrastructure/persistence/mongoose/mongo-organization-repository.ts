@@ -20,6 +20,7 @@ interface OrganizationDocShape {
   name: string;
   slug: string;
   ownerId: Types.ObjectId;
+  approvalPolicy?: { requiredApprovals: number } | null;
   revision?: number;
   createdAt: Date;
   updatedAt: Date;
@@ -30,6 +31,7 @@ const toPrimitives = (doc: OrganizationDocShape): OrganizationPrimitives => ({
   name: doc.name,
   slug: doc.slug,
   ownerId: String(doc.ownerId),
+  approvalPolicy: doc.approvalPolicy ?? null,
   revision: doc.revision ?? 0,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
@@ -65,6 +67,7 @@ export class MongoOrganizationRepository implements IOrganizationRepository {
               name: primitives.name,
               slug: primitives.slug,
               ownerId: primitives.ownerId,
+              approvalPolicy: primitives.approvalPolicy,
               revision: primitives.revision,
               createdAt: primitives.createdAt,
               updatedAt: primitives.updatedAt,
@@ -92,6 +95,7 @@ export class MongoOrganizationRepository implements IOrganizationRepository {
             name: primitives.name,
             slug: primitives.slug,
             ownerId: primitives.ownerId,
+            approvalPolicy: primitives.approvalPolicy,
             revision: primitives.revision,
             updatedAt: primitives.updatedAt,
           },

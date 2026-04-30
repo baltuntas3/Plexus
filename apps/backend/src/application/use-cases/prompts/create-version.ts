@@ -40,9 +40,10 @@ export class CreateVersionUseCase {
       let parentVersionId: string | null = null;
       let inheritedVariables: readonly PromptVariable[] = [];
       if (command.fromVersion) {
-        const source = await this.versions.findByPromptAndLabel(
+        const source = await this.versions.findByPromptAndLabelInOrganization(
           prompt.id,
           command.fromVersion,
+          command.organizationId,
         );
         if (!source) {
           throw PromptVersionNotFoundError(command.fromVersion);
@@ -70,6 +71,7 @@ export class CreateVersionUseCase {
       const version = PromptVersion.create({
         id: this.idGenerator.newId(),
         promptId: prompt.id,
+        organizationId: prompt.organizationId,
         version: label,
         sourcePrompt: command.sourcePrompt,
         name: command.name ?? null,

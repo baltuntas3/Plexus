@@ -59,7 +59,7 @@ describe("CreateVersionUseCase", () => {
       sourcePrompt: "Answer in one sentence.",
       fromVersion: "v1",
     });
-    const v1 = await versions.findByPromptAndLabel(promptId, "v1");
+    const v1 = await versions.findByPromptAndLabelInOrganization(promptId, "v1", organizationId);
     expect(v2.parentVersionId).toBe(v1?.id);
     expect(v1?.sourcePrompt).toBe("Answer concisely.");
   });

@@ -14,7 +14,7 @@ import {
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { isAuthenticatedAtom, loginAtom } from "../atoms/auth.atoms.js";
 import { ApiError } from "../lib/api-client.js";
 
@@ -22,7 +22,17 @@ export const LoginPage = () => {
   const isAuthenticated = useAtomValue(isAuthenticatedAtom);
   const login = useSetAtom(loginAtom);
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [loading, setLoading] = useState(false);
+
+  // Same-origin path only. Open redirect via `?redirect=https://evil`
+  // would be a classic phishing vector; the prefix check rejects
+  // protocol-relative URLs (`//evil`) and absolute URLs.
+  const redirectTarget = (() => {
+    const raw = params.get("redirect");
+    if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
+    return raw;
+  })();
 
   const form = useForm({
     initialValues: { email: "", password: "" },
@@ -33,14 +43,14 @@ export const LoginPage = () => {
   });
 
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={redirectTarget} replace />;
   }
 
   const handleSubmit = async (values: typeof form.values) => {
     setLoading(true);
     try {
       await login(values);
-      navigate("/", { replace: true });
+      navigate(redirectTarget, { replace: true });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Login failed";
       notifications.show({ color: "red", title: "Error", message });

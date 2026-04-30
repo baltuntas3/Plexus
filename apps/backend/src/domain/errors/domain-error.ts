@@ -34,7 +34,15 @@ export type DomainErrorCode =
   | "ORGANIZATION_INVITATION_AGGREGATE_STALE"
   | "ORGANIZATION_INVITATION_EMAIL_MISMATCH"
   | "ORGANIZATION_INVITATION_ALREADY_PENDING"
-  | "ORGANIZATION_LAST_OWNER";
+  | "ORGANIZATION_LAST_OWNER"
+  | "VERSION_APPROVAL_REQUEST_NOT_FOUND"
+  | "VERSION_APPROVAL_REQUEST_NOT_ACTIVE"
+  | "VERSION_APPROVAL_REQUEST_DUPLICATE_VOTE"
+  | "VERSION_APPROVAL_REQUEST_SELF_APPROVAL"
+  | "VERSION_APPROVAL_REQUEST_AGGREGATE_STALE"
+  | "VERSION_APPROVAL_REQUEST_ALREADY_PENDING"
+  | "VERSION_APPROVAL_REQUIRED"
+  | "VERSION_APPROVAL_NOT_ENABLED";
 
 // Domain errors carry a stable `code` (ubiquitous language) and an optional
 // `details` bag. Transport-specific mapping (HTTP status, gRPC code, i18n
@@ -266,4 +274,73 @@ export const OrganizationInvitationAlreadyPendingError = (): DomainError =>
   new DomainError(
     "ORGANIZATION_INVITATION_ALREADY_PENDING",
     "A pending invitation already exists for this email; cancel it before issuing a new one",
+  );
+
+// Version-approval bounded-context errors. Pending → approved/rejected/
+// cancelled is one-way; the not-active error fires when a vote arrives
+// after the request has already resolved.
+export const VersionApprovalRequestNotFoundError = (): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_REQUEST_NOT_FOUND",
+    "Version approval request not found",
+  );
+
+export const VersionApprovalRequestNotActiveError = (
+  status: string,
+): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_REQUEST_NOT_ACTIVE",
+    `Approval request is no longer pending (status: ${status})`,
+    { status },
+  );
+
+// Same user voted twice (in either direction) on the same request. UI
+// should hide the action; this is the defense-in-depth check.
+export const VersionApprovalRequestDuplicateVoteError = (): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_REQUEST_DUPLICATE_VOTE",
+    "You have already voted on this approval request",
+  );
+
+// Separation of duty: the user who *requested* an approval cannot also
+// *approve* it. The request can still be cancelled by the requester.
+export const VersionApprovalRequestSelfApprovalError = (): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_REQUEST_SELF_APPROVAL",
+    "Requesters cannot approve their own approval request",
+  );
+
+export const VersionApprovalRequestAggregateStaleError = (): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_REQUEST_AGGREGATE_STALE",
+    "Approval request was modified by another writer; reload and retry",
+  );
+
+// One pending request per `(organizationId, versionId)` — multiple
+// concurrent requests against the same version would let approvers split
+// votes across copies and fragment the audit trail. Surfaces both as a
+// pre-check inside the use case and as a unique-index violation at the
+// repository boundary.
+export const VersionApprovalRequestAlreadyPendingError = (): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_REQUEST_ALREADY_PENDING",
+    "A pending approval request already exists for this version",
+  );
+
+// Surfaced when `PromoteVersion` is called with target=production while
+// the org has an active `approvalPolicy` — caller must use the approval
+// workflow (`RequestVersionApproval`) instead.
+export const VersionApprovalRequiredError = (): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_REQUIRED",
+    "Production promotion requires an approval request when an approval policy is active",
+  );
+
+// Surfaced when `RequestVersionApproval` is called against an org that
+// has no `approvalPolicy` — the request would have no threshold to
+// resolve against.
+export const VersionApprovalNotEnabledError = (): DomainError =>
+  new DomainError(
+    "VERSION_APPROVAL_NOT_ENABLED",
+    "Approval workflow is not enabled for this organization",
   );

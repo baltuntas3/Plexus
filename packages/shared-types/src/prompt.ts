@@ -98,3 +98,38 @@ export interface PromoteVersionRequest {
 
 export type PromptListResponse = Paginated<PromptDto>;
 export type VersionListResponse = Paginated<PromptVersionDto>;
+
+// Variables diff projection. Variables are name-keyed, not position-
+// keyed, so the diff is set-semantic: a variable rename is `removed`
+// + `added`, not `changed`. `changed` rows surface when the same name
+// has different description/defaultValue/required between base and
+// target — UI renders those as a side-by-side cell with old/new.
+export interface VersionVariableChangeDto {
+  name: string;
+  base: PromptVariableDto;
+  target: PromptVariableDto;
+}
+
+export interface VersionVariablesDiffDto {
+  added: PromptVariableDto[];
+  removed: PromptVariableDto[];
+  changed: VersionVariableChangeDto[];
+  unchanged: PromptVariableDto[];
+}
+
+// Side-by-side comparison between two versions of the same prompt.
+// `base` is conventionally the "older" or "left" side and `target`
+// the "newer" or "right" side; the use case enforces both versions
+// share the same prompt (and org) — comparing across prompts is not
+// meaningful.
+//
+// Body and graph diffs are NOT pre-computed server-side: those are
+// text artifacts the UI renders via Monaco's DiffEditor and a
+// mermaid-text diff respectively. Variables diff IS pre-computed
+// because the matching rule (name-based, set semantic) is non-trivial
+// and must be deterministic across UI surfaces.
+export interface VersionComparisonDto {
+  base: PromptVersionDto;
+  target: PromptVersionDto;
+  variablesDiff: VersionVariablesDiffDto;
+}

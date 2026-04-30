@@ -14,22 +14,32 @@ import { getCurrentSession } from "./transaction-context.js";
 // write with optimistic concurrency on `revision` — the aggregate's
 // snapshot carries the pre-save revision, the write is gated on it, and
 // the aggregate is committed only on a successful match.
+//
+// All read methods filter by `organizationId` directly (defense-in-depth):
+// the version doc carries the denormalised tenant id, so a lookup with a
+// foreign org returns null without consulting the Prompt root.
 export class MongoPromptVersionRepository implements IPromptVersionRepository {
-  async findById(id: string): Promise<PromptVersion | null> {
-    const session = getCurrentSession();
-    const doc = await PromptVersionModel.findById(id, null, {
-      session,
-    }).lean<PromptVersionDocShape>();
-    return doc ? PromptVersion.hydrate(toVersionPrimitives(doc)) : null;
-  }
-
-  async findByPromptAndLabel(
-    promptId: string,
-    label: string,
+  async findInOrganization(
+    id: string,
+    organizationId: string,
   ): Promise<PromptVersion | null> {
     const session = getCurrentSession();
     const doc = await PromptVersionModel.findOne(
-      { promptId, version: label },
+      { _id: id, organizationId },
+      null,
+      { session },
+    ).lean<PromptVersionDocShape>();
+    return doc ? PromptVersion.hydrate(toVersionPrimitives(doc)) : null;
+  }
+
+  async findByPromptAndLabelInOrganization(
+    promptId: string,
+    label: string,
+    organizationId: string,
+  ): Promise<PromptVersion | null> {
+    const session = getCurrentSession();
+    const doc = await PromptVersionModel.findOne(
+      { promptId, version: label, organizationId },
       null,
       { session },
     ).lean<PromptVersionDocShape>();

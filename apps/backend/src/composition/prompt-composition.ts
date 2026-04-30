@@ -1,3 +1,4 @@
+import { MongoOrganizationRepository } from "../infrastructure/persistence/mongoose/mongo-organization-repository.js";
 import { MongoPromptAggregateRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-aggregate-repository.js";
 import { MongoPromptVersionRepository } from "../infrastructure/persistence/mongoose/mongo-prompt-version-repository.js";
 import { MongoPromptQueryService } from "../infrastructure/persistence/mongoose/mongo-prompt-query-service.js";
@@ -12,6 +13,7 @@ import { GetPromptUseCase } from "../application/use-cases/prompts/get-prompt.js
 import { CreateVersionUseCase } from "../application/use-cases/prompts/create-version.js";
 import { ListVersionsUseCase } from "../application/use-cases/prompts/list-versions.js";
 import { GetVersionUseCase } from "../application/use-cases/prompts/get-version.js";
+import { CompareVersionsUseCase } from "../application/use-cases/prompts/compare-versions.js";
 import { PromoteVersionUseCase } from "../application/use-cases/prompts/promote-version.js";
 import { UpdateVersionNameUseCase } from "../application/use-cases/prompts/update-version-name.js";
 import { GenerateBraidUseCase } from "../application/use-cases/prompts/generate-braid.js";
@@ -36,6 +38,7 @@ export interface PromptComposition {
   listVersions: ListVersionsUseCase;
   getVersion: GetVersionUseCase;
   promoteVersion: PromoteVersionUseCase;
+  compareVersions: CompareVersionsUseCase;
   updateVersionName: UpdateVersionNameUseCase;
   generateBraid: GenerateBraidUseCase;
   lintVersion: LintVersionUseCase;
@@ -51,6 +54,7 @@ export const createPromptComposition = (
 ): PromptComposition => {
   const prompts = new MongoPromptAggregateRepository();
   const versions = new MongoPromptVersionRepository();
+  const organizations = new MongoOrganizationRepository();
   const queries = new MongoPromptQueryService();
   const idGenerator: IIdGenerator = new MongoObjectIdGenerator();
   const uow: IUnitOfWork = new MongoUnitOfWork();
@@ -63,7 +67,8 @@ export const createPromptComposition = (
     createVersion: new CreateVersionUseCase(prompts, versions, idGenerator, uow),
     listVersions: new ListVersionsUseCase(queries),
     getVersion: new GetVersionUseCase(queries),
-    promoteVersion: new PromoteVersionUseCase(prompts, versions, uow),
+    promoteVersion: new PromoteVersionUseCase(prompts, versions, organizations, uow),
+    compareVersions: new CompareVersionsUseCase(prompts, versions),
     updateVersionName: new UpdateVersionNameUseCase(prompts, versions),
     generateBraid: new GenerateBraidUseCase(
       prompts,

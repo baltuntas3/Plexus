@@ -1,4 +1,4 @@
-import type { VersionStatus } from "@plexus/shared-types";
+import type { BraidGraphLayoutDto, VersionStatus } from "@plexus/shared-types";
 import {
   PromptInvalidVersionTransitionError,
   PromptSourceEmptyError,
@@ -8,6 +8,7 @@ import {
   type BraidAuthorshipSnapshot,
 } from "../value-objects/braid-authorship.js";
 import { BraidGraph } from "../value-objects/braid-graph.js";
+import { BraidGraphLayout } from "../value-objects/braid-graph-layout.js";
 import {
   PromptVariable,
   type PromptVariableSnapshot,
@@ -23,12 +24,19 @@ import { VersionLabel } from "../value-objects/version-label.js";
 // resolves to the exact content that was evaluated, not whatever the
 // content has been mutated to since.
 //
-// Only metadata mutates in place: `name` (user-facing label) and `status`
-// (workflow: draft / development / staging / production — `draft` is the
-// initial state and cannot be re-entered). The "one production per prompt"
-// invariant is held by the Prompt root (productionVersionId); the version's
-// own `status` is the user-facing workflow state that a promote orchestrates
-// across the two aggregates.
+// Three fields mutate in place:
+//   • `name` (user-facing label).
+//   • `status` (workflow: draft / development / staging / production —
+//     `draft` is the initial state and cannot be re-entered). The
+//     "one production per prompt" invariant is held by the Prompt
+//     root (productionVersionId); the version's own `status` is the
+//     user-facing workflow state that a promote orchestrates across
+//     the two aggregates.
+//   • `braidGraphLayout` (visual-editor node positions). Layout is
+//     *presentation metadata* — dragging a node doesn't change graph
+//     identity (nodes/edges/labels), so saving the layout doesn't
+//     fork. Structural edits (add/remove node, rename, …) still fork
+//     and the new version starts with no saved layout.
 
 // Persistence-shape discriminated union. Kept around so the mongo mapper
 // has a stable contract; internally the aggregate stores a nullable braid
@@ -67,6 +75,11 @@ export interface PromptVersionPrimitives {
   // enforced by use cases (cross-field rule), not in the aggregate, so the
   // domain stays free of body parsing concerns.
   variables: PromptVariableSnapshot[];
+  // Visual-editor positions. Null = no saved layout (auto-layout in
+  // the frontend). Mutated in place via `setBraidGraphLayout`; layout
+  // is presentation metadata and does NOT fork the aggregate even
+  // though structural edits do.
+  braidGraphLayout: BraidGraphLayoutDto | null;
   status: VersionStatus;
   revision: number;
   createdAt: Date;
@@ -116,6 +129,10 @@ interface InternalState {
   // Null = classical version. Non-null = braid version with the parsed VOs.
   braid: BraidContent | null;
   variables: PromptVariable[];
+  // Null until the user saves a layout. VO so equality + validation
+  // happen at the aggregate boundary; layout edits go through
+  // `setBraidGraphLayout` and don't fork.
+  braidGraphLayout: BraidGraphLayout | null;
   status: VersionStatus;
   revision: number;
   createdAt: Date;
@@ -139,6 +156,7 @@ export class PromptVersion {
       sourcePrompt: normalizeSourcePrompt(params.sourcePrompt),
       braid: params.initialBraid ?? null,
       variables,
+      braidGraphLayout: null,
       status: "draft",
       revision: 0,
       createdAt: now,
@@ -163,6 +181,9 @@ export class PromptVersion {
       sourcePrompt: primitives.sourcePrompt,
       braid: hydrateBraid(primitives.representation),
       variables,
+      braidGraphLayout: primitives.braidGraphLayout
+        ? BraidGraphLayout.fromPrimitives(primitives.braidGraphLayout)
+        : null,
       status: primitives.status,
       revision: primitives.revision,
       createdAt: primitives.createdAt,
@@ -244,6 +265,10 @@ export class PromptVersion {
     return this.state.variables;
   }
 
+  get braidGraphLayout(): BraidGraphLayout | null {
+    return this.state.braidGraphLayout;
+  }
+
   get executablePrompt(): string {
     return this.state.braid?.graph.mermaidCode ?? this.state.sourcePrompt;
   }
@@ -272,6 +297,26 @@ export class PromptVersion {
     };
   }
 
+  // Layout is presentation metadata (where each node is drawn) — saved
+  // in place without forking the version. The setter is a no-op when
+  // the new layout is value-equal to the current one so a redundant
+  // drag (user dragged then dragged back) doesn't bump revision.
+  setBraidGraphLayout(layout: BraidGraphLayout | null): void {
+    if (layout === null && this.state.braidGraphLayout === null) return;
+    if (
+      layout !== null
+      && this.state.braidGraphLayout !== null
+      && this.state.braidGraphLayout.equals(layout)
+    ) {
+      return;
+    }
+    this.state = {
+      ...this.state,
+      braidGraphLayout: layout,
+      updatedAt: new Date(),
+    };
+  }
+
   // Status transition rule: draft is the initial working state and cannot
   // be re-entered. Cross-aggregate invariants (one production per prompt)
   // are orchestrated by the PromoteVersion use case on the Prompt root;
@@ -295,6 +340,7 @@ export class PromptVersion {
       sourcePrompt: this.state.sourcePrompt,
       representation: braidToPrimitives(this.state.braid),
       variables: this.state.variables.map((v) => v.toSnapshot()),
+      braidGraphLayout: this.state.braidGraphLayout?.toPrimitives() ?? null,
       status: this.state.status,
       revision: this.state.revision,
       createdAt: this.state.createdAt,

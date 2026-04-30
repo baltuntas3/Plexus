@@ -123,6 +123,7 @@ describe("PromptVersion aggregate", () => {
         sourcePrompt: "x",
         representation: { kind: "classical" },
         variables: [],
+        braidGraphLayout: null,
         status: "draft",
         revision: 0,
         createdAt: new Date(),

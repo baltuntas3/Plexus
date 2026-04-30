@@ -1,8 +1,17 @@
 import type { GraphQualityScoreDto } from "./lint.js";
 
+// Mermaid distinguishes two BRAID node shapes: square `[label]` for
+// action/step nodes and curly `{label}` for decision (diamond) nodes.
+// Tracked explicitly so a round-trip parse → serialise preserves the
+// shape, and so the visual editor can render the right glyph without
+// re-parsing the mermaid code.
+export const BRAID_NODE_KINDS = ["step", "decision"] as const;
+export type BraidNodeKind = (typeof BRAID_NODE_KINDS)[number];
+
 export interface BraidNodeDto {
   id: string;
   label: string;
+  kind: BraidNodeKind;
 }
 
 export interface BraidEdgeDto {
@@ -15,6 +24,23 @@ export interface BraidGraphDto {
   mermaidCode: string;
   nodes: BraidNodeDto[];
   edges: BraidEdgeDto[];
+}
+
+// Per-node `(x, y)` rendering coordinates persisted for the visual
+// editor. Layout is separate from the graph itself because dragging
+// a node doesn't change graph identity (nodes/edges/labels) — just
+// where the user wants it drawn. Saving layout therefore mutates the
+// version *in place* without forking. Frontend prefers saved
+// positions and auto-layouts any node that has no entry (e.g. just-
+// added nodes).
+export interface BraidNodePositionDto {
+  nodeId: string;
+  x: number;
+  y: number;
+}
+
+export interface BraidGraphLayoutDto {
+  positions: BraidNodePositionDto[];
 }
 
 export interface GenerateBraidRequest {

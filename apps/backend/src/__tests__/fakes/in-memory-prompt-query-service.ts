@@ -179,6 +179,7 @@ const toVersionSummary = (version: PromptVersion): PromptVersionSummary => {
     parentVersionId: version.parentVersionId,
     sourcePrompt: version.sourcePrompt,
     braidGraph,
+    braidGraphLayout: version.braidGraphLayout?.toPrimitives() ?? null,
     braidAuthorship: version.braidAuthorship?.toSnapshot() ?? null,
     generatorModel: version.generatorModel,
     variables: version.variables.map((v) => v.toSnapshot()),

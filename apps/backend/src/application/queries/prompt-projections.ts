@@ -37,6 +37,7 @@ export const versionToSummary = (version: PromptVersion): PromptVersionSummary =
   parentVersionId: version.parentVersionId,
   sourcePrompt: version.sourcePrompt,
   braidGraph: version.braidGraph?.mermaidCode ?? null,
+  braidGraphLayout: version.braidGraphLayout?.toPrimitives() ?? null,
   braidAuthorship: version.braidAuthorship?.toSnapshot() ?? null,
   generatorModel: version.generatorModel,
   variables: version.variables.map((v) => v.toSnapshot()),

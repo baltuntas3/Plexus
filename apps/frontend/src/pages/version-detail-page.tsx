@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Badge,
   Button,
   Center,
-  Grid,
   Group,
   Loader,
   Paper,
@@ -19,18 +18,15 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import { notifications } from "@mantine/notifications";
-import type { GraphQualityScoreDto, PromptDto, PromptVersionDto, VersionStatus } from "@plexus/shared-types";
+import type { PromptDto, PromptVersionDto, VersionStatus } from "@plexus/shared-types";
 import {
   createVersionAtom,
   fetchPromptDetailAtom,
   promptDetailRefreshAtom,
   updateVersionNameAtom,
 } from "../atoms/prompts.atoms.js";
-import { lintVersionAtom, updateBraidAtom } from "../atoms/braid.atoms.js";
-import { BraidChatPanel } from "../components/braid-chat-panel.js";
-import { BraidView } from "../components/braid-view.js";
+import { BraidTabPanel } from "../components/braid-tab-panel.js";
 import { EvaluatePanel } from "../components/evaluate-panel.js";
-import { LintPanel } from "../components/lint-panel.js";
 import { ApiError } from "../lib/api-client.js";
 
 const statusColor: Record<VersionStatus, string> = {
@@ -45,8 +41,6 @@ export const VersionDetailPage = () => {
   const { id, version } = useParams<{ id: string; version: string }>();
   const navigate = useNavigate();
   const fetchDetail = useSetAtom(fetchPromptDetailAtom);
-  const lint = useSetAtom(lintVersionAtom);
-  const updateBraid = useSetAtom(updateBraidAtom);
   const createVersion = useSetAtom(createVersionAtom);
   const updateVersionName = useSetAtom(updateVersionNameAtom);
   const refresh = useAtomValue(promptDetailRefreshAtom);
@@ -55,43 +49,18 @@ export const VersionDetailPage = () => {
   const [prompt, setPrompt] = useState<PromptDto | null>(null);
   const [compareTo, setCompareTo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [qualityScore, setQualityScore] = useState<GraphQualityScoreDto | null>(null);
-  const [linting, setLinting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [saving, setSaving] = useState(false);
-  const [editingBraid, setEditingBraid] = useState(false);
-  const [braidDraft, setBraidDraft] = useState("");
-  const [savingBraid, setSavingBraid] = useState(false);
-  // liveMermaid mirrors the current displayed graph (updated by chat without page reload)
-  const [liveMermaid, setLiveMermaid] = useState<string | null>(null);
   const [renamingName, setRenamingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
-
-  const runLint = useCallback(
-    async (promptId: string, versionName: string): Promise<void> => {
-      setLinting(true);
-      try {
-        const score = await lint({ promptId, version: versionName });
-        setQualityScore(score);
-      } catch (err) {
-        const message = err instanceof ApiError ? err.message : "Failed to lint";
-        notifications.show({ color: "red", title: "Error", message });
-      } finally {
-        setLinting(false);
-      }
-    },
-    [lint],
-  );
 
   useEffect(() => {
     if (!id || !version) return;
     let cancelled = false;
     setLoading(true);
-    setQualityScore(null);
     setEditing(false);
-    setEditingBraid(false);
     fetchDetail(id)
       .then((d) => {
         if (cancelled) return;
@@ -100,11 +69,6 @@ export const VersionDetailPage = () => {
         const found = d.versions.find((v) => v.version === version) ?? null;
         setCurrent(found);
         setDraftContent(found?.sourcePrompt ?? "");
-        setBraidDraft(found?.braidGraph ?? "");
-        setLiveMermaid(found?.braidGraph ?? null);
-        if (found?.braidGraph) {
-          void runLint(id, version);
-        }
       })
       .catch((err: unknown) => {
         const message = err instanceof ApiError ? err.message : "Failed to load";
@@ -116,7 +80,7 @@ export const VersionDetailPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [id, version, fetchDetail, refresh, runLint]);
+  }, [id, version, fetchDetail, refresh]);
 
   const handleSaveAsNewVersion = async () => {
     if (!id) return;
@@ -146,45 +110,6 @@ export const VersionDetailPage = () => {
     setEditing(false);
   };
 
-  const handleSaveBraid = async () => {
-    if (!id || !current) return;
-    setSavingBraid(true);
-    try {
-      const score = await updateBraid({
-        promptId: id,
-        version: current.version,
-        mermaidCode: braidDraft,
-      });
-      setQualityScore(score);
-      setLiveMermaid(braidDraft);
-      setEditingBraid(false);
-      notifications.show({ color: "green", title: "BRAID saved", message: "Graph updated" });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save BRAID";
-      notifications.show({ color: "red", title: "Error", message });
-    } finally {
-      setSavingBraid(false);
-    }
-  };
-
-  const handleCancelEditBraid = () => {
-    setBraidDraft(liveMermaid ?? current?.braidGraph ?? "");
-    setEditingBraid(false);
-  };
-
-  // Called by ChatPanel when the agent successfully returns a new graph.
-  // When initial generation created a new version, navigate there so the user
-  // is always looking at the canonical BRAID version.
-  const handleChatResult = (mermaidCode: string, score: GraphQualityScoreDto, newVersion: string | null) => {
-    if (newVersion && id) {
-      navigate(`/prompts/${id}/versions/${newVersion}`);
-      return;
-    }
-    setLiveMermaid(mermaidCode);
-    setBraidDraft(mermaidCode);
-    setQualityScore(score);
-  };
-
   if (loading) {
     return <Center py="xl"><Loader /></Center>;
   }
@@ -192,8 +117,7 @@ export const VersionDetailPage = () => {
     return <Text>Version not found</Text>;
   }
 
-  const displayMermaid = editingBraid ? braidDraft : (liveMermaid ?? current.braidGraph ?? "");
-  const hasBraid = Boolean(liveMermaid ?? current.braidGraph);
+  const hasBraid = Boolean(current.braidGraph);
   const compareVersion = allVersions.find((v) => v.version === compareTo) ?? null;
 
   const startRenaming = () => {
@@ -280,7 +204,7 @@ export const VersionDetailPage = () => {
             </Group>
           )}
           <Badge color={statusColor[current.status]}>{current.status}</Badge>
-          {(liveMermaid ?? current.braidGraph) && <Badge color="violet">BRAID</Badge>}
+          {current.braidGraph && <Badge color="violet">BRAID</Badge>}
         </Group>
         <Button variant="subtle" onClick={() => navigate(`/prompts/${id}`)}>
           Back
@@ -403,110 +327,7 @@ export const VersionDetailPage = () => {
 
         {/* ── BRAID tab ─────────────────────────────────────────────────── */}
         <Tabs.Panel value="braid" pt="md">
-          <Grid>
-            {/* Left: diagram + editor */}
-            <Grid.Col span={{ base: 12, md: displayMermaid ? 7 : 12 }}>
-              {displayMermaid ? (
-                <Stack>
-                  <Group justify="space-between">
-                    <Group gap="xs">
-                      {current.generatorModel && (
-                        <Badge variant="light" size="sm">
-                          generator: {current.generatorModel}
-                        </Badge>
-                      )}
-                    </Group>
-                    <Group gap="xs">
-                      {!editingBraid ? (
-                        <>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            loading={linting}
-                            onClick={() => id && runLint(id, current.version)}
-                          >
-                            Re-lint
-                          </Button>
-                          <Button
-                            size="xs"
-                            variant="light"
-                            onClick={() => setEditingBraid(true)}
-                          >
-                            Edit Mermaid
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button size="xs" variant="subtle" onClick={handleCancelEditBraid}>
-                            Cancel
-                          </Button>
-                          <Button
-                            size="xs"
-                            loading={savingBraid}
-                            disabled={braidDraft === (liveMermaid ?? current.braidGraph)}
-                            onClick={handleSaveBraid}
-                          >
-                            Save
-                          </Button>
-                        </>
-                      )}
-                    </Group>
-                  </Group>
-
-                  <BraidView mermaidCode={displayMermaid} />
-
-                  <Paper withBorder p={0} style={{ overflow: "hidden" }}>
-                    <Editor
-                      key={editingBraid ? "edit-braid" : "view-braid"}
-                      height="25vh"
-                      defaultLanguage="plaintext"
-                      value={displayMermaid}
-                      onChange={editingBraid ? (v) => setBraidDraft(v ?? "") : undefined}
-                      theme="vs-dark"
-                      options={{
-                        readOnly: !editingBraid,
-                        minimap: { enabled: false },
-                        wordWrap: "on",
-                        fontSize: 12,
-                      }}
-                    />
-                  </Paper>
-                </Stack>
-              ) : (
-                <Center py="xl">
-                  <Text c="dimmed">
-                    No BRAID graph yet. Use the agent to generate one.
-                  </Text>
-                </Center>
-              )}
-            </Grid.Col>
-
-            {/* Right: lint + chat */}
-            <Grid.Col span={{ base: 12, md: displayMermaid ? 5 : 12 }}>
-              <Stack h="100%" gap="md">
-                {qualityScore && displayMermaid && (
-                  <LintPanel qualityScore={qualityScore} />
-                )}
-                {linting && !qualityScore && (
-                  <Center py="sm">
-                    <Loader size="sm" />
-                  </Center>
-                )}
-                <Paper
-                  withBorder
-                  p="sm"
-                  style={{ flex: 1, minHeight: 320, display: "flex", flexDirection: "column" }}
-                >
-                  <BraidChatPanel
-                    promptId={id}
-                    version={current.version}
-                    currentMermaid={liveMermaid ?? current.braidGraph}
-                    onResult={handleChatResult}
-                  />
-                </Paper>
-              </Stack>
-            </Grid.Col>
-          </Grid>
+          <BraidTabPanel promptId={id} current={current} />
         </Tabs.Panel>
 
         <Tabs.Panel value="evaluate" pt="md">

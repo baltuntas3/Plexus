@@ -1,3 +1,4 @@
+import type { BraidGraphLayoutDto } from "./braid.js";
 import type { ISODateString, Paginated } from "./common.js";
 
 export const TASK_TYPES = ["general", "math", "creative", "instruction-following", "code"] as const;
@@ -49,7 +50,16 @@ export interface PromptVersionDto {
   // benchmark result stays answerable because versions are immutable.
   parentVersionId: string | null;
   sourcePrompt: string;
+  // Canonical mermaid serialisation. The visual editor parses this
+  // client-side via `parseBraidMermaid` — the backend ships the raw
+  // string only and the structured projection lives in the frontend.
   braidGraph: string | null;
+  // Persisted node positions for the visual editor. Null until the
+  // user has dragged at least one node — the editor falls back to
+  // deterministic auto-layout for nodes without entries. Saving a
+  // layout mutates this version in place (no fork): layout is
+  // presentation metadata, not graph identity.
+  braidGraphLayout: BraidGraphLayoutDto | null;
   // Discriminated provenance. Null when the version has no braid
   // representation (classical prompt).
   braidAuthorship: BraidAuthorshipDto | null;

@@ -1,5 +1,6 @@
 import type {
   BraidAuthorshipDto,
+  BraidGraphLayoutDto,
   PromptVariableDto,
   TaskType,
   VersionStatus,
@@ -39,7 +40,13 @@ export interface PromptVersionSummary {
   name: string | null;
   parentVersionId: string | null;
   sourcePrompt: string;
+  // Canonical mermaid serialisation. The visual editor parses this
+  // client-side; backend ships the raw string only.
   braidGraph: string | null;
+  // Persisted node positions for the visual editor. Null when the
+  // user hasn't dragged anything yet — the editor falls back to
+  // auto-layout.
+  braidGraphLayout: BraidGraphLayoutDto | null;
   braidAuthorship: BraidAuthorshipDto | null;
   // Convenience projection of `braidAuthorship`. See PromptVersionDto for
   // the full semantics: model id for "model" authorship, derivedFromModel

@@ -56,14 +56,7 @@ export class CreateVersionUseCase {
       // we carry the parent's set forward so callers don't need to repeat
       // unchanged definitions on every fork.
       const variables = command.variables
-        ? command.variables.map((v) =>
-            PromptVariable.create({
-              name: v.name,
-              description: v.description ?? null,
-              defaultValue: v.defaultValue ?? null,
-              required: v.required ?? false,
-            }),
-          )
+        ? command.variables.map((v) => PromptVariable.create(v))
         : inheritedVariables;
       assertVariableIntegrity({ body: command.sourcePrompt, variables });
 

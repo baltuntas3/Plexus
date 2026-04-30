@@ -54,6 +54,7 @@ const createVersion = (
     parentVersionId: null,
     sourcePrompt: params.sourcePrompt,
     braidGraph,
+    braidGraphLayout: null,
     braidAuthorship: resolvedGeneratorModel
       ? { kind: "model", model: resolvedGeneratorModel }
       : null,

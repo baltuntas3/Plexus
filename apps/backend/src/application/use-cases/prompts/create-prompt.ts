@@ -40,12 +40,7 @@ export class CreatePromptUseCase {
 
   async execute(command: CreatePromptCommand): Promise<CreatePromptResult> {
     const variables = (command.variables ?? []).map((v) =>
-      PromptVariable.create({
-        name: v.name,
-        description: v.description ?? null,
-        defaultValue: v.defaultValue ?? null,
-        required: v.required ?? false,
-      }),
+      PromptVariable.create(v),
     );
     assertVariableIntegrity({ body: command.initialPrompt, variables });
 

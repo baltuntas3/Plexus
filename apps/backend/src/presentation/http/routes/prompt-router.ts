@@ -84,5 +84,49 @@ export const createPromptRouter = (
     asyncHandler(controller.saveBraidFromChat),
   );
 
+  // Visual-editor structural-edit primitives. Each forks a new draft
+  // version. Routes use POST consistently (every primitive creates a
+  // new resource — the forked PromptVersion) rather than mixing
+  // PUT/PATCH/DELETE based on the primitive's verb.
+  router.post(
+    "/:id/versions/:version/braid/nodes/:nodeId/rename",
+    requirePermission("version:edit"),
+    asyncHandler(controller.renameBraidNode),
+  );
+  router.post(
+    "/:id/versions/:version/braid/nodes",
+    requirePermission("version:edit"),
+    asyncHandler(controller.addBraidNode),
+  );
+  router.post(
+    "/:id/versions/:version/braid/nodes/:nodeId/remove",
+    requirePermission("version:edit"),
+    asyncHandler(controller.removeBraidNode),
+  );
+  router.post(
+    "/:id/versions/:version/braid/edges/add",
+    requirePermission("version:edit"),
+    asyncHandler(controller.addBraidEdge),
+  );
+  router.post(
+    "/:id/versions/:version/braid/edges/remove",
+    requirePermission("version:edit"),
+    asyncHandler(controller.removeBraidEdge),
+  );
+  router.post(
+    "/:id/versions/:version/braid/edges/relabel",
+    requirePermission("version:edit"),
+    asyncHandler(controller.relabelBraidEdge),
+  );
+
+  // Layout persistence — node positions only, in place, no fork.
+  // PUT semantics: the body is a full replacement of the saved
+  // layout (empty `positions` array clears it).
+  router.put(
+    "/:id/versions/:version/braid/layout",
+    requirePermission("version:edit"),
+    asyncHandler(controller.updateBraidGraphLayout),
+  );
+
   return router;
 };

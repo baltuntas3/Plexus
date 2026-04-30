@@ -6,6 +6,7 @@ import type {
 import type { PromptVersionSummary } from "../../../application/queries/prompt-query-service.js";
 import type {
   BraidAuthorshipDto,
+  BraidGraphLayoutDto,
 } from "@plexus/shared-types";
 
 // Shared Mongo ↔ Domain conversions for PromptVersion. Centralising these
@@ -42,6 +43,11 @@ export interface PromptVersionDocShape {
     generatorModel?: string | null;
   };
   variables?: VariableDoc[];
+  // Visual-editor positions persisted via `setBraidGraphLayout`.
+  // Optional / nullable: rows pre-dating layout persistence have no
+  // entry, and even rows with a graph may not have positions yet
+  // (user hasn't dragged anything).
+  braidGraphLayout?: BraidGraphLayoutDto | null;
   status: PromptVersionPrimitives["status"];
   revision?: number;
   createdAt: Date;
@@ -110,6 +116,7 @@ export const toVersionPrimitives = (
   sourcePrompt: doc.sourcePrompt,
   representation: hydrateAuthorship(doc.representation),
   variables: hydrateVariables(doc.variables),
+  braidGraphLayout: doc.braidGraphLayout ?? null,
   status: doc.status,
   revision: doc.revision ?? 0,
   createdAt: doc.createdAt,
@@ -149,6 +156,7 @@ export const toVersionSummary = (
     parentVersionId: doc.parentVersionId ? String(doc.parentVersionId) : null,
     sourcePrompt: doc.sourcePrompt,
     braidGraph,
+    braidGraphLayout: doc.braidGraphLayout ?? null,
     braidAuthorship: authorship,
     generatorModel,
     variables: hydrateVariables(doc.variables),
@@ -182,6 +190,7 @@ export const toVersionDocSet = (
     defaultValue: v.defaultValue,
     required: v.required,
   })),
+  braidGraphLayout: version.braidGraphLayout,
   status: version.status,
   revision: version.revision,
   createdAt: version.createdAt,

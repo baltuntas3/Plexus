@@ -1,5 +1,4 @@
 import type {
-  BraidGraphDto,
   GraphQualityScoreDto,
   PromptDto,
   PromptVersionDto,
@@ -9,8 +8,8 @@ import type {
   PromptSummary,
   PromptVersionSummary,
 } from "../../../application/queries/prompt-query-service.js";
-import type { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
+
 
 // Presentation-layer mappers. Domain entities never reach this file — write
 // use cases hand back summaries via `versionToSummary` / `promptToSummary`,
@@ -40,18 +39,13 @@ export const toPromptVersionDto = (
   parentVersionId: version.parentVersionId,
   sourcePrompt: version.sourcePrompt,
   braidGraph: version.braidGraph,
+  braidGraphLayout: version.braidGraphLayout,
   braidAuthorship: version.braidAuthorship,
   generatorModel: version.generatorModel,
   variables: version.variables,
   status: version.status,
   createdAt: version.createdAt.toISOString(),
   updatedAt: version.updatedAt.toISOString(),
-});
-
-export const toBraidGraphDto = (graph: BraidGraph): BraidGraphDto => ({
-  mermaidCode: graph.mermaidCode,
-  nodes: graph.nodes.map((n) => ({ id: n.id, label: n.label })),
-  edges: graph.edges.map((e) => ({ from: e.from, to: e.to, label: e.label })),
 });
 
 export const toGraphQualityScoreDto = (score: GraphQualityScore): GraphQualityScoreDto => ({

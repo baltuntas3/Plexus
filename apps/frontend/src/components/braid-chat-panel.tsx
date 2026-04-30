@@ -75,11 +75,7 @@ interface BraidChatPanelProps {
   // detail page mirrors the latest mermaid into its main render
   // without navigating — saving is a separate explicit action and
   // does not trigger this callback.
-  onResult: (
-    mermaidCode: string,
-    qualityScore: GraphQualityScoreDto,
-    newVersion: string | null,
-  ) => void;
+  onResult: (mermaidCode: string, qualityScore: GraphQualityScoreDto) => void;
 }
 
 export const BraidChatPanel = ({
@@ -149,7 +145,7 @@ export const BraidChatPanel = ({
         ]);
         // Live-render the latest diagram in the main panel without
         // navigating away — saving is a separate explicit action.
-        onResult(result.mermaidCode, result.qualityScore, null);
+        onResult(result.mermaidCode, result.qualityScore);
       }
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Agent failed";

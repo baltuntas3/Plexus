@@ -9,14 +9,20 @@ import {
   updateVersionInputSchema,
 } from "../../../application/dto/prompt-dto.js";
 import {
+  addBraidEdgeInputSchema,
+  addBraidNodeInputSchema,
   braidChatInputSchema,
+  braidGraphLayoutInputSchema,
   generateBraidInputSchema,
+  relabelBraidEdgeInputSchema,
+  removeBraidEdgeInputSchema,
+  renameBraidNodeInputSchema,
   saveBraidFromChatInputSchema,
   updateBraidInputSchema,
 } from "../../../application/dto/braid-dto.js";
+import { toBraidGraphDto } from "../../../application/queries/braid-graph-projections.js";
 import type { PromptComposition } from "../../../composition/prompt-composition.js";
 import {
-  toBraidGraphDto,
   toGraphQualityScoreDto,
   toPromptDto,
   toPromptVersionDto,
@@ -240,6 +246,133 @@ export class PromptController {
     });
   };
 
+  // ── Visual-editor structural-edit primitives ─────────────────────────────
+  // Each primitive forks a new draft version with a single structural
+  // mutation applied. Frontend visual editor calls these one-at-a-time
+  // (rename click, add node from menu, drag-edge); for whole-graph
+  // replacement the text-mode editor still goes through `updateBraid`.
+
+  renameBraidNode: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const nodeId = getRequiredParam(req, "nodeId");
+    const input = renameBraidNodeInputSchema.parse(req.body);
+    const result = await this.prompts.renameBraidNode.execute({
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+      nodeId,
+      newLabel: input.newLabel,
+      addVariables: input.addVariables,
+    });
+    res.status(201).json({
+      newVersion: result.newVersion,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+    });
+  };
+
+  addBraidNode: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const input = addBraidNodeInputSchema.parse(req.body);
+    const result = await this.prompts.addBraidNode.execute({
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+      label: input.label,
+      kind: input.kind,
+      addVariables: input.addVariables,
+    });
+    res.status(201).json({
+      newVersion: result.newVersion,
+      nodeId: result.nodeId,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+    });
+  };
+
+  removeBraidNode: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const nodeId = getRequiredParam(req, "nodeId");
+    const result = await this.prompts.removeBraidNode.execute({
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+      nodeId,
+    });
+    res.status(201).json({
+      newVersion: result.newVersion,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+    });
+  };
+
+  addBraidEdge: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const input = addBraidEdgeInputSchema.parse(req.body);
+    const result = await this.prompts.addBraidEdge.execute({
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+      fromNodeId: input.fromNodeId,
+      toNodeId: input.toNodeId,
+      label: input.label ?? null,
+    });
+    res.status(201).json({
+      newVersion: result.newVersion,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+    });
+  };
+
+  removeBraidEdge: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const input = removeBraidEdgeInputSchema.parse(req.body);
+    const result = await this.prompts.removeBraidEdge.execute({
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+      fromNodeId: input.fromNodeId,
+      toNodeId: input.toNodeId,
+      label: input.label ?? null,
+    });
+    res.status(201).json({
+      newVersion: result.newVersion,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+    });
+  };
+
+  relabelBraidEdge: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const input = relabelBraidEdgeInputSchema.parse(req.body);
+    const result = await this.prompts.relabelBraidEdge.execute({
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+      fromNodeId: input.fromNodeId,
+      toNodeId: input.toNodeId,
+      oldLabel: input.oldLabel ?? null,
+      newLabel: input.newLabel ?? null,
+    });
+    res.status(201).json({
+      newVersion: result.newVersion,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
+    });
+  };
+
   // Side-by-side comparison between two versions of the same prompt.
   // Body and graph diffs are rendered client-side (Monaco DiffEditor /
   // mermaid-text diff); the server pre-computes only the variables
@@ -261,6 +394,24 @@ export class PromptController {
         variablesDiff: result.variablesDiff,
       },
     });
+  };
+
+  // Saves visual-editor node positions in place — no fork. 204 because
+  // there's no payload worth returning: the request already carries
+  // the positions, and the client controls the in-memory layout state.
+  updateBraidGraphLayout: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const input = braidGraphLayoutInputSchema.parse(req.body);
+    await this.prompts.updateBraidGraphLayout.execute({
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+      positions: input.positions,
+    });
+    res.status(204).end();
   };
 
 }

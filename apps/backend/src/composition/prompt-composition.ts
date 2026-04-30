@@ -19,6 +19,15 @@ import { UpdateVersionNameUseCase } from "../application/use-cases/prompts/updat
 import { GenerateBraidUseCase } from "../application/use-cases/prompts/generate-braid.js";
 import { LintVersionUseCase } from "../application/use-cases/prompts/lint-version.js";
 import { UpdateBraidGraphUseCase } from "../application/use-cases/prompts/update-braid-graph.js";
+import { UpdateBraidGraphLayoutUseCase } from "../application/use-cases/prompts/update-braid-graph-layout.js";
+import {
+  AddBraidEdgeUseCase,
+  AddBraidNodeUseCase,
+  RelabelBraidEdgeUseCase,
+  RemoveBraidEdgeUseCase,
+  RemoveBraidNodeUseCase,
+  RenameBraidNodeUseCase,
+} from "../application/use-cases/prompts/edit-braid-primitives.js";
 import { BraidChatUseCase } from "../application/use-cases/prompts/braid-chat.js";
 import { SaveBraidFromChatUseCase } from "../application/use-cases/prompts/save-braid-from-chat.js";
 import type { BraidGenerator } from "../application/services/braid/braid-generator.js";
@@ -44,6 +53,13 @@ export interface PromptComposition {
   generateBraid: GenerateBraidUseCase;
   lintVersion: LintVersionUseCase;
   updateBraidGraph: UpdateBraidGraphUseCase;
+  updateBraidGraphLayout: UpdateBraidGraphLayoutUseCase;
+  renameBraidNode: RenameBraidNodeUseCase;
+  addBraidNode: AddBraidNodeUseCase;
+  removeBraidNode: RemoveBraidNodeUseCase;
+  addBraidEdge: AddBraidEdgeUseCase;
+  removeBraidEdge: RemoveBraidEdgeUseCase;
+  relabelBraidEdge: RelabelBraidEdgeUseCase;
   braidChat: BraidChatUseCase;
   saveBraidFromChat: SaveBraidFromChatUseCase;
   promptQueryService: IPromptQueryService;
@@ -82,6 +98,25 @@ export const createPromptComposition = (
     ),
     lintVersion: new LintVersionUseCase(prompts, versions, linter),
     updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter, idGenerator, uow),
+    updateBraidGraphLayout: new UpdateBraidGraphLayoutUseCase(prompts, versions),
+    renameBraidNode: new RenameBraidNodeUseCase({
+      prompts, versions, linter, idGenerator, uow,
+    }),
+    addBraidNode: new AddBraidNodeUseCase({
+      prompts, versions, linter, idGenerator, uow,
+    }),
+    removeBraidNode: new RemoveBraidNodeUseCase({
+      prompts, versions, linter, idGenerator, uow,
+    }),
+    addBraidEdge: new AddBraidEdgeUseCase({
+      prompts, versions, linter, idGenerator, uow,
+    }),
+    removeBraidEdge: new RemoveBraidEdgeUseCase({
+      prompts, versions, linter, idGenerator, uow,
+    }),
+    relabelBraidEdge: new RelabelBraidEdgeUseCase({
+      prompts, versions, linter, idGenerator, uow,
+    }),
     braidChat: new BraidChatUseCase(prompts, versions, chatAgents, linter),
     saveBraidFromChat: new SaveBraidFromChatUseCase(
       prompts,

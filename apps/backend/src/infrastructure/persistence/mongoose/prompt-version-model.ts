@@ -32,6 +32,26 @@ const variableSchema = new Schema(
   { _id: false },
 );
 
+// Visual-editor node positions. Domain VO `BraidGraphLayout` validates
+// nodeId regex + finite x/y; the schema is intentionally permissive so
+// validation errors surface as 400 from the use-case boundary rather
+// than as a Mongoose CastError.
+const nodePositionSchema = new Schema(
+  {
+    nodeId: { type: String, required: true },
+    x: { type: Number, required: true },
+    y: { type: Number, required: true },
+  },
+  { _id: false },
+);
+
+const braidGraphLayoutSchema = new Schema(
+  {
+    positions: { type: [nodePositionSchema], required: true, default: [] },
+  },
+  { _id: false },
+);
+
 const promptVersionSchema = new Schema(
   {
     promptId: { type: Schema.Types.ObjectId, ref: "Prompt", required: true, index: true },
@@ -65,6 +85,10 @@ const promptVersionSchema = new Schema(
     // Template variable definitions. Body and braid node labels reference
     // them via `{{name}}`; SDK passes values at runtime for substitution.
     variables: { type: [variableSchema], required: true, default: [] },
+    // Visual-editor positions. Mutated in place via the layout
+    // endpoint (no fork): layout is presentation metadata, not
+    // graph identity.
+    braidGraphLayout: { type: braidGraphLayoutSchema, default: null },
     status: { type: String, required: true, enum: VERSION_STATUSES, default: "draft" },
     // Optimistic-concurrency token. Bumped by the PromptVersion repo on
     // each successful save so concurrent writers to the same version

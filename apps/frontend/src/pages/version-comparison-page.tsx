@@ -3,12 +3,10 @@ import {
   Badge,
   Button,
   Center,
-  Grid,
   Group,
   Loader,
   Paper,
   Stack,
-  Table,
   Tabs,
   Text,
   Title,
@@ -18,11 +16,12 @@ import { DiffEditor } from "@monaco-editor/react";
 import { useSetAtom } from "jotai";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type {
-  PromptVariableDto,
   VersionComparisonDto,
   VersionStatus,
 } from "@plexus/shared-types";
 import { compareVersionsAtom } from "../atoms/prompts.atoms.js";
+import { MetricsPanel } from "../components/version-comparison-metrics-panel.js";
+import { VariablesDiffPanel } from "../components/version-comparison-variables-panel.js";
 import { ApiError } from "../lib/api-client.js";
 
 const statusColor: Record<VersionStatus, string> = {
@@ -188,235 +187,4 @@ export const VersionComparisonPage = () => {
   );
 };
 
-const VariablesDiffPanel = ({
-  diff,
-}: {
-  diff: VersionComparisonDto["variablesDiff"];
-}) => {
-  const total =
-    diff.added.length
-    + diff.removed.length
-    + diff.changed.length
-    + diff.unchanged.length;
-
-  if (total === 0) {
-    return (
-      <Center py="xl">
-        <Text c="dimmed">Neither version uses variables</Text>
-      </Center>
-    );
-  }
-
-  return (
-    <Grid>
-      <Grid.Col span={{ base: 12, md: 6 }}>
-        <DiffSection
-          title="Added"
-          color="green"
-          variables={diff.added}
-          empty="No new variables"
-        />
-        <DiffSection
-          title="Removed"
-          color="red"
-          variables={diff.removed}
-          empty="No removed variables"
-        />
-      </Grid.Col>
-      <Grid.Col span={{ base: 12, md: 6 }}>
-        <ChangedSection changes={diff.changed} />
-        <DiffSection
-          title="Unchanged"
-          color="gray"
-          variables={diff.unchanged}
-          empty="No unchanged variables"
-        />
-      </Grid.Col>
-    </Grid>
-  );
-};
-
-const DiffSection = ({
-  title,
-  color,
-  variables,
-  empty,
-}: {
-  title: string;
-  color: string;
-  variables: PromptVariableDto[];
-  empty: string;
-}) => (
-  <Paper withBorder p="sm" mb="sm">
-    <Group justify="space-between" mb="xs">
-      <Text fw={600}>{title}</Text>
-      <Badge color={color} variant="light">
-        {variables.length}
-      </Badge>
-    </Group>
-    {variables.length === 0 ? (
-      <Text size="sm" c="dimmed">
-        {empty}
-      </Text>
-    ) : (
-      <Stack gap={6}>
-        {variables.map((v) => (
-          <Group key={v.name} gap="xs" wrap="wrap">
-            <Badge color="violet" variant={v.required ? "filled" : "light"}>
-              {`{{${v.name}}}`}
-            </Badge>
-            {v.defaultValue !== null && (
-              <Text size="xs" c="dimmed">
-                default: {v.defaultValue}
-              </Text>
-            )}
-            {v.description && (
-              <Text size="xs" c="dimmed">
-                — {v.description}
-              </Text>
-            )}
-          </Group>
-        ))}
-      </Stack>
-    )}
-  </Paper>
-);
-
-const ChangedSection = ({
-  changes,
-}: {
-  changes: VersionComparisonDto["variablesDiff"]["changed"];
-}) => (
-  <Paper withBorder p="sm" mb="sm">
-    <Group justify="space-between" mb="xs">
-      <Text fw={600}>Changed</Text>
-      <Badge color="yellow" variant="light">
-        {changes.length}
-      </Badge>
-    </Group>
-    {changes.length === 0 ? (
-      <Text size="sm" c="dimmed">
-        No field changes on shared variables
-      </Text>
-    ) : (
-      <Table withTableBorder>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>Variable</Table.Th>
-            <Table.Th>Field</Table.Th>
-            <Table.Th>Base</Table.Th>
-            <Table.Th>Target</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {changes.flatMap((c) =>
-            (
-              ["description", "defaultValue", "required"] as const
-            )
-              .filter((field) => c.base[field] !== c.target[field])
-              .map((field) => (
-                <Table.Tr key={`${c.name}.${field}`}>
-                  <Table.Td>
-                    <Badge color="violet" variant="light">
-                      {`{{${c.name}}}`}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>{field}</Table.Td>
-                  <Table.Td>
-                    <Text size="xs">{String(c.base[field] ?? "—")}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs">{String(c.target[field] ?? "—")}</Text>
-                  </Table.Td>
-                </Table.Tr>
-              )),
-          )}
-        </Table.Tbody>
-      </Table>
-    )}
-  </Paper>
-);
-
-interface MetricsPanelProps {
-  base: VersionComparisonDto["base"];
-  target: VersionComparisonDto["target"];
-  baseLabel: string;
-  targetLabel: string;
-}
-
-const MetricsPanel = ({ base, target, baseLabel, targetLabel }: MetricsPanelProps) => {
-  // Metrics tab is a property table — derived client-side from `base` /
-  // `target` rather than pre-computed server-side. Each row is a metric
-  // name + the two values; UI highlights mismatched rows so reviewers
-  // see structural differences at a glance.
-  const rows: Array<{
-    label: string;
-    base: string | number;
-    target: string | number;
-  }> = [
-    { label: "Status", base: base.status, target: target.status },
-    {
-      label: "Generator model",
-      base: base.generatorModel ?? "—",
-      target: target.generatorModel ?? "—",
-    },
-    {
-      label: "Source length (chars)",
-      base: base.sourcePrompt.length,
-      target: target.sourcePrompt.length,
-    },
-    { label: "Variables", base: base.variables.length, target: target.variables.length },
-    {
-      label: "BRAID graph",
-      base: base.braidGraph ? "yes" : "no",
-      target: target.braidGraph ? "yes" : "no",
-    },
-    {
-      label: "Created",
-      base: new Date(base.createdAt).toLocaleString(),
-      target: new Date(target.createdAt).toLocaleString(),
-    },
-    {
-      label: "Updated",
-      base: new Date(base.updatedAt).toLocaleString(),
-      target: new Date(target.updatedAt).toLocaleString(),
-    },
-  ];
-
-  return (
-    <Table withTableBorder>
-      <Table.Thead>
-        <Table.Tr>
-          <Table.Th>Metric</Table.Th>
-          <Table.Th>{baseLabel}</Table.Th>
-          <Table.Th>{targetLabel}</Table.Th>
-        </Table.Tr>
-      </Table.Thead>
-      <Table.Tbody>
-        {rows.map((r) => {
-          const differs = String(r.base) !== String(r.target);
-          return (
-            <Table.Tr key={r.label}>
-              <Table.Td>
-                <Text size="sm" fw={differs ? 600 : 400}>
-                  {r.label}
-                </Text>
-              </Table.Td>
-              <Table.Td>
-                <Text size="sm" c={differs ? "blue" : undefined}>
-                  {r.base}
-                </Text>
-              </Table.Td>
-              <Table.Td>
-                <Text size="sm" c={differs ? "blue" : undefined}>
-                  {r.target}
-                </Text>
-              </Table.Td>
-            </Table.Tr>
-          );
-        })}
-      </Table.Tbody>
-    </Table>
-  );
-};
 

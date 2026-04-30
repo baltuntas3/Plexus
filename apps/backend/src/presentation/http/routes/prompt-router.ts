@@ -76,7 +76,12 @@ export const createPromptRouter = (
   router.post(
     "/:id/versions/:version/braid/chat",
     requirePermission("version:edit"),
-    asyncHandler(controller.chatBraid),
+    asyncHandler(controller.braidChat),
+  );
+  router.post(
+    "/:id/versions/:version/braid/save-from-chat",
+    requirePermission("version:edit"),
+    asyncHandler(controller.saveBraidFromChat),
   );
 
   return router;

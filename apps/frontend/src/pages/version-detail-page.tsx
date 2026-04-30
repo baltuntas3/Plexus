@@ -1,27 +1,21 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  ActionIcon,
   Badge,
   Button,
   Center,
-  Checkbox,
   Grid,
   Group,
   Loader,
-  MultiSelect,
-  NumberInput,
   Paper,
-  ScrollArea,
   Select,
   Stack,
   Tabs,
   Text,
   TextInput,
-  Textarea,
   Title,
   Tooltip,
 } from "@mantine/core";
-import { useSetAtom, useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useNavigate, useParams } from "react-router-dom";
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import { notifications } from "@mantine/notifications";
@@ -32,11 +26,11 @@ import {
   promptDetailRefreshAtom,
   updateVersionNameAtom,
 } from "../atoms/prompts.atoms.js";
-import { createBenchmarkAtom } from "../atoms/benchmarks.atoms.js";
-import { chatBraidAtom, lintVersionAtom, modelsAtom, updateBraidAtom } from "../atoms/braid.atoms.js";
+import { lintVersionAtom, updateBraidAtom } from "../atoms/braid.atoms.js";
+import { BraidChatPanel } from "../components/braid-chat-panel.js";
 import { BraidView } from "../components/braid-view.js";
+import { EvaluatePanel } from "../components/evaluate-panel.js";
 import { LintPanel } from "../components/lint-panel.js";
-import { DEFAULT_TEST_COUNT } from "../lib/evaluate-presets.js";
 import { ApiError } from "../lib/api-client.js";
 
 const statusColor: Record<VersionStatus, string> = {
@@ -45,384 +39,6 @@ const statusColor: Record<VersionStatus, string> = {
   staging: "yellow",
   production: "green",
 };
-
-interface ChatMessage {
-  role: "user" | "agent";
-  content: string;
-}
-
-// ── Model picker (needs Suspense because modelsAtom is async) ────────────────
-
-const ModelSelect = ({
-  value,
-  onChange,
-}: {
-  value: string | null;
-  onChange: (v: string | null) => void;
-}) => {
-  const models = useAtomValue(modelsAtom);
-  return (
-    <Select
-      placeholder="Select model"
-      size="xs"
-      value={value}
-      onChange={onChange}
-      data={models.map((m) => ({
-        value: m.id,
-        label: `${m.displayName} ($${m.inputPricePerMillion}/$${m.outputPricePerMillion}/1M)`,
-      }))}
-      searchable
-      style={{ minWidth: 220 }}
-    />
-  );
-};
-
-// ── Chat panel ────────────────────────────────────────────────────────────────
-
-interface ChatPanelProps {
-  promptId: string;
-  version: string;
-  currentMermaid: string | null;
-  onResult: (mermaidCode: string, qualityScore: GraphQualityScoreDto, newVersion: string | null) => void;
-}
-
-const ChatPanel = ({ promptId, version, currentMermaid, onResult }: ChatPanelProps) => {
-  const chat = useSetAtom(chatBraidAtom);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [model, setModel] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const viewport = useRef<HTMLDivElement>(null);
-
-  const scrollToBottom = () => {
-    viewport.current?.scrollTo({ top: viewport.current.scrollHeight, behavior: "smooth" });
-  };
-
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || !model) {
-      if (!model) notifications.show({ color: "yellow", title: "Model required", message: "Pick a generator model" });
-      return;
-    }
-
-    const userMsg: ChatMessage = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setLoading(true);
-
-    try {
-      const result = await chat({
-        promptId,
-        version,
-        body: {
-          userMessage: text,
-          generatorModel: model,
-        },
-      });
-
-      if (result.type === "question") {
-        const agentMsg: ChatMessage = { role: "agent", content: result.question };
-        setMessages((prev) => [...prev, agentMsg]);
-      } else {
-        const label = result.newVersion
-          ? `Created ${result.newVersion} — ${result.qualityScore.overall.toFixed(0)}/100 quality · $${result.usage.totalUsd.toFixed(4)}`
-          : `Graph updated — ${result.qualityScore.overall.toFixed(0)}/100 quality · $${result.usage.totalUsd.toFixed(4)}`;
-        const agentMsg: ChatMessage = { role: "agent", content: label };
-        setMessages((prev) => [...prev, agentMsg]);
-        onResult(result.mermaidCode, result.qualityScore, result.newVersion);
-      }
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Agent failed";
-      const errMsg: ChatMessage = { role: "agent", content: `Error: ${message}` };
-      setMessages((prev) => [...prev, errMsg]);
-    } finally {
-      setLoading(false);
-      setTimeout(scrollToBottom, 50);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
-  };
-
-  return (
-    <Stack gap="xs" h="100%" style={{ display: "flex", flexDirection: "column" }}>
-      <Group justify="space-between" wrap="nowrap">
-        <Text size="sm" fw={600}>
-          BRAID Agent
-        </Text>
-        <Suspense fallback={<Loader size="xs" />}>
-          <ModelSelect value={model} onChange={setModel} />
-        </Suspense>
-      </Group>
-
-      <ScrollArea
-        viewportRef={viewport}
-        style={{ flex: 1, minHeight: 180 }}
-        type="auto"
-      >
-        {messages.length === 0 ? (
-          <Text size="xs" c="dimmed" ta="center" py="lg">
-            {currentMermaid
-              ? "Describe how to refine the graph, or ask the agent to make changes."
-              : "Describe the task and the agent will generate a BRAID graph."}
-          </Text>
-        ) : (
-          <Stack gap={6} px={4}>
-            {messages.map((msg, i) => (
-              <Paper
-                key={i}
-                px="sm"
-                py={6}
-                radius="sm"
-                style={{
-                  background: msg.role === "user" ? "#1e3a5f" : "#1a2a1a",
-                  alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                  maxWidth: "90%",
-                }}
-              >
-                <Text size="xs" c={msg.role === "user" ? "#93c5fd" : "#86efac"}>
-                  {msg.role === "user" ? "You" : "Agent"}
-                </Text>
-                <Text size="xs" style={{ whiteSpace: "pre-wrap" }}>
-                  {msg.content}
-                </Text>
-              </Paper>
-            ))}
-            {loading && (
-              <Group gap="xs" px={4}>
-                <Loader size="xs" />
-                <Text size="xs" c="dimmed">Agent is thinking…</Text>
-              </Group>
-            )}
-          </Stack>
-        )}
-      </ScrollArea>
-
-      <Group gap="xs" wrap="nowrap" align="flex-end">
-        <Textarea
-          style={{ flex: 1 }}
-          size="xs"
-          placeholder={currentMermaid ? "Refine the graph…" : "Describe the BRAID you want…"}
-          value={input}
-          onChange={(e) => setInput(e.currentTarget.value)}
-          onKeyDown={handleKeyDown}
-          autosize
-          minRows={1}
-          maxRows={4}
-          disabled={loading}
-        />
-        <ActionIcon
-          variant="filled"
-          size="lg"
-          onClick={() => void handleSend()}
-          loading={loading}
-          disabled={!input.trim() || !model}
-        >
-          ↑
-        </ActionIcon>
-      </Group>
-    </Stack>
-  );
-};
-
-interface EvaluatePanelProps {
-  currentVersion: PromptVersionDto;
-  versions: PromptVersionDto[];
-  promptName: string;
-  productionVersionName: string | null;
-}
-
-const SolverMultiSelect = ({
-  value,
-  onChange,
-}: {
-  value: string[];
-  onChange: (v: string[]) => void;
-}) => {
-  const models = useAtomValue(modelsAtom);
-  return (
-    <MultiSelect
-      label="Solver models"
-      description="Models that will answer each test case. Picked head-to-head."
-      placeholder="Pick one or more models"
-      value={value}
-      onChange={onChange}
-      data={models.map((m) => ({
-        value: m.id,
-        label: `${m.displayName} ($${m.inputPricePerMillion}/$${m.outputPricePerMillion}/1M)`,
-      }))}
-      searchable
-      clearable
-    />
-  );
-};
-
-const EvaluatePanel = ({
-  currentVersion,
-  versions,
-  promptName,
-  productionVersionName,
-}: EvaluatePanelProps) => {
-  const createBenchmark = useSetAtom(createBenchmarkAtom);
-  const navigate = useNavigate();
-
-  const defaultVersionIds = useMemo(() => {
-    const ids = new Set<string>([currentVersion.id]);
-    if (productionVersionName) {
-      const production = versions.find((v) => v.version === productionVersionName);
-      if (production && production.id !== currentVersion.id) {
-        ids.add(production.id);
-      }
-    }
-    return Array.from(ids);
-  }, [currentVersion.id, productionVersionName, versions]);
-
-  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(defaultVersionIds);
-  const [solverModels, setSolverModels] = useState<string[]>([]);
-  const [testCount, setTestCount] = useState<number>(DEFAULT_TEST_COUNT);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    setSelectedVersionIds(defaultVersionIds);
-  }, [defaultVersionIds]);
-
-  const toggleVersion = (id: string, checked: boolean) => {
-    setSelectedVersionIds((prev) => {
-      if (checked) return prev.includes(id) ? prev : [...prev, id];
-      return prev.filter((x) => x !== id);
-    });
-  };
-
-  const handleStart = async () => {
-    if (selectedVersionIds.length === 0) {
-      notifications.show({
-        color: "yellow",
-        title: "Version required",
-        message: "Pick at least one version to benchmark",
-      });
-      return;
-    }
-    if (solverModels.length === 0) {
-      notifications.show({
-        color: "yellow",
-        title: "Model required",
-        message: "Pick at least one solver model",
-      });
-      return;
-    }
-    if (!Number.isFinite(testCount) || testCount < 1 || testCount > 50) {
-      notifications.show({
-        color: "yellow",
-        title: "Invalid test count",
-        message: "Test case count must be between 1 and 50",
-      });
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const benchmark = await createBenchmark({
-        name: `${promptName} · ${solverModels.join(", ")} · ${testCount} cases`,
-        promptVersionIds: selectedVersionIds,
-        solverModels,
-        testCount,
-      });
-      notifications.show({
-        color: "green",
-        title: "Evaluation ready",
-        message: `${benchmark.testCases.length} test cases generated for ${selectedVersionIds.length} version(s)`,
-      });
-      navigate(`/benchmarks/${benchmark.id}`, {
-        state: {
-          returnTo: `/prompts/${currentVersion.promptId}/versions/${currentVersion.version}`,
-        },
-      });
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to create evaluation";
-      notifications.show({ color: "red", title: "Error", message });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Stack gap="md">
-      <Paper withBorder p="lg">
-        <Stack gap="md">
-          <div>
-            <Title order={4}>Evaluate Versions</Title>
-            <Text size="sm" c="dimmed">
-              Pick which versions to compare, which models to evaluate as solvers, and how many
-              test cases to generate. Judges, generator, generation mode, analysis model,
-              repetitions and seed are chosen server-side to keep the comparison fair.
-            </Text>
-          </div>
-
-          <Stack gap={4}>
-            <Text size="sm" fw={500}>
-              Versions
-            </Text>
-            <Text size="xs" c="dimmed">
-              Select one or more versions of this prompt to benchmark head-to-head.
-            </Text>
-            <Stack gap={4} mt={4}>
-              {versions.map((v) => {
-                const isProduction = v.version === productionVersionName;
-                const isCurrent = v.id === currentVersion.id;
-                return (
-                  <Checkbox
-                    key={v.id}
-                    size="sm"
-                    checked={selectedVersionIds.includes(v.id)}
-                    onChange={(e) => toggleVersion(v.id, e.currentTarget.checked)}
-                    label={
-                      <Group gap={6}>
-                        <Text size="sm">{v.version}</Text>
-                        {isCurrent && <Badge size="xs" color="blue">current</Badge>}
-                        {isProduction && <Badge size="xs" color="green">production</Badge>}
-                        <Badge size="xs" color="gray" variant="light">
-                          {v.braidGraph ? "BRAID" : "classical"}
-                        </Badge>
-                      </Group>
-                    }
-                  />
-                );
-              })}
-            </Stack>
-          </Stack>
-
-          <Suspense fallback={<Loader size="xs" />}>
-            <SolverMultiSelect value={solverModels} onChange={setSolverModels} />
-          </Suspense>
-
-          <NumberInput
-            label="Test Case Count"
-            description="The generator creates this many shared evaluation cases before you review/edit them."
-            min={1}
-            max={50}
-            value={testCount}
-            onChange={(value) => setTestCount(typeof value === "number" ? value : DEFAULT_TEST_COUNT)}
-          />
-
-          <Group justify="flex-end">
-            <Button
-              onClick={() => void handleStart()}
-              loading={submitting}
-              disabled={selectedVersionIds.length === 0 || solverModels.length === 0}
-            >
-              Generate Evaluation Cases
-            </Button>
-          </Group>
-        </Stack>
-      </Paper>
-    </Stack>
-  );
-};
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export const VersionDetailPage = () => {
@@ -881,7 +497,7 @@ export const VersionDetailPage = () => {
                   p="sm"
                   style={{ flex: 1, minHeight: 320, display: "flex", flexDirection: "column" }}
                 >
-                  <ChatPanel
+                  <BraidChatPanel
                     promptId={id}
                     version={current.version}
                     currentMermaid={liveMermaid ?? current.braidGraph}

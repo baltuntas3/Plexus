@@ -8,7 +8,12 @@ import {
   promoteVersionInputSchema,
   updateVersionInputSchema,
 } from "../../../application/dto/prompt-dto.js";
-import { chatBraidInputSchema, generateBraidInputSchema, updateBraidInputSchema } from "../../../application/dto/braid-dto.js";
+import {
+  braidChatInputSchema,
+  generateBraidInputSchema,
+  saveBraidFromChatInputSchema,
+  updateBraidInputSchema,
+} from "../../../application/dto/braid-dto.js";
 import type { PromptComposition } from "../../../composition/prompt-composition.js";
 import {
   toBraidGraphDto,
@@ -185,12 +190,16 @@ export class PromptController {
     });
   };
 
-  chatBraid: RequestHandler = async (req: Request, res: Response) => {
+  // Stateless multi-turn BRAID chat. Caller sends prior `history` and a
+  // new `userMessage` every turn; backend never persists transcripts.
+  // Persistence happens via `saveBraidFromChat` when the user clicks
+  // "Save this version" on a suggestion.
+  braidChat: RequestHandler = async (req: Request, res: Response) => {
     const { userId, organizationId } = getAuthContext(req);
-    const id = getRequiredParam(req,"id");
-    const version = getRequiredParam(req,"version");
-    const input = chatBraidInputSchema.parse(req.body);
-    const result = await this.prompts.chatBraid.execute({
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const input = braidChatInputSchema.parse(req.body);
+    const result = await this.prompts.braidChat.execute({
       ...input,
       promptId: id,
       version,
@@ -198,15 +207,36 @@ export class PromptController {
       userId,
     });
     if (result.type === "question") {
-      res.json({ type: "question", question: result.question });
+      res.json({
+        type: "question",
+        question: result.question,
+        usage: { totalUsd: result.cost.totalUsd },
+      });
       return;
     }
     res.json({
       type: "diagram",
       mermaidCode: result.mermaidCode,
-      newVersion: result.newVersionName,
       qualityScore: toGraphQualityScoreDto(result.qualityScore),
       usage: { totalUsd: result.cost.totalUsd },
+    });
+  };
+
+  saveBraidFromChat: RequestHandler = async (req: Request, res: Response) => {
+    const { userId, organizationId } = getAuthContext(req);
+    const id = getRequiredParam(req, "id");
+    const version = getRequiredParam(req, "version");
+    const input = saveBraidFromChatInputSchema.parse(req.body);
+    const result = await this.prompts.saveBraidFromChat.execute({
+      ...input,
+      promptId: id,
+      version,
+      organizationId,
+      userId,
+    });
+    res.status(201).json({
+      newVersion: result.newVersion,
+      qualityScore: toGraphQualityScoreDto(result.qualityScore),
     });
   };
 

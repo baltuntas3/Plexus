@@ -1,11 +1,13 @@
 import { atom } from "jotai";
 import type {
-  ChatBraidRequest,
-  ChatBraidResponse,
+  BraidChatRequest,
+  BraidChatResponse,
   GraphQualityScoreDto,
   LintVersionResponse,
   ModelInfoDto,
   ModelListResponse,
+  SaveBraidFromChatRequest,
+  SaveBraidFromChatResponse,
   UpdateBraidResponse,
 } from "@plexus/shared-types";
 import { apiRequest } from "../lib/api-client.js";
@@ -57,23 +59,53 @@ export const updateBraidAtom = atom(
   },
 );
 
-export interface ChatBraidParams {
+export interface BraidChatParams {
   promptId: string;
   version: string;
-  body: ChatBraidRequest;
+  body: BraidChatRequest;
 }
 
-export const chatBraidAtom = atom(
+// Stateless multi-turn chat. Caller maintains the history in memory
+// (component state, not localStorage) and sends the full prior history
+// with each turn. Backend never persists the transcript — the only
+// artifact that survives is the version forked via `saveBraidFromChat`.
+// No `promptDetailRefreshAtom` bump because chat alone never mutates
+// server state.
+export const braidChatAtom = atom(
   null,
-  async (get, _set, params: ChatBraidParams): Promise<ChatBraidResponse> => {
+  async (get, _set, params: BraidChatParams): Promise<BraidChatResponse> => {
     const tokens = get(tokensAtom);
     if (!tokens) throw new Error("Not authenticated");
-    // Single API call — response already contains mermaidCode + qualityScore.
-    // The caller updates local state directly via handleChatResult, so no
-    // promptDetailRefreshAtom increment is needed here.
-    return apiRequest<ChatBraidResponse>(
+    return apiRequest<BraidChatResponse>(
       `/prompts/${params.promptId}/versions/${params.version}/braid/chat`,
       { method: "POST", body: params.body, token: tokens.accessToken },
     );
+  },
+);
+
+export interface SaveBraidFromChatParams {
+  promptId: string;
+  version: string;
+  body: SaveBraidFromChatRequest;
+}
+
+// Persists a chat-suggested mermaid as a new forked version. Bumps the
+// detail refresh counter so the prompt-detail page picks up the new
+// version row without a manual reload.
+export const saveBraidFromChatAtom = atom(
+  null,
+  async (
+    get,
+    set,
+    params: SaveBraidFromChatParams,
+  ): Promise<SaveBraidFromChatResponse> => {
+    const tokens = get(tokensAtom);
+    if (!tokens) throw new Error("Not authenticated");
+    const res = await apiRequest<SaveBraidFromChatResponse>(
+      `/prompts/${params.promptId}/versions/${params.version}/braid/save-from-chat`,
+      { method: "POST", body: params.body, token: tokens.accessToken },
+    );
+    set(promptDetailRefreshAtom, (n) => n + 1);
+    return res;
   },
 );

@@ -1,17 +1,21 @@
 // BraidChatAgent handles interactive BRAID generation and refinement.
 //
-// Both modes use a single LLM call and return a discriminated response:
+// Stateless multi-turn: the caller maintains the conversation history
+// and passes the full prior history with every call. The agent prepends
+// a system prompt (BRAID rules + source prompt + variables + current
+// mermaid) and runs a single LLM call returning a discriminated
+// response:
 //   { type: "diagram", mermaidCode }  — a new or updated BRAID graph
 //   { type: "question", question }    — a clarifying question when the
 //                                       instruction is too ambiguous to act on
 //
-// Generation (no currentMermaid): builds a BRAID from a classical prompt + user message.
-// Refinement (currentMermaid provided): applies a targeted change to an existing graph,
-//   with the original classical prompt as context so the agent can reason about
-//   whether a requested change is appropriate for the task.
+// Generation vs. refinement is determined by whether `currentMermaid`
+// is set: a version with a graph is in refinement mode, otherwise the
+// agent generates from scratch. The two modes use slightly different
+// system prompt language but the same response format.
 
 import type { IAIProvider } from "../ai-provider.js";
-import type { TaskType } from "@plexus/shared-types";
+import type { BraidChatTurn, TaskType } from "@plexus/shared-types";
 
 export type ChatOutputType = "diagram" | "question";
 
@@ -28,6 +32,14 @@ export interface ChatInput {
   taskType: TaskType;
   userMessage: string;
   currentMermaid?: string;
+  // Variable names declared on the source PromptVersion so the agent
+  // can preserve `{{name}}` references in node labels rather than
+  // inlining concrete values. Empty when the prompt uses no variables.
+  variableNames?: string[];
+  // Conversation history *prior* to the current `userMessage`. Empty
+  // for the first turn. Each turn is forwarded as-is — the agent does
+  // not edit, summarise, or drop past entries.
+  history?: BraidChatTurn[];
 }
 
 // Condensed BRAID rules for the interactive prompt. The full rules live in
@@ -87,94 +99,80 @@ export class BraidChatAgent {
   ) {}
 
   async chat(input: ChatInput): Promise<ChatOutput> {
-    if (input.currentMermaid) {
-      return this.refine(input.currentMermaid, input.sourcePrompt, input.userMessage);
+    const systemPrompt = this.buildSystemPrompt({
+      sourcePrompt: input.sourcePrompt,
+      taskType: input.taskType,
+      currentMermaid: input.currentMermaid,
+      variableNames: input.variableNames ?? [],
+    });
+    // Conversation messages: system + every prior turn + the new user
+    // message. Past turns are passed through verbatim so the LLM sees
+    // the same history the user does (no agent-side rewriting), which
+    // is what stateless multi-turn requires.
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: systemPrompt },
+      ...(input.history ?? []).map((t) => ({
+        role: t.role === "agent" ? ("assistant" as const) : ("user" as const),
+        content: t.content,
+      })),
+      { role: "user", content: input.userMessage },
+    ];
+    const response = await this.provider.generate({
+      model: this.model,
+      temperature: 0,
+      messages,
+    });
+    return this.buildOutput(response.text, response.usage.inputTokens, response.usage.outputTokens);
+  }
+
+  // ── System prompt assembly ────────────────────────────────────────────────
+
+  private buildSystemPrompt(ctx: {
+    sourcePrompt: string;
+    taskType: TaskType;
+    currentMermaid: string | undefined;
+    variableNames: string[];
+  }): string {
+    const lines: string[] = [];
+    lines.push(
+      ctx.currentMermaid
+        ? "You are an expert BRAID graph designer refining an existing graph interactively."
+        : "You are an expert BRAID graph designer working interactively with a user.",
+    );
+    lines.push("");
+    lines.push(BRAID_RULES);
+    lines.push("");
+    lines.push(`Task type: ${ctx.taskType}`);
+    lines.push("");
+    lines.push("Original task (classical prompt):");
+    lines.push("---");
+    lines.push(ctx.sourcePrompt);
+    lines.push("---");
+    if (ctx.variableNames.length > 0) {
+      lines.push("");
+      lines.push(
+        `Declared template variables (preserve as {{name}} placeholders in node labels — do NOT substitute literal values): ${ctx.variableNames.map((n) => `{{${n}}}`).join(", ")}`,
+      );
     }
-    return this.generate(input.sourcePrompt, input.userMessage);
-  }
-
-  // ── Initial generation ───────────────────────────────────────────────────
-
-  private async generate(sourcePrompt: string, userMessage: string): Promise<ChatOutput> {
-    const taskDescription = userMessage
-      ? `${sourcePrompt}\n\nUser instruction: ${userMessage}`
-      : sourcePrompt;
-
-    const systemPrompt = [
-      "You are an expert BRAID graph designer working interactively with a user.",
-      "",
-      BRAID_RULES,
-      "",
-      "Your task: convert the task description below into a BRAID Mermaid flowchart.",
-      "Ask a clarifying question ONLY if the description is so vague that you cannot determine the core reasoning steps or decision points. If you have enough to work with, generate the graph.",
-      "",
-      RESPONSE_FORMAT,
-    ].join("\n");
-
-    const response = await this.provider.generate({
-      model: this.model,
-      temperature: 0,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Task description:\n${taskDescription}` },
-      ],
-    });
-
-    return this.buildOutput(response.text, response.usage.inputTokens, response.usage.outputTokens);
-  }
-
-  // ── Targeted refinement ──────────────────────────────────────────────────
-
-  private async refine(
-    currentMermaid: string,
-    sourcePrompt: string,
-    userMessage: string,
-  ): Promise<ChatOutput> {
-    const systemPrompt = [
-      "You are an expert BRAID graph designer refining an existing graph interactively.",
-      "",
-      BRAID_RULES,
-      "",
-      "You will receive:",
-      "  • The original task description (classical prompt) — for context",
-      "  • The current BRAID graph",
-      "  • A user instruction describing the desired change",
-      "",
-      "Ask a clarifying question when:",
-      "  • The instruction is ambiguous (e.g. 'add a branch' without specifying where or on what condition)",
-      "  • The requested change would violate a BRAID rule and you need more info to find a rule-compliant alternative",
-      "  • The change conflicts with the original task in a way you cannot resolve without input",
-      "",
-      "Otherwise apply the change, keeping ALL 7 rules intact.",
-      "",
-      RESPONSE_FORMAT,
-    ].join("\n");
-
-    const response = await this.provider.generate({
-      model: this.model,
-      temperature: 0,
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: [
-            "Original task (classical prompt):",
-            "---",
-            sourcePrompt,
-            "---",
-            "",
-            "Current BRAID graph:",
-            "```mermaid",
-            currentMermaid,
-            "```",
-            "",
-            `User instruction: ${userMessage}`,
-          ].join("\n"),
-        },
-      ],
-    });
-
-    return this.buildOutput(response.text, response.usage.inputTokens, response.usage.outputTokens);
+    if (ctx.currentMermaid) {
+      lines.push("");
+      lines.push("Current BRAID graph:");
+      lines.push("```mermaid");
+      lines.push(ctx.currentMermaid);
+      lines.push("```");
+      lines.push("");
+      lines.push(
+        "Apply the user's requested change while keeping ALL 7 rules intact. Ask a clarifying question only when the instruction is ambiguous or rule-violating with no clean fix.",
+      );
+    } else {
+      lines.push("");
+      lines.push(
+        "Generate a BRAID graph for this task. Ask a clarifying question ONLY if the description is so vague that you cannot determine the core reasoning steps or decision points.",
+      );
+    }
+    lines.push("");
+    lines.push(RESPONSE_FORMAT);
+    return lines.join("\n");
   }
 
   // ── Response parsing ─────────────────────────────────────────────────────

@@ -19,7 +19,8 @@ import { UpdateVersionNameUseCase } from "../application/use-cases/prompts/updat
 import { GenerateBraidUseCase } from "../application/use-cases/prompts/generate-braid.js";
 import { LintVersionUseCase } from "../application/use-cases/prompts/lint-version.js";
 import { UpdateBraidGraphUseCase } from "../application/use-cases/prompts/update-braid-graph.js";
-import { ChatBraidUseCase } from "../application/use-cases/prompts/chat-braid.js";
+import { BraidChatUseCase } from "../application/use-cases/prompts/braid-chat.js";
+import { SaveBraidFromChatUseCase } from "../application/use-cases/prompts/save-braid-from-chat.js";
 import type { BraidGenerator } from "../application/services/braid/braid-generator.js";
 import type { GraphLinter } from "../application/services/braid/lint/graph-linter.js";
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
@@ -43,7 +44,8 @@ export interface PromptComposition {
   generateBraid: GenerateBraidUseCase;
   lintVersion: LintVersionUseCase;
   updateBraidGraph: UpdateBraidGraphUseCase;
-  chatBraid: ChatBraidUseCase;
+  braidChat: BraidChatUseCase;
+  saveBraidFromChat: SaveBraidFromChatUseCase;
   promptQueryService: IPromptQueryService;
 }
 
@@ -80,7 +82,14 @@ export const createPromptComposition = (
     ),
     lintVersion: new LintVersionUseCase(prompts, versions, linter),
     updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter, idGenerator, uow),
-    chatBraid: new ChatBraidUseCase(prompts, versions, chatAgents, linter, idGenerator, uow),
+    braidChat: new BraidChatUseCase(prompts, versions, chatAgents, linter),
+    saveBraidFromChat: new SaveBraidFromChatUseCase(
+      prompts,
+      versions,
+      linter,
+      idGenerator,
+      uow,
+    ),
     promptQueryService: queries,
   };
 };

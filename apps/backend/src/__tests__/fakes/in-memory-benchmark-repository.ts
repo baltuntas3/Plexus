@@ -1,6 +1,7 @@
 import { Benchmark } from "../../domain/entities/benchmark.js";
 import { BenchmarkAggregateStaleError } from "../../domain/errors/domain-error.js";
 import type { IBenchmarkRepository } from "../../domain/repositories/benchmark-repository.js";
+import { assertOptimisticConcurrency } from "./assert-optimistic-concurrency.js";
 
 // Mirrors the Mongo benchmark repo's snapshot/markPersisted protocol: save
 // takes a snapshot, checks the expected revision against what the store
@@ -26,12 +27,12 @@ export class InMemoryBenchmarkRepository implements IBenchmarkRepository {
 
   async save(benchmark: Benchmark): Promise<void> {
     const { primitives, expectedRevision } = benchmark.toSnapshot();
-    const stored = this.storedRevisions.get(benchmark.id);
-    if (stored !== undefined && stored !== expectedRevision) {
-      throw BenchmarkAggregateStaleError();
-    }
-    const hydrated = Benchmark.hydrate(primitives);
-    this.benchmarks.set(benchmark.id, hydrated);
+    assertOptimisticConcurrency(
+      this.storedRevisions.get(benchmark.id),
+      expectedRevision,
+      BenchmarkAggregateStaleError,
+    );
+    this.benchmarks.set(benchmark.id, Benchmark.hydrate(primitives));
     this.storedRevisions.set(benchmark.id, primitives.revision);
     benchmark.markPersisted();
   }

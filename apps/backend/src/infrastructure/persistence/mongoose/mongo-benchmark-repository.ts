@@ -12,8 +12,8 @@ import {
 import type { BenchmarkCostForecast } from "../../../domain/value-objects/benchmark-cost-forecast.js";
 import { BenchmarkAggregateStaleError } from "../../../domain/errors/domain-error.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
-import { isDuplicateKeyError } from "./mongo-errors.js";
 import { BenchmarkModel } from "./benchmark-model.js";
+import { runOptimisticSave } from "./optimistic-save.js";
 
 interface BenchmarkDocShape {
   _id: Types.ObjectId;
@@ -117,84 +117,67 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
   }
 
   async save(benchmark: Benchmark): Promise<void> {
-    const { primitives, expectedRevision } = benchmark.toSnapshot();
-
-    if (expectedRevision === 0) {
-      try {
-        await BenchmarkModel.create({
-          _id: primitives.id,
-          name: primitives.name,
-          organizationId: primitives.organizationId,
-          creatorId: primitives.creatorId,
-          promptVersionIds: primitives.promptVersionIds,
-          solverModels: primitives.solverModels,
-          judgeModels: primitives.judgeModels,
-          generatorModel: primitives.generatorModel,
-          testGenerationMode: primitives.testGenerationMode,
-          analysisModel: primitives.analysisModel,
-          taskType: primitives.taskType,
-          costForecast: primitives.costForecast,
-          testCount: primitives.testCount,
-          repetitions: primitives.repetitions,
-          solverTemperature: primitives.solverTemperature,
-          seed: primitives.seed,
-          testCases: primitives.testCases,
-          concurrency: primitives.concurrency,
-          cellTimeoutMs: primitives.cellTimeoutMs,
-          budgetUsd: primitives.budgetUsd,
-          status: primitives.status,
-          progress: primitives.progress,
-          jobId: primitives.jobId,
-          error: primitives.error,
-          revision: primitives.revision,
-          createdAt: primitives.createdAt,
-          startedAt: primitives.startedAt,
-          completedAt: primitives.completedAt,
-        });
-      } catch (err) {
-        if (isDuplicateKeyError(err)) {
-          throw BenchmarkAggregateStaleError();
-        }
-        throw err;
-      }
-    } else {
-      const result = await BenchmarkModel.updateOne(
-        { _id: primitives.id, revision: expectedRevision },
-        {
-          $set: {
-            name: primitives.name,
-            promptVersionIds: primitives.promptVersionIds,
-            solverModels: primitives.solverModels,
-            judgeModels: primitives.judgeModels,
-            generatorModel: primitives.generatorModel,
-            testGenerationMode: primitives.testGenerationMode,
-            analysisModel: primitives.analysisModel,
-            taskType: primitives.taskType,
-            costForecast: primitives.costForecast,
-            testCount: primitives.testCount,
-            repetitions: primitives.repetitions,
-            solverTemperature: primitives.solverTemperature,
-            seed: primitives.seed,
-            testCases: primitives.testCases,
-            concurrency: primitives.concurrency,
-            cellTimeoutMs: primitives.cellTimeoutMs,
-            budgetUsd: primitives.budgetUsd,
-            status: primitives.status,
-            progress: primitives.progress,
-            jobId: primitives.jobId,
-            error: primitives.error,
-            revision: primitives.revision,
-            startedAt: primitives.startedAt,
-            completedAt: primitives.completedAt,
-          },
-        },
-      );
-      if (result.matchedCount === 0) {
-        throw BenchmarkAggregateStaleError();
-      }
-    }
-
-    benchmark.markPersisted();
+    await runOptimisticSave({
+      aggregate: benchmark,
+      model: BenchmarkModel,
+      toCreateDoc: (p) => ({
+        _id: p.id,
+        name: p.name,
+        organizationId: p.organizationId,
+        creatorId: p.creatorId,
+        promptVersionIds: p.promptVersionIds,
+        solverModels: p.solverModels,
+        judgeModels: p.judgeModels,
+        generatorModel: p.generatorModel,
+        testGenerationMode: p.testGenerationMode,
+        analysisModel: p.analysisModel,
+        taskType: p.taskType,
+        costForecast: p.costForecast,
+        testCount: p.testCount,
+        repetitions: p.repetitions,
+        solverTemperature: p.solverTemperature,
+        seed: p.seed,
+        testCases: p.testCases,
+        concurrency: p.concurrency,
+        cellTimeoutMs: p.cellTimeoutMs,
+        budgetUsd: p.budgetUsd,
+        status: p.status,
+        progress: p.progress,
+        jobId: p.jobId,
+        error: p.error,
+        revision: p.revision,
+        createdAt: p.createdAt,
+        startedAt: p.startedAt,
+        completedAt: p.completedAt,
+      }),
+      toUpdateSet: (p) => ({
+        name: p.name,
+        promptVersionIds: p.promptVersionIds,
+        solverModels: p.solverModels,
+        judgeModels: p.judgeModels,
+        generatorModel: p.generatorModel,
+        testGenerationMode: p.testGenerationMode,
+        analysisModel: p.analysisModel,
+        taskType: p.taskType,
+        costForecast: p.costForecast,
+        testCount: p.testCount,
+        repetitions: p.repetitions,
+        solverTemperature: p.solverTemperature,
+        seed: p.seed,
+        testCases: p.testCases,
+        concurrency: p.concurrency,
+        cellTimeoutMs: p.cellTimeoutMs,
+        budgetUsd: p.budgetUsd,
+        status: p.status,
+        progress: p.progress,
+        jobId: p.jobId,
+        error: p.error,
+        revision: p.revision,
+        startedAt: p.startedAt,
+        completedAt: p.completedAt,
+      }),
+      staleError: () => BenchmarkAggregateStaleError(),
+    });
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ApprovalPolicyDto, OrganizationRole } from "@plexus/shared-types";
+import type { ApprovalPolicy, OrganizationRole } from "@plexus/shared-types";
 import { ValidationError } from "../errors/domain-error.js";
 
 // Slug grammar: URL-safe, lowercase, hyphen-separated. The pattern is
@@ -36,7 +36,7 @@ export interface OrganizationPrimitives {
   // Null until an owner/admin sets it. When present, `→ production`
   // promotions are routed through the `VersionApprovalRequest` workflow
   // instead of resolving directly via `version:promote`.
-  approvalPolicy: ApprovalPolicyDto | null;
+  approvalPolicy: ApprovalPolicy | null;
   revision: number;
   createdAt: Date;
   updatedAt: Date;
@@ -52,7 +52,7 @@ export interface CreateOrganizationParams {
   name: string;
   slug: string;
   ownerId: string;
-  approvalPolicy?: ApprovalPolicyDto | null;
+  approvalPolicy?: ApprovalPolicy | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -99,7 +99,7 @@ export class Organization {
     return this.state.ownerId;
   }
 
-  get approvalPolicy(): ApprovalPolicyDto | null {
+  get approvalPolicy(): ApprovalPolicy | null {
     return this.state.approvalPolicy;
   }
 
@@ -127,7 +127,7 @@ export class Organization {
   // through the direct `version:promote` path again. Existing in-flight
   // approval requests are unaffected — they keep their snapshot of the
   // threshold they were created under (see `VersionApprovalRequest`).
-  setApprovalPolicy(policy: ApprovalPolicyDto | null): void {
+  setApprovalPolicy(policy: ApprovalPolicy | null): void {
     const next = policy ? normalizeApprovalPolicy(policy) : null;
     const current = this.state.approvalPolicy;
     if (next === null && current === null) return;
@@ -172,7 +172,7 @@ const normalizeSlug = (raw: string): string => {
   return lowered;
 };
 
-const normalizeApprovalPolicy = (policy: ApprovalPolicyDto): ApprovalPolicyDto => {
+const normalizeApprovalPolicy = (policy: ApprovalPolicy): ApprovalPolicy => {
   if (!Number.isInteger(policy.requiredApprovals)) {
     throw ValidationError("requiredApprovals must be an integer");
   }

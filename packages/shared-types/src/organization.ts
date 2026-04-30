@@ -46,7 +46,7 @@ export interface OrganizationDto {
   // when present, those promotions are routed through the
   // `VersionApprovalRequest` workflow and resolve automatically once
   // `requiredApprovals` distinct approvers have voted.
-  approvalPolicy: ApprovalPolicyDto | null;
+  approvalPolicy: ApprovalPolicy | null;
   createdAt: ISODateString;
   updatedAt: ISODateString;
 }
@@ -54,7 +54,7 @@ export interface OrganizationDto {
 // Production-promotion gate. Currently a single threshold; encoded as a
 // VO so the future "per-prompt overrides" or "approval window" features
 // extend this shape without a migration of the surrounding fields.
-export interface ApprovalPolicyDto {
+export interface ApprovalPolicy {
   // Distinct approvers required before a `→ production` request
   // auto-promotes. Bounded 1..10 — one approver is the minimum useful
   // gate, ten is an arbitrary cap to keep the UI list-rendering finite.

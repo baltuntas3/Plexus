@@ -1,6 +1,7 @@
 import type { IPromptRepository } from "../../domain/repositories/prompt-aggregate-repository.js";
 import { Prompt } from "../../domain/entities/prompt.js";
 import { PromptAggregateStaleError } from "../../domain/errors/domain-error.js";
+import { assertOptimisticConcurrency } from "./assert-optimistic-concurrency.js";
 import type { InMemoryPromptQueryService } from "./in-memory-prompt-query-service.js";
 
 // Test double for the Prompt root repository. Snapshot/commit protocol
@@ -28,10 +29,11 @@ export class InMemoryPromptAggregateRepository implements IPromptRepository {
 
   async save(prompt: Prompt): Promise<void> {
     const { primitives, expectedRevision } = prompt.toSnapshot();
-    const stored = this.storedRevisions.get(prompt.id);
-    if (stored !== undefined && stored !== expectedRevision) {
-      throw PromptAggregateStaleError();
-    }
+    assertOptimisticConcurrency(
+      this.storedRevisions.get(prompt.id),
+      expectedRevision,
+      PromptAggregateStaleError,
+    );
     const hydrated = Prompt.hydrate(primitives);
     this.prompts.set(prompt.id, hydrated);
     this.storedRevisions.set(prompt.id, primitives.revision);

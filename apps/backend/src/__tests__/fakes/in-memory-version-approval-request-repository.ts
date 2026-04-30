@@ -7,6 +7,7 @@ import {
   VersionApprovalRequestAggregateStaleError,
   VersionApprovalRequestAlreadyPendingError,
 } from "../../domain/errors/domain-error.js";
+import { assertOptimisticConcurrency } from "./assert-optimistic-concurrency.js";
 
 // Mirrors `MongoVersionApprovalRequestRepository`: enforces the partial
 // unique index on `(organizationId, versionId)` for `status = "pending"`
@@ -50,38 +51,32 @@ export class InMemoryVersionApprovalRequestRepository
     const { primitives, expectedRevision } = request.toSnapshot();
     const stored = this.requests.get(primitives.id);
 
-    if (expectedRevision === 0) {
-      if (stored) {
-        throw VersionApprovalRequestAggregateStaleError();
-      }
-      // Partial unique on `(orgId, versionId)` where status="pending".
-      if (primitives.status === "pending") {
-        for (const other of this.requests.values()) {
-          if (
-            other.organizationId === primitives.organizationId
-            && other.versionId === primitives.versionId
-            && other.status === "pending"
-          ) {
-            throw VersionApprovalRequestAlreadyPendingError();
-          }
+    assertOptimisticConcurrency(
+      stored?.revision,
+      expectedRevision,
+      VersionApprovalRequestAggregateStaleError,
+    );
+
+    // Partial unique on `(orgId, versionId)` where status="pending"; only
+    // checked on first insert because in-place updates cannot create a
+    // second pending row for the same target.
+    if (expectedRevision === 0 && primitives.status === "pending") {
+      for (const other of this.requests.values()) {
+        if (
+          other.organizationId === primitives.organizationId
+          && other.versionId === primitives.versionId
+          && other.status === "pending"
+        ) {
+          throw VersionApprovalRequestAlreadyPendingError();
         }
       }
-      this.requests.set(primitives.id, {
-        ...primitives,
-        approvals: [...primitives.approvals],
-        rejections: [...primitives.rejections],
-      });
-    } else {
-      if (!stored || stored.revision !== expectedRevision) {
-        throw VersionApprovalRequestAggregateStaleError();
-      }
-      this.requests.set(primitives.id, {
-        ...primitives,
-        approvals: [...primitives.approvals],
-        rejections: [...primitives.rejections],
-      });
     }
 
+    this.requests.set(primitives.id, {
+      ...primitives,
+      approvals: [...primitives.approvals],
+      rejections: [...primitives.rejections],
+    });
     request.markPersisted();
   }
 }

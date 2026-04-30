@@ -23,6 +23,7 @@ import { UpdateBraidGraphLayoutUseCase } from "../application/use-cases/prompts/
 import {
   AddBraidEdgeUseCase,
   AddBraidNodeUseCase,
+  type PrimitiveDeps,
   RelabelBraidEdgeUseCase,
   RemoveBraidEdgeUseCase,
   RemoveBraidNodeUseCase,
@@ -77,6 +78,7 @@ export const createPromptComposition = (
   const idGenerator: IIdGenerator = new MongoObjectIdGenerator();
   const uow: IUnitOfWork = new MongoUnitOfWork();
   const chatAgents = new BraidChatAgentFactory(providers);
+  const primitiveDeps: PrimitiveDeps = { prompts, versions, linter, idGenerator, uow };
 
   return {
     createPrompt: new CreatePromptUseCase(prompts, versions, idGenerator, uow),
@@ -99,24 +101,12 @@ export const createPromptComposition = (
     lintVersion: new LintVersionUseCase(prompts, versions, linter),
     updateBraidGraph: new UpdateBraidGraphUseCase(prompts, versions, linter, idGenerator, uow),
     updateBraidGraphLayout: new UpdateBraidGraphLayoutUseCase(prompts, versions),
-    renameBraidNode: new RenameBraidNodeUseCase({
-      prompts, versions, linter, idGenerator, uow,
-    }),
-    addBraidNode: new AddBraidNodeUseCase({
-      prompts, versions, linter, idGenerator, uow,
-    }),
-    removeBraidNode: new RemoveBraidNodeUseCase({
-      prompts, versions, linter, idGenerator, uow,
-    }),
-    addBraidEdge: new AddBraidEdgeUseCase({
-      prompts, versions, linter, idGenerator, uow,
-    }),
-    removeBraidEdge: new RemoveBraidEdgeUseCase({
-      prompts, versions, linter, idGenerator, uow,
-    }),
-    relabelBraidEdge: new RelabelBraidEdgeUseCase({
-      prompts, versions, linter, idGenerator, uow,
-    }),
+    renameBraidNode: new RenameBraidNodeUseCase(primitiveDeps),
+    addBraidNode: new AddBraidNodeUseCase(primitiveDeps),
+    removeBraidNode: new RemoveBraidNodeUseCase(primitiveDeps),
+    addBraidEdge: new AddBraidEdgeUseCase(primitiveDeps),
+    removeBraidEdge: new RemoveBraidEdgeUseCase(primitiveDeps),
+    relabelBraidEdge: new RelabelBraidEdgeUseCase(primitiveDeps),
     braidChat: new BraidChatUseCase(prompts, versions, chatAgents, linter),
     saveBraidFromChat: new SaveBraidFromChatUseCase(
       prompts,

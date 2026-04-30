@@ -38,10 +38,9 @@ import { VersionLabel } from "../value-objects/version-label.js";
 //     fork. Structural edits (add/remove node, rename, …) still fork
 //     and the new version starts with no saved layout.
 
-// Persistence-shape discriminated union. Kept around so the mongo mapper
-// has a stable contract; internally the aggregate stores a nullable braid
-// VO pair instead of a class hierarchy (the previous wrapper classes added
-// no behaviour beyond getter delegation, so they were YAGNI).
+// Persistence-shape discriminated union. The mongo mapper round-trips
+// through this contract; internally the aggregate stores a nullable braid
+// VO pair (`BraidContent | null`) instead.
 export interface ClassicalPromptRepresentationPrimitives {
   kind: "classical";
 }
@@ -111,8 +110,7 @@ export interface CreatePromptVersionParams {
 }
 
 // Pair the braid graph with its authorship. When non-null the version is
-// braid-flavoured; null means classical. Replaces the prior wrapper-class
-// hierarchy whose only "behaviour" was delegating to these two fields.
+// braid-flavoured; null means classical.
 interface BraidContent {
   graph: BraidGraph;
   authorship: BraidAuthorship;
@@ -191,15 +189,15 @@ export class PromptVersion {
     });
   }
 
-  // Fork with a new id and label — the content is either carried from the
-  // source (classical) or replaced with a new braid. `parentVersionId` is
-  // set from the source so lineage is preserved. Variables also default to
-  // the source's set; callers can override with `variables` to add/remove.
+  // Fork with a new id and label — the source's body is always inherited;
+  // a new braid replaces the source's representation when `initialBraid`
+  // is provided. `parentVersionId` is set from the source so lineage is
+  // preserved. Variables default to the source's set; callers can override
+  // with `variables` to add/remove.
   static fork(params: {
     source: PromptVersion;
     newId: string;
     newLabel: VersionLabel;
-    sourcePrompt?: string;
     name?: string | null;
     initialBraid?: BraidContent;
     variables?: readonly PromptVariable[];
@@ -209,7 +207,7 @@ export class PromptVersion {
       promptId: params.source.promptId,
       organizationId: params.source.organizationId,
       version: params.newLabel,
-      sourcePrompt: params.sourcePrompt ?? params.source.sourcePrompt,
+      sourcePrompt: params.source.sourcePrompt,
       name: params.name ?? null,
       parentVersionId: params.source.id,
       initialBraid: params.initialBraid,

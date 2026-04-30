@@ -7,6 +7,7 @@ import {
   OrganizationAggregateStaleError,
   OrganizationSlugTakenError,
 } from "../../domain/errors/domain-error.js";
+import { assertOptimisticConcurrency } from "./assert-optimistic-concurrency.js";
 
 // Test double mirroring `MongoOrganizationRepository`: enforces slug
 // uniqueness and the optimistic-concurrency revision guard so use case
@@ -31,33 +32,25 @@ export class InMemoryOrganizationRepository implements IOrganizationRepository {
     const { primitives, expectedRevision } = org.toSnapshot();
     const stored = this.orgs.get(primitives.id);
 
-    if (expectedRevision === 0) {
-      // Create. Reject duplicate slug from a different aggregate.
-      const slugOwner = this.slugIndex.get(primitives.slug);
-      if (slugOwner && slugOwner !== primitives.id) {
-        throw OrganizationSlugTakenError(primitives.slug);
-      }
-      if (stored) {
-        // Same id, second create-shaped save — concurrency anomaly.
-        throw OrganizationAggregateStaleError();
-      }
-      this.orgs.set(primitives.id, { ...primitives });
-      this.slugIndex.set(primitives.slug, primitives.id);
-    } else {
-      if (!stored || stored.revision !== expectedRevision) {
-        throw OrganizationAggregateStaleError();
-      }
-      // Slug change keeps the index consistent.
-      if (stored.slug !== primitives.slug) {
-        const slugOwner = this.slugIndex.get(primitives.slug);
-        if (slugOwner && slugOwner !== primitives.id) {
-          throw OrganizationSlugTakenError(primitives.slug);
-        }
-        this.slugIndex.delete(stored.slug);
-        this.slugIndex.set(primitives.slug, primitives.id);
-      }
-      this.orgs.set(primitives.id, { ...primitives });
+    // Slug uniqueness is the org-specific invariant on top of the shared
+    // optimistic-concurrency check; both creates and slug-changing updates
+    // need to reject collisions from a different aggregate.
+    const slugOwner = this.slugIndex.get(primitives.slug);
+    if (slugOwner && slugOwner !== primitives.id) {
+      throw OrganizationSlugTakenError(primitives.slug);
     }
+
+    assertOptimisticConcurrency(
+      stored?.revision,
+      expectedRevision,
+      OrganizationAggregateStaleError,
+    );
+
+    if (stored && stored.slug !== primitives.slug) {
+      this.slugIndex.delete(stored.slug);
+    }
+    this.orgs.set(primitives.id, { ...primitives });
+    this.slugIndex.set(primitives.slug, primitives.id);
 
     org.markPersisted();
   }

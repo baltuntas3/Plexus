@@ -5,8 +5,8 @@ import {
   type PromptPrimitives,
 } from "../../../domain/entities/prompt.js";
 import { PromptAggregateStaleError } from "../../../domain/errors/domain-error.js";
-import { isDuplicateKeyError } from "./mongo-errors.js";
 import { PromptModel } from "./prompt-model.js";
+import { runOptimisticSave } from "./optimistic-save.js";
 import { getCurrentSession } from "./transaction-context.js";
 
 interface PromptDocShape {
@@ -63,58 +63,34 @@ export class MongoPromptAggregateRepository implements IPromptRepository {
   }
 
   async save(prompt: Prompt): Promise<void> {
-    const { primitives, expectedRevision } = prompt.toSnapshot();
-    const session = getCurrentSession();
-
-    if (expectedRevision === 0) {
-      try {
-        await PromptModel.create(
-          [
-            {
-              _id: primitives.id,
-              name: primitives.name,
-              description: primitives.description,
-              taskType: primitives.taskType,
-              organizationId: primitives.organizationId,
-              creatorId: primitives.creatorId,
-              productionVersionId: primitives.productionVersionId,
-              versionCounter: primitives.versionCounter,
-              revision: primitives.revision,
-              createdAt: primitives.createdAt,
-              updatedAt: primitives.updatedAt,
-            },
-          ],
-          { session },
-        );
-      } catch (err) {
-        if (isDuplicateKeyError(err)) {
-          throw PromptAggregateStaleError();
-        }
-        throw err;
-      }
-    } else {
-      const result = await PromptModel.updateOne(
-        { _id: primitives.id, revision: expectedRevision },
-        {
-          $set: {
-            name: primitives.name,
-            description: primitives.description,
-            taskType: primitives.taskType,
-            organizationId: primitives.organizationId,
-            creatorId: primitives.creatorId,
-            productionVersionId: primitives.productionVersionId,
-            versionCounter: primitives.versionCounter,
-            revision: primitives.revision,
-            updatedAt: primitives.updatedAt,
-          },
-        },
-        { session },
-      );
-      if (result.matchedCount === 0) {
-        throw PromptAggregateStaleError();
-      }
-    }
-
-    prompt.markPersisted();
+    await runOptimisticSave({
+      aggregate: prompt,
+      model: PromptModel,
+      toCreateDoc: (p) => ({
+        _id: p.id,
+        name: p.name,
+        description: p.description,
+        taskType: p.taskType,
+        organizationId: p.organizationId,
+        creatorId: p.creatorId,
+        productionVersionId: p.productionVersionId,
+        versionCounter: p.versionCounter,
+        revision: p.revision,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      }),
+      toUpdateSet: (p) => ({
+        name: p.name,
+        description: p.description,
+        taskType: p.taskType,
+        organizationId: p.organizationId,
+        creatorId: p.creatorId,
+        productionVersionId: p.productionVersionId,
+        versionCounter: p.versionCounter,
+        revision: p.revision,
+        updatedAt: p.updatedAt,
+      }),
+      staleError: () => PromptAggregateStaleError(),
+    });
   }
 }

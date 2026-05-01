@@ -127,7 +127,7 @@ describe("CreateBenchmarkUseCase", () => {
     ).rejects.toThrow(/Unknown model/);
   });
 
-  it("builds generation spec from the real evaluation prompt, including braid graphs", async () => {
+  it("builds the generation spec from each version's source body and braid graph so the generator has enough domain context", async () => {
     const benchmarks = new InMemoryBenchmarkRepository();
     const queries = new InMemoryPromptQueryService();
     const prompts = new InMemoryPromptAggregateRepository(queries);
@@ -155,7 +155,7 @@ describe("CreateBenchmarkUseCase", () => {
       promptId: prompt.id,
       organizationId: prompt.organizationId,
       version: prompt.allocateNextVersionLabel(),
-      sourcePrompt: "Outdated classical prompt.",
+      sourcePrompt: "Classical body that the braid is structurally derived from.",
       parentVersionId: classical.id,
     });
     // sourceVersion v2 is classical; fork v3 carries the braid.
@@ -190,7 +190,8 @@ describe("CreateBenchmarkUseCase", () => {
     const promptText = String(seen[0]?.messages[0]?.content ?? "");
     expect(promptText).toContain("Classical instructions.");
     expect(promptText).toContain("graph TD");
-    expect(promptText).not.toContain("Outdated classical prompt.");
+    expect(promptText).toContain("Classical body that the braid is structurally derived from.");
+    expect(promptText).toContain("Declared task type: math");
   });
 
   it("rejects generator output when fewer test cases are returned than requested", async () => {

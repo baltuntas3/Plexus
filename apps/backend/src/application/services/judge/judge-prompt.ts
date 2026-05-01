@@ -1,6 +1,6 @@
 import type { TaskType } from "@plexus/shared-types";
 import type { ChatMessage } from "../ai-provider.js";
-import type { JudgeInput } from "./judge.js";
+import type { BatchJudgeInput, JudgeInput } from "./judge.js";
 
 const BASE_JUDGE_PROMPT = `You are a strict, impartial grader. Given the system prompt under evaluation, the user's input, and a candidate assistant response, score the response on three 1-5 axes:
 
@@ -69,4 +69,93 @@ export const buildJudgeMessages = (input: JudgeInput, taskType?: TaskType): Chat
     { role: "system", content: buildJudgeSystemPrompt(taskType) },
     { role: "user", content: parts.join("\n\n") },
   ];
+};
+
+// Batch judge prompt — N attempts of the SAME prompt × input combination,
+// presented with shuffled anonymous labels (ATTEMPT_<n>) so the judge cannot
+// anchor on order or on which attempt was first/last. The judge is
+// instructed explicitly to score each attempt independently, NOT to compare
+// them to each other (since these are repetitions of the same system, not
+// rivals). Output is a JSON object whose `scores` array is keyed by label,
+// so we can match results back to the original input order even if the model
+// reorders or drops entries.
+const BATCH_JUDGE_INSTRUCTIONS = `
+You are evaluating multiple separate ATTEMPTS at the same task — different runs of the same system on the same input. Each attempt is a fully independent response.
+
+Independence rules — you MUST follow all of these:
+- Score each attempt on its own merits, exactly as you would if you saw it alone. Do NOT compare attempts to each other.
+- The order of attempts in this prompt is randomised; position carries no meaning. Do not favour the first or the last attempt.
+- An attempt does NOT become better or worse because the others happen to be similar, different, longer, or shorter.
+- Identical attempts must receive identical scores.
+
+Output ONLY a single JSON object matching this exact shape, no markdown fences, no prose:
+{"scores": [{"label": "ATTEMPT_1", "accuracy": <1-5>, "coherence": <1-5>, "instruction": <1-5>, "reasoning": "<one short sentence>"}, ...]}
+
+Include one entry per labelled attempt below; reuse the labels exactly. All three rubric scores MUST be integers in [1, 5]. "reasoning" MUST be one sentence.`;
+
+export const buildBatchJudgeSystemPrompt = (taskType: TaskType = "general"): string => {
+  const guidance = TASK_TYPE_GUIDANCE[taskType];
+  if (!guidance) return BASE_JUDGE_PROMPT + BATCH_JUDGE_INSTRUCTIONS;
+  return BASE_JUDGE_PROMPT + "\n\n" + guidance + BATCH_JUDGE_INSTRUCTIONS;
+};
+
+// Deterministic shuffle so a (seed, candidates) tuple yields the same label
+// permutation across retries — keeps reruns reproducible and lets the
+// caller stay agnostic of internal ordering.
+const seededShuffle = <T>(items: readonly T[], seed: number): T[] => {
+  const out = [...items];
+  let state = (seed >>> 0) || 1;
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    state >>>= 0;
+    const j = state % (i + 1);
+    const tmp = out[i] as T;
+    out[i] = out[j] as T;
+    out[j] = tmp;
+  }
+  return out;
+};
+
+export interface BuiltBatchJudgePrompt {
+  messages: ChatMessage[];
+  // Maps the label string ("ATTEMPT_<n>") to the original candidate index in
+  // BatchJudgeInput.candidates. The caller uses this to reorder parsed
+  // scores back to input order.
+  labelToOriginalIndex: Map<string, number>;
+}
+
+export const buildBatchJudgeMessages = (
+  input: BatchJudgeInput,
+  taskType?: TaskType,
+): BuiltBatchJudgePrompt => {
+  const order = seededShuffle(
+    input.candidates.map((_, i) => i),
+    input.seed ?? 0,
+  );
+  const labelToOriginalIndex = new Map<string, number>();
+  const lines: string[] = [];
+  if (input.systemPrompt) {
+    lines.push(
+      `<system_prompt_under_evaluation>\n${input.systemPrompt}\n</system_prompt_under_evaluation>`,
+    );
+  }
+  lines.push(`<input>\n${input.input}\n</input>`);
+  if (input.reference) {
+    lines.push(`<reference>\n${input.reference}\n</reference>`);
+  }
+  order.forEach((originalIndex, position) => {
+    const label = `ATTEMPT_${position + 1}`;
+    labelToOriginalIndex.set(label, originalIndex);
+    const candidate = input.candidates[originalIndex] ?? "";
+    lines.push(`<attempt label="${label}">\n${candidate}\n</attempt>`);
+  });
+  return {
+    messages: [
+      { role: "system", content: buildBatchJudgeSystemPrompt(taskType) },
+      { role: "user", content: lines.join("\n\n") },
+    ],
+    labelToOriginalIndex,
+  };
 };

@@ -18,6 +18,11 @@ export class InMemoryBenchmarkQueryService implements IBenchmarkQueryService {
   ): Promise<BenchmarkSummaryListResult> {
     const all = this.repo
       .allForOrganization(query.organizationId)
+      .filter((bm: Benchmark) =>
+        query.promptVersionId
+          ? bm.promptVersionIds.includes(query.promptVersionId)
+          : true,
+      )
       .sort((a: Benchmark, b: Benchmark) => b.createdAt.getTime() - a.createdAt.getTime());
     const start = (query.page - 1) * query.pageSize;
     const page = all.slice(start, start + query.pageSize);

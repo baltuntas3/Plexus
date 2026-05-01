@@ -92,6 +92,7 @@ export class CreateBenchmarkUseCase {
       resolvedVersions,
       testGenerationMode,
       seed,
+      taskType,
     );
     const generator = new TestCaseGenerator(this.providers);
     const generated = await generator.generate(

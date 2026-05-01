@@ -7,6 +7,7 @@ export interface ListBenchmarksCommand {
   organizationId: string;
   page: number;
   pageSize: number;
+  promptVersionId?: string;
 }
 
 // Read-side use case. Goes through IBenchmarkQueryService so list endpoints

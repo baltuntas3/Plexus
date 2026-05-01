@@ -16,9 +16,6 @@ const AcceptInvitationPage = lazy(async () => ({
 const OrgSettingsPage = lazy(async () => ({
   default: (await import("./pages/org-settings-page.js")).OrgSettingsPage,
 }));
-const DashboardPage = lazy(async () => ({
-  default: (await import("./pages/dashboard-page.js")).DashboardPage,
-}));
 const PromptsPage = lazy(async () => ({
   default: (await import("./pages/prompts-page.js")).PromptsPage,
 }));
@@ -58,7 +55,7 @@ export const App = () => {
             </ProtectedRoute>
           }
         >
-          <Route path="/" element={<DashboardPage />} />
+          <Route path="/" element={<Navigate to="/prompts" replace />} />
           <Route path="/prompts" element={<PromptsPage />} />
           <Route path="/prompts/:id" element={<PromptDetailPage />} />
           <Route path="/prompts/:id/versions/new" element={<VersionEditorPage />} />

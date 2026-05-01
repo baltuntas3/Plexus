@@ -2,6 +2,7 @@ import { atom } from "jotai";
 import type {
   BenchmarkAnalysisDto,
   BenchmarkDetailDto,
+  BenchmarkListResponse,
   CreateBenchmarkRequest,
   UpdateTestCasesRequest,
 } from "@plexus/shared-types";
@@ -77,5 +78,34 @@ export const fetchBenchmarkDetailAtom = atom(
       { token: tokens.accessToken },
     );
     return result.benchmark;
+  },
+);
+
+// Bumped after a successful create-benchmark so the Past Evaluations panel
+// re-fetches without forcing the user to navigate away and back.
+export const benchmarksListRefreshAtom = atom(0);
+
+// Read-side fetch scoped to a single prompt version. The list endpoint
+// does the filter server-side; the frontend just hands over the version id.
+export const fetchBenchmarksForVersionAtom = atom(
+  null,
+  async (
+    get,
+    _set,
+    args: { promptVersionId: string; page?: number; pageSize?: number },
+  ): Promise<BenchmarkListResponse> => {
+    const tokens = get(tokensAtom);
+    if (!tokens) throw new Error("Not authenticated");
+    // Read so updates to the refresh counter trigger re-execution when the
+    // caller wraps this in a useAtomValue/loadable read pattern.
+    get(benchmarksListRefreshAtom);
+    const params = new URLSearchParams({
+      promptVersionId: args.promptVersionId,
+      page: String(args.page ?? 1),
+      pageSize: String(args.pageSize ?? 20),
+    });
+    return apiRequest<BenchmarkListResponse>(`/benchmarks?${params.toString()}`, {
+      token: tokens.accessToken,
+    });
   },
 );

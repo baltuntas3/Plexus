@@ -3,7 +3,7 @@ import type { PromptVersionSummary } from "../../queries/prompt-query-service.js
 import type { TestGenerationMode } from "../../../domain/entities/benchmark.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import type { IAIProviderFactory } from "../ai-provider.js";
-import { buildEvaluationPrompt } from "./evaluation-prompt.js";
+import { buildVersionGenerationSection } from "./evaluation-prompt.js";
 
 // Generates varied, realistic test inputs for a given system prompt by asking
 // an LLM to act as a "test case author". The generated inputs are raw user
@@ -61,41 +61,48 @@ const responseSchema = z.object({
 // mode. `seed` makes the shuffle reproducible across runs of the same
 // benchmark.
 export const buildEvaluationSpec = (
-  versionPrompts: readonly string[],
+  versionSpecs: readonly string[],
   mode: TestGenerationMode = "shared-core",
   seed?: number,
+  taskType?: string,
 ): string => {
-  if (versionPrompts.length === 0) {
+  if (versionSpecs.length === 0) {
     throw ValidationError("Test case generator needs at least one prompt version");
   }
-  if (versionPrompts.length === 1) {
-    return versionPrompts[0] as string;
+  const taskHeader = taskType
+    ? `Declared task type: ${taskType} — every test case input must be appropriate for this task.\n\n`
+    : "";
+  if (versionSpecs.length === 1) {
+    return `${taskHeader}${versionSpecs[0] as string}`;
   }
   const order = seededShuffle(
-    versionPrompts.map((_, i) => i),
+    versionSpecs.map((_, i) => i),
     seed ?? 0,
   );
   const sections = order.map((originalIndex, position) => {
     const label = String.fromCharCode(65 + position);
-    return `--- VERSION ${label} ---\n${versionPrompts[originalIndex]}`;
+    return `--- VERSION ${label} ---\n${versionSpecs[originalIndex]}`;
   });
   if (mode === "diff-seeking") {
     return [
-      "The system under test has multiple prompt versions being benchmarked against each other. Generate test cases that expose differences between versions where possible: changed constraints, expanded capabilities, tighter refusals, edge cases, and regressions. Prefer realistic requests where at least one version is likely to behave materially differently from another.",
+      taskHeader +
+        "The system under test has multiple prompt versions being benchmarked against each other. Generate test cases that expose differences between versions where possible: changed constraints, expanded capabilities, tighter refusals, edge cases, and regressions. Prefer realistic requests where at least one version is likely to behave materially differently from another.",
       "",
       sections.join("\n\n"),
     ].join("\n");
   }
   if (mode === "hybrid") {
     return [
-      "The system under test has multiple prompt versions being benchmarked against each other. Generate a balanced benchmark mix: most cases should represent realistic shared traffic common to all versions, but include a meaningful minority of targeted probes that can expose behavioural differences, regressions, or changed constraints when those differences matter.",
+      taskHeader +
+        "The system under test has multiple prompt versions being benchmarked against each other. Generate a balanced benchmark mix: most cases should represent realistic shared traffic common to all versions, but include a meaningful minority of targeted probes that can expose behavioural differences, regressions, or changed constraints when those differences matter.",
       "Aim for roughly 70% shared-core coverage and 30% diff-seeking coverage. Do not turn the whole benchmark into edge-case hunting; preserve ordinary user traffic as the majority.",
       "",
       sections.join("\n\n"),
     ].join("\n");
   }
   return [
-    "The system under test has multiple prompt versions being benchmarked against each other. Generate test cases that probe behaviour common to ALL versions (shared domain, shared constraints) — not the idiosyncrasies of any single version. If the versions disagree on a detail, target the overlap, not the difference.",
+    taskHeader +
+      "The system under test has multiple prompt versions being benchmarked against each other. Generate test cases that probe behaviour common to ALL versions (shared domain, shared constraints) — not the idiosyncrasies of any single version. If the versions disagree on a detail, target the overlap, not the difference.",
     "",
     sections.join("\n\n"),
   ].join("\n");
@@ -105,7 +112,14 @@ export const buildEvaluationSpecFromVersions = (
   versions: readonly PromptVersionSummary[],
   mode: TestGenerationMode = "shared-core",
   seed?: number,
-): string => buildEvaluationSpec(versions.map(buildEvaluationPrompt), mode, seed);
+  taskType?: string,
+): string =>
+  buildEvaluationSpec(
+    versions.map(buildVersionGenerationSection),
+    mode,
+    seed,
+    taskType,
+  );
 
 const seededShuffle = <T>(items: readonly T[], seed: number): T[] => {
   const shuffled = [...items];
@@ -145,42 +159,49 @@ const extractJsonObject = (text: string): string | null => {
 };
 
 const buildGenerationPrompt = (systemPrompt: string, count: number): string =>
-  `You are an expert QA engineer stress-testing an AI system. Your task has two phases.
+  `You are a senior QA engineer designing a benchmark for the system specified below. You will write user-side inputs (the "user" turn) that genuinely probe how THIS system behaves — not generic prompts that any LLM could answer.
 
 ---
-SYSTEM PROMPT UNDER TEST:
+SYSTEM SPEC UNDER TEST:
 """
 ${systemPrompt}
 """
 ---
 
-PHASE 1 — Analyse the prompt (think, do not output yet):
-- What is this system's domain and intended purpose?
-- What are the most common happy-path requests a user would send?
-- What are the specific edge cases unique to THIS domain? (e.g. if it's a recipe assistant: dietary restrictions, impossible ingredient combinations, non-food questions)
-- What instructions or constraints in the prompt could be exploited, bypassed, or broken?
-- What kinds of inputs would cause ambiguity, contradiction, or failure specific to this system?
+PHASE 1 — Read the spec carefully and answer silently (do NOT output any of this):
+1. What concrete task does the system perform? Describe it in one sentence.
+2. What inputs does a real user need to provide for the system to produce a useful answer? What format are those inputs in?
+3. What constraints / guardrails / output format rules are stated or implied?
+4. If a BRAID workflow graph is shown, the system follows it step by step at runtime — design inputs that exercise the actual decision branches in that graph, not unrelated topics.
+5. If template variables ({{name}}) are listed, they are LITERAL placeholders the runtime substitutes server-side. Do NOT invent new {{...}} names. Either substitute a realistic concrete value matching the variable's description, or, when natural, keep the listed placeholder verbatim. Never reference variables not in the list.
 
-PHASE 2 — Generate exactly ${count} test cases based on your analysis.
+If, after this analysis, the system's task is genuinely unclear (the spec is empty or contradictory), still produce ${count} cases that match the most plausible reading — but stay strictly inside that reading.
+
+PHASE 2 — Generate exactly ${count} test cases tailored to this specific system.
 
 Each test case must fall into one of these categories:
 1. typical — Most common, representative request for this specific system.
 2. complex — Multi-step or multi-constraint request that is hard but valid for this system.
 3. ambiguous — Missing key information that this system specifically needs to answer correctly.
-4. adversarial — Attempts to make this system violate its own instructions (prompt injection, role override, out-of-scope manipulation) — tailored to this prompt's actual constraints.
+4. adversarial — Attempts to make THIS system violate ITS OWN stated instructions (prompt injection, role override, out-of-scope manipulation) — must reference real constraints in the spec, not generic jailbreaks.
 5. edge_case — A boundary condition specific to this domain (extreme values, unusual format, language mismatch, or a topic that is almost but not quite in scope).
-6. contradictory — A request with internal contradictions that are meaningful in this domain (not generic nonsense).
-7. stress — Maximally demanding version of a valid request for this system.
+6. contradictory — A request whose internal contradictions are meaningful in THIS domain (not generic nonsense).
+7. stress — Maximally demanding but still valid request for this system.
 
 Target category mix (aim for this distribution, but prefer realism — it is fine
 if one case lands in an adjacent category when the domain demands it):
 ${formatCategoryPlan(count)}
 
-Rules:
-- Messages must be realistic — something a real user of THIS system would plausibly send.
-- Do NOT use generic attacks. Adversarial and edge cases must exploit properties specific to this prompt.
-- The "input" field must be the raw user message only — no category label inside it.
-- Return exactly ${count} cases. Tag each one with whichever listed category best fits; do not invent new labels.
+HARD RULES (a case that violates any of these is unacceptable; rewrite it):
+- The "input" field is exactly what a real user of this system would send — written in the user's voice, no QA framing, no labels, no headers, no markdown fences, no JSON.
+- Every input must require this system's specific task to be answered well; if a generic chatbot could answer it identically, it is too generic — replace it.
+- Stay inside the system's declared scope. Do not ask the system to do tasks it was not built for unless the case is explicitly adversarial / edge_case AND the violation is the point.
+- No meta commentary ("as a tester I would ask…", "test for…"), no category names, no rationale text inside the input.
+- Adversarial cases must exploit a constraint that is actually stated in the spec. Generic prompt-injection ("ignore previous instructions") is only acceptable when paired with a domain-specific payload that targets a real rule in the spec.
+- Variable handling: only reference placeholders from the listed variables (if any). Prefer realistic concrete values; only keep {{name}} verbatim when substituting would lose the structural intent of the test.
+- Inputs must be coherent, complete, and self-contained — no "...", no truncated thoughts, no placeholder text like "[insert X]".
+- Each case must be materially distinct from the others. No paraphrases of the same request.
+- Return exactly ${count} cases. Tag each with whichever listed category best fits; never invent new category labels.
 
 Respond with a JSON object in this exact format:
 {

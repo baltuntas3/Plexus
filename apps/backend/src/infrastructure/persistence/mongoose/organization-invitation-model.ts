@@ -38,8 +38,6 @@ organizationInvitationSchema.index(
   },
 );
 
-organizationInvitationSchema.index({ tokenHash: 1 }, { unique: true });
-
 export const OrganizationInvitationModel = model(
   "OrganizationInvitation",
   organizationInvitationSchema,

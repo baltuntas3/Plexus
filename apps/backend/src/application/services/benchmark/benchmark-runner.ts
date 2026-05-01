@@ -21,7 +21,11 @@ import type { IAIProviderFactory, GenerateResponse } from "../ai-provider.js";
 import type { JobContext } from "../job-queue.js";
 import { calculateCost } from "../model-registry.js";
 import { LLMJudge } from "../judge/llm-judge.js";
-import { JudgeExecutionError, type IJudge } from "../judge/judge.js";
+import {
+  JudgeExecutionError,
+  type BatchJudgeResult,
+  type IJudge,
+} from "../judge/judge.js";
 import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 
 // Orchestrates a single benchmark run end-to-end against the Benchmark
@@ -35,6 +39,14 @@ import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 // repeated `benchmark.repetitions` times so the analyzer can estimate
 // within-candidate variance.
 //
+// Execution unit is a "triple" — (testCase × version × solver) with all of
+// its repetitions. Solver calls inside a triple run in parallel (one per
+// rep) and produce N candidates that are then graded by a SINGLE batched
+// judge call per judge model. Batching reps inside a triple is fairness-
+// neutral because all candidates come from the same prompt × input — the
+// judge scores them independently with anonymous shuffled labels — and
+// cuts judge LLM calls by ~repetitions×.
+//
 // Every row is graded by every judge in `benchmark.judgeModels`; rubric
 // means are stored on the row, individual votes on `judgeVotes` for
 // drill-down and bias analysis. Per-cell failures are captured as "failed"
@@ -43,9 +55,12 @@ import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 const DEFAULT_BUDGET_USD = 50;
 
-interface CellSlice {
-  sampleKey: string;
-  runIndex: number;
+interface Triple {
+  testCaseId: string;
+  versionId: string;
+  solverModel: string;
+  // Cells in runIndex order so persisted rows for the same triple are
+  // ordered consistently across resumes.
   cells: MatrixCell[];
 }
 
@@ -109,10 +124,13 @@ export class BenchmarkRunner {
       await this.deps.benchmarks.save(benchmark);
       await ctx.reportProgress({ completed: processed, total });
 
-      const pending = cells.filter(
-        (cell) => existingByKey.get(cellKey(cell))?.status !== "completed",
-      );
-      const slices = buildSlices(pending, benchmark.seed);
+      const triples = buildTriples(cells).flatMap((triple) => {
+        const pending = triple.cells.filter(
+          (cell) => existingByKey.get(cellKey(cell))?.status !== "completed",
+        );
+        if (pending.length === 0) return [];
+        return [{ ...triple, cells: pending }];
+      });
       const judges = this.buildJudges(benchmark.judgeModels, benchmark.taskType);
       const cellTimeout = benchmark.cellTimeoutMs ?? DEFAULT_CELL_TIMEOUT_MS;
       const budget = benchmark.budgetUsd ?? DEFAULT_BUDGET_USD;
@@ -129,36 +147,46 @@ export class BenchmarkRunner {
           ? observedCellCosts / observedCellCount
           : estimatedCellCostUsd;
 
-      for (const slice of slices) {
-        const estimatedSliceCostUsd = reservePerCellUsd() * slice.cells.length;
-        if (spentUsd + estimatedSliceCostUsd > budget) {
+      // Group triples into version-balance buckets per testCase so a budget
+      // cap leaves balanced version coverage at a triple boundary.
+      const tripleBuckets = bucketByTestCase(triples);
+      for (const bucket of tripleBuckets) {
+        const estimatedBucketCostUsd =
+          reservePerCellUsd() *
+          bucket.reduce((sum, t) => sum + t.cells.length, 0);
+        if (spentUsd + estimatedBucketCostUsd > budget) {
           cappedByBudget = true;
           break;
         }
         await mapConcurrent(
-          slice.cells,
+          bucket,
           Math.max(1, benchmark.concurrency),
-          async (cell) => {
-            const row = await withTimeout(
-              this.runCell(benchmark!, cell, judges),
-              cellTimeout,
-            ).catch((err) =>
-              failedBenchmarkResult({
-                benchmarkId: benchmark!.id,
-                testCaseId: cell.testCase.id,
-                promptVersionId: cell.version.id,
-                solverModel: cell.solverModel,
-                runIndex: cell.runIndex,
-                input: cell.testCase.input,
-                error: err instanceof Error ? err.message : String(err),
-                failureKind: classifyFailureKind(err),
-              }),
+          async (triple) => {
+            const tripleTimeout = cellTimeout * Math.max(1, triple.cells.length);
+            const rows = await withTimeout(
+              this.runTriple(benchmark!, triple, judges),
+              tripleTimeout,
+            ).catch((err): UpsertableBenchmarkResult[] =>
+              triple.cells.map((cell) =>
+                failedBenchmarkResult({
+                  benchmarkId: benchmark!.id,
+                  testCaseId: cell.testCase.id,
+                  promptVersionId: cell.version.id,
+                  solverModel: cell.solverModel,
+                  runIndex: cell.runIndex,
+                  input: cell.testCase.input,
+                  error: err instanceof Error ? err.message : String(err),
+                  failureKind: classifyFailureKind(err),
+                }),
+              ),
             );
-            spentUsd += row.totalCostUsd;
-            observedCellCosts += row.totalCostUsd;
-            observedCellCount += 1;
-            await this.deps.results.upsert(row);
-            processed += 1;
+            for (const row of rows) {
+              spentUsd += row.totalCostUsd;
+              observedCellCosts += row.totalCostUsd;
+              observedCellCount += 1;
+              await this.deps.results.upsert(row);
+              processed += 1;
+            }
             benchmark = await this.reloadAndReport(
               benchmarkId,
               ctx,
@@ -240,183 +268,275 @@ export class BenchmarkRunner {
     }));
   }
 
-  private async runCell(
+  private async runTriple(
     benchmark: Benchmark,
-    cell: MatrixCell,
+    triple: Triple,
     judges: ReadonlyArray<{ model: string; judge: IJudge }>,
-  ): Promise<UpsertableBenchmarkResult> {
-    const systemPrompt = buildEvaluationPrompt(cell.version);
-    const provider = this.deps.providers.forModel(cell.solverModel);
+  ): Promise<UpsertableBenchmarkResult[]> {
+    const firstCell = triple.cells[0] as MatrixCell;
+    const systemPrompt = buildEvaluationPrompt(firstCell.version);
+    const provider = this.deps.providers.forModel(triple.solverModel);
 
-    const solverSeed = deriveSeed(benchmark.seed, cell);
-
-    const start = Date.now();
-    let candidate: GenerateResponse;
-    try {
-      candidate = await provider.generate({
-        model: cell.solverModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: cell.testCase.input },
-        ],
-        temperature: benchmark.solverTemperature,
-        seed: solverSeed,
-      });
-    } catch (err) {
-      return failedBenchmarkResult(
-        buildFailedInput(benchmark.id, cell, err, {
-          latencyMs: Date.now() - start,
-          failureKind: "solver_error",
-        }),
-      );
+    // Solver phase — one call per rep. Failures are captured as per-rep
+    // failed rows; successful candidates feed the batched judge phase.
+    interface SolverOutcome {
+      cell: MatrixCell;
+      candidate: GenerateResponse | null;
+      candidateCostUsd: number;
+      latencyMs: number;
+      error: unknown | null;
     }
-    const latencyMs = Date.now() - start;
-    const candidateCost = calculateCost(
-      cell.solverModel,
-      candidate.usage.inputTokens,
-      candidate.usage.outputTokens,
+    const solverOutcomes: SolverOutcome[] = await Promise.all(
+      triple.cells.map(async (cell) => {
+        const solverSeed = deriveSeed(benchmark.seed, cell);
+        const start = Date.now();
+        try {
+          const candidate = await provider.generate({
+            model: cell.solverModel,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: cell.testCase.input },
+            ],
+            temperature: benchmark.solverTemperature,
+            seed: solverSeed,
+          });
+          const cost = calculateCost(
+            cell.solverModel,
+            candidate.usage.inputTokens,
+            candidate.usage.outputTokens,
+          );
+          return {
+            cell,
+            candidate,
+            candidateCostUsd: cost.totalUsd,
+            latencyMs: Date.now() - start,
+            error: null,
+          };
+        } catch (err) {
+          return {
+            cell,
+            candidate: null,
+            candidateCostUsd: 0,
+            latencyMs: Date.now() - start,
+            error: err,
+          };
+        }
+      }),
     );
 
-    const judgeExecution = await Promise.all(
+    const successful = solverOutcomes.filter(
+      (o): o is SolverOutcome & { candidate: GenerateResponse } => o.candidate !== null,
+    );
+
+    const failedRows = solverOutcomes
+      .filter((o) => o.candidate === null)
+      .map((o) =>
+        failedBenchmarkResult(
+          buildFailedInput(benchmark.id, o.cell, o.error, {
+            latencyMs: o.latencyMs,
+            failureKind: "solver_error",
+          }),
+        ),
+      );
+
+    if (successful.length === 0) {
+      return failedRows;
+    }
+
+    // Judge phase — one batched call per judge model, scoring all
+    // successful candidates of THIS triple in a single LLM round-trip.
+    interface JudgeOutcome {
+      model: string;
+      // Per-candidate vote, aligned with `successful` order.
+      votes: Array<JudgeVote | null>;
+      partial: { inputTokens: number; outputTokens: number; costUsd: number } | null;
+      error: unknown | null;
+      // Aggregate raw verbosity penalty per candidate from the judge's
+      // computation, aligned with `successful` order.
+      verbosityPenalties: number[];
+      gradedScores: Array<JudgeScore | null>;
+    }
+
+    const judgeOutcomes: JudgeOutcome[] = await Promise.all(
       judges.map(async ({ model, judge }) => {
         try {
-          const graded = await judge.grade({
-            input: cell.testCase.input,
-            candidate: candidate.text,
-            seed: deriveJudgeSeed(benchmark.seed, cell, model),
-            reference: cell.testCase.expectedOutput ?? undefined,
+          const graded: BatchJudgeResult = await judge.gradeBatch({
+            input: firstCell.testCase.input,
+            candidates: successful.map((s) => s.candidate.text),
+            seed: deriveBatchJudgeSeed(benchmark.seed, triple, model),
+            reference: firstCell.testCase.expectedOutput ?? undefined,
             systemPrompt,
           });
-          const judgeCost = calculateCost(
-            graded.model,
-            graded.usage.inputTokens,
-            graded.usage.outputTokens,
-          );
-          const vote: JudgeVote = {
+          // Equal usage attribution across the batched candidates — the
+          // judge prompt is shared, so per-candidate "true" cost is not
+          // recoverable. Equal split keeps PPD honest by giving each row
+          // an identical denominator contribution.
+          const n = successful.length;
+          const inputPer = Math.floor(graded.usage.inputTokens / n);
+          const outputPer = Math.floor(graded.usage.outputTokens / n);
+          const perCellCost = calculateCost(graded.model, inputPer, outputPer);
+          const votes: JudgeVote[] = graded.scores.map((score) => ({
             model,
-            accuracy: graded.score.rubric.accuracy,
-            coherence: graded.score.rubric.coherence,
-            instruction: graded.score.rubric.instruction,
-            reasoning: graded.score.reasoning,
-            inputTokens: graded.usage.inputTokens,
-            outputTokens: graded.usage.outputTokens,
-            costUsd: judgeCost.totalUsd,
+            accuracy: score.rubric.accuracy,
+            coherence: score.rubric.coherence,
+            instruction: score.rubric.instruction,
+            reasoning: score.reasoning,
+            inputTokens: inputPer,
+            outputTokens: outputPer,
+            costUsd: perCellCost.totalUsd,
+          }));
+          return {
+            model,
+            votes,
+            partial: null,
+            error: null,
+            verbosityPenalties: graded.scores.map((s) => s.verbosityPenalty),
+            gradedScores: graded.scores,
           };
-          return { ok: true as const, vote, graded };
         } catch (err) {
           const partial =
             err instanceof JudgeExecutionError
               ? buildPartialJudgeUsage(model, err)
               : null;
-          return { ok: false as const, err, partial };
+          // Distribute the partial usage equally across attempted
+          // candidates so per-row token/cost reflects what was spent.
+          const perCellPartial = partial
+            ? splitPartialEqually(partial, successful.length)
+            : null;
+          return {
+            model,
+            votes: successful.map(() => null),
+            partial: perCellPartial,
+            error: err,
+            verbosityPenalties: successful.map(() => 0),
+            gradedScores: successful.map(() => null),
+          };
         }
       }),
     );
 
-    const judgeFailures = judgeExecution.filter((j) => !j.ok);
-    const votes = judgeExecution.filter(
-      (j): j is Extract<typeof judgeExecution[number], { ok: true }> => j.ok,
-    );
-    const successfulJudgeInputTokens = votes.reduce(
-      (sum, vote) => sum + vote.vote.inputTokens,
-      0,
-    );
-    const successfulJudgeOutputTokens = votes.reduce(
-      (sum, vote) => sum + vote.vote.outputTokens,
-      0,
-    );
-    const successfulJudgeCostUsd = votes.reduce(
-      (sum, vote) => sum + vote.vote.costUsd,
-      0,
-    );
-    const partialJudgeInputTokens = judgeFailures.reduce(
-      (sum, failure) => sum + (failure.partial?.inputTokens ?? 0),
-      0,
-    );
-    const partialJudgeOutputTokens = judgeFailures.reduce(
-      (sum, failure) => sum + (failure.partial?.outputTokens ?? 0),
-      0,
-    );
-    const partialJudgeCostUsd = judgeFailures.reduce(
-      (sum, failure) => sum + (failure.partial?.costUsd ?? 0),
-      0,
-    );
-    const judgeInputTokens = successfulJudgeInputTokens + partialJudgeInputTokens;
-    const judgeOutputTokens =
-      successfulJudgeOutputTokens + partialJudgeOutputTokens;
-    const judgeCostUsd = successfulJudgeCostUsd + partialJudgeCostUsd;
+    // Stitch per-cell rows from solver outcome + per-judge votes.
+    const successfulRows: UpsertableBenchmarkResult[] = successful.map(
+      (outcome, candidateIndex) => {
+        const cell = outcome.cell;
+        const votesForCell = judgeOutcomes
+          .map((judge) => judge.votes[candidateIndex])
+          .filter((vote): vote is JudgeVote => vote !== null);
+        const judgeFailuresForCell = judgeOutcomes.filter(
+          (judge) => judge.votes[candidateIndex] === null,
+        );
 
-    if (votes.length === 0) {
-      const firstFailure = judgeFailures[0];
-      return failedBenchmarkResult(
-        buildFailedInput(
-          benchmark.id,
-          cell,
-          firstFailure?.err ?? new Error("Judge ensemble incomplete"),
+        const successfulJudgeInputTokens = votesForCell.reduce(
+          (sum, vote) => sum + vote.inputTokens,
+          0,
+        );
+        const successfulJudgeOutputTokens = votesForCell.reduce(
+          (sum, vote) => sum + vote.outputTokens,
+          0,
+        );
+        const successfulJudgeCostUsd = votesForCell.reduce(
+          (sum, vote) => sum + vote.costUsd,
+          0,
+        );
+        const partialJudgeInputTokens = judgeFailuresForCell.reduce(
+          (sum, judge) => sum + (judge.partial?.inputTokens ?? 0),
+          0,
+        );
+        const partialJudgeOutputTokens = judgeFailuresForCell.reduce(
+          (sum, judge) => sum + (judge.partial?.outputTokens ?? 0),
+          0,
+        );
+        const partialJudgeCostUsd = judgeFailuresForCell.reduce(
+          (sum, judge) => sum + (judge.partial?.costUsd ?? 0),
+          0,
+        );
+        const judgeInputTokens =
+          successfulJudgeInputTokens + partialJudgeInputTokens;
+        const judgeOutputTokens =
+          successfulJudgeOutputTokens + partialJudgeOutputTokens;
+        const judgeCostUsd = successfulJudgeCostUsd + partialJudgeCostUsd;
+
+        if (votesForCell.length === 0) {
+          const firstFailure = judgeFailuresForCell[0];
+          return failedBenchmarkResult(
+            buildFailedInput(
+              benchmark.id,
+              cell,
+              firstFailure?.error ?? new Error("Judge ensemble incomplete"),
+              {
+                latencyMs: outcome.latencyMs,
+                candidate: outcome.candidate,
+                candidateCostUsd: outcome.candidateCostUsd,
+                judgeInputTokens,
+                judgeOutputTokens,
+                judgeCostUsd,
+                failureKind: "judge_error",
+              },
+            ),
+          );
+        }
+
+        const meanAccuracy = mean(votesForCell.map((v) => v.accuracy));
+        const meanCoherence = mean(votesForCell.map((v) => v.coherence));
+        const meanInstruction = mean(votesForCell.map((v) => v.instruction));
+        const meanVerbosityPenalty = mean(
+          judgeOutcomes
+            .map((judge) =>
+              judge.gradedScores[candidateIndex] !== null
+                ? judge.verbosityPenalties[candidateIndex] ?? 0
+                : null,
+            )
+            .filter((v): v is number => v !== null),
+        );
+        const score = JudgeScore.fromRubric(
           {
-            latencyMs,
-            candidate,
-            candidateCostUsd: candidateCost.totalUsd,
-            judgeInputTokens,
-            judgeOutputTokens,
-            judgeCostUsd,
-            failureKind: "judge_error",
+            accuracy: meanAccuracy,
+            coherence: meanCoherence,
+            instruction: meanInstruction,
           },
-        ),
-      );
-    }
+          meanVerbosityPenalty,
+          "",
+        );
 
-    const meanAccuracy = mean(votes.map((v) => v.vote.accuracy));
-    const meanCoherence = mean(votes.map((v) => v.vote.coherence));
-    const meanInstruction = mean(votes.map((v) => v.vote.instruction));
-    const meanVerbosityPenalty = mean(
-      votes.map((v) => v.graded.score.verbosityPenalty),
-    );
-    const score = JudgeScore.fromRubric(
-      {
-        accuracy: meanAccuracy,
-        coherence: meanCoherence,
-        instruction: meanInstruction,
+        const completed: CompletedResultInput = {
+          benchmarkId: benchmark.id,
+          testCaseId: cell.testCase.id,
+          promptVersionId: cell.version.id,
+          solverModel: cell.solverModel,
+          runIndex: cell.runIndex,
+          input: cell.testCase.input,
+          candidateOutput: outcome.candidate.text,
+          candidateInputTokens: outcome.candidate.usage.inputTokens,
+          candidateOutputTokens: outcome.candidate.usage.outputTokens,
+          candidateCostUsd: outcome.candidateCostUsd,
+          judgeAccuracy: meanAccuracy,
+          judgeCoherence: meanCoherence,
+          judgeInstruction: meanInstruction,
+          judgeVotes: votesForCell,
+          rawScore: score.rawScore,
+          verbosityPenalty: meanVerbosityPenalty,
+          finalScore: score.finalScore,
+          judgeInputTokens,
+          judgeOutputTokens,
+          judgeCostUsd,
+          judgeFailureCount: judgeFailuresForCell.length,
+          latencyMs: outcome.latencyMs,
+          partialJudgeFailureMessage:
+            judgeFailuresForCell.length === 0
+              ? null
+              : `Partial judge failure: ${judgeFailuresForCell.length}/${judges.length} judge(s) failed. ${judgeFailuresForCell
+                  .map((judge) =>
+                    judge.error instanceof Error
+                      ? judge.error.message
+                      : String(judge.error),
+                  )
+                  .join("; ")}`,
+        };
+        return completedBenchmarkResult(completed);
       },
-      meanVerbosityPenalty,
-      "",
     );
 
-    const completed: CompletedResultInput = {
-      benchmarkId: benchmark.id,
-      testCaseId: cell.testCase.id,
-      promptVersionId: cell.version.id,
-      solverModel: cell.solverModel,
-      runIndex: cell.runIndex,
-      input: cell.testCase.input,
-      candidateOutput: candidate.text,
-      candidateInputTokens: candidate.usage.inputTokens,
-      candidateOutputTokens: candidate.usage.outputTokens,
-      candidateCostUsd: candidateCost.totalUsd,
-      judgeAccuracy: meanAccuracy,
-      judgeCoherence: meanCoherence,
-      judgeInstruction: meanInstruction,
-      judgeVotes: votes.map((v) => v.vote),
-      rawScore: score.rawScore,
-      verbosityPenalty: meanVerbosityPenalty,
-      finalScore: score.finalScore,
-      judgeInputTokens,
-      judgeOutputTokens,
-      judgeCostUsd,
-      judgeFailureCount: judgeFailures.length,
-      latencyMs,
-      partialJudgeFailureMessage:
-        judgeFailures.length === 0
-          ? null
-          : `Partial judge failure: ${judgeFailures.length}/${judges.length} judge(s) failed. ${judgeFailures
-              .map((failure) =>
-                failure.err instanceof Error
-                  ? failure.err.message
-                  : String(failure.err),
-              )
-              .join("; ")}`,
-    };
-    return completedBenchmarkResult(completed);
+    return [...failedRows, ...successfulRows];
   }
 }
 
@@ -448,8 +568,8 @@ const cellKey = (cell: MatrixCell): string =>
     cell.runIndex,
   );
 
-const sampleKey = (cell: MatrixCell): string =>
-  `${cell.testCase.id}::${cell.runIndex}`;
+const tripleKey = (cell: MatrixCell): string =>
+  `${cell.testCase.id}::${cell.version.id}::${cell.solverModel}`;
 
 const resultKey = (
   row: Pick<
@@ -524,6 +644,18 @@ const buildPartialJudgeUsage = (
   };
 };
 
+const splitPartialEqually = (
+  partial: { inputTokens: number; outputTokens: number; costUsd: number },
+  count: number,
+): { inputTokens: number; outputTokens: number; costUsd: number } => {
+  if (count <= 0) return { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  return {
+    inputTokens: Math.floor(partial.inputTokens / count),
+    outputTokens: Math.floor(partial.outputTokens / count),
+    costUsd: partial.costUsd / count,
+  };
+};
+
 const mean = (values: readonly number[]): number =>
   values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
@@ -536,71 +668,45 @@ const estimateCellCostUsd = (
   return forecast.estimatedTotalCostUsd / totalCells;
 };
 
-// Slice + shuffle cells so concurrent workers progress across all sample
-// points in lockstep (instead of finishing one cell before starting the
-// next). Keeps the matrix balanced if the run caps out on budget mid-stream.
-const buildSlices = (cells: readonly MatrixCell[], seed: number): CellSlice[] => {
-  const bySample = new Map<string, CellSlice>();
+// Build (testCase × version × solver) triples from the matrix; each triple
+// holds all repetitions of a single cell so we can issue one batched judge
+// call per judge model. Triple emission order follows matrix order, which
+// the matrix builder already keeps stable across runs.
+const buildTriples = (cells: readonly MatrixCell[]): Triple[] => {
+  const byKey = new Map<string, Triple>();
   for (const cell of cells) {
-    const key = sampleKey(cell);
-    const existing = bySample.get(key);
+    const key = tripleKey(cell);
+    const existing = byKey.get(key);
     if (existing) {
       existing.cells.push(cell);
       continue;
     }
-    bySample.set(key, {
-      sampleKey: key,
-      runIndex: cell.runIndex,
+    byKey.set(key, {
+      testCaseId: cell.testCase.id,
+      versionId: cell.version.id,
+      solverModel: cell.solverModel,
       cells: [cell],
     });
   }
-
-  const runBuckets = new Map<number, CellSlice[]>();
-  for (const slice of bySample.values()) {
-    runBuckets.set(slice.runIndex, [
-      ...(runBuckets.get(slice.runIndex) ?? []),
-      slice,
-    ]);
+  for (const triple of byKey.values()) {
+    triple.cells.sort((a, b) => a.runIndex - b.runIndex);
   }
-
-  return [...runBuckets.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .flatMap(([runIndex, slices]) =>
-      shuffleItems(slices, hashSeed(seed, `run:${runIndex}`)).map((slice) => ({
-        ...slice,
-        cells: shuffleItems(slice.cells, hashSeed(seed, slice.sampleKey)),
-      })),
-    );
+  return [...byKey.values()];
 };
 
-const shuffleItems = <T>(items: readonly T[], seed: number): T[] => {
-  const shuffled = [...items];
-  let state = seed >>> 0;
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    state = nextShuffleState(state);
-    const j = state % (i + 1);
-    const tmp = shuffled[i];
-    shuffled[i] = shuffled[j] as T;
-    shuffled[j] = tmp as T;
+// Group triples by testCase, shuffle the (version, solver) pairs inside each
+// bucket, and order the buckets themselves by a seeded shuffle. Budget caps
+// stop on a bucket boundary, leaving each completed testCase fully covered
+// across all version × solver triples — preserving the version-balance the
+// per-rep slicing strategy used to give us.
+const bucketByTestCase = (triples: readonly Triple[]): Triple[][] => {
+  const byTestCase = new Map<string, Triple[]>();
+  for (const triple of triples) {
+    const list = byTestCase.get(triple.testCaseId) ?? [];
+    list.push(triple);
+    byTestCase.set(triple.testCaseId, list);
   }
-  return shuffled;
-};
-
-const nextShuffleState = (state: number): number => {
-  let x = state >>> 0;
-  x ^= x << 13;
-  x ^= x >>> 17;
-  x ^= x << 5;
-  return x >>> 0;
-};
-
-const hashSeed = (seed: number, value: string): number => {
-  let h = seed >>> 0;
-  for (let i = 0; i < value.length; i += 1) {
-    h = (h ^ value.charCodeAt(i)) >>> 0;
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h >>> 0;
+  return [...byTestCase.values()];
 };
 
 // Deterministic 32-bit seed derivation so each (testCase, version, solver,
@@ -615,12 +721,16 @@ const deriveSeed = (benchmarkSeed: number, cell: MatrixCell): number => {
   return h & 0x7fffffff;
 };
 
-const deriveJudgeSeed = (
+// Triple-level seed for batch judging: fixed across the triple's reps so
+// the judge sees a deterministic label permutation, but distinct per
+// (triple, judgeModel) so different judges and different cells stay
+// independent.
+const deriveBatchJudgeSeed = (
   benchmarkSeed: number,
-  cell: MatrixCell,
+  triple: Triple,
   judgeModel: string,
 ): number => {
-  const str = `${cell.testCase.id}|${cell.version.id}|${cell.solverModel}|${cell.runIndex}|${judgeModel}`;
+  const str = `${triple.testCaseId}|${triple.versionId}|${triple.solverModel}|${judgeModel}`;
   let h = benchmarkSeed >>> 0;
   for (let i = 0; i < str.length; i += 1) {
     h = (h ^ str.charCodeAt(i)) >>> 0;

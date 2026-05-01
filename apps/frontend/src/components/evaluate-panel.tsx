@@ -17,9 +17,13 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { useNavigate } from "react-router-dom";
 import type { PromptVersionDto } from "@plexus/shared-types";
 import { modelsAtom } from "../atoms/braid.atoms.js";
-import { createBenchmarkAtom } from "../atoms/benchmarks.atoms.js";
+import {
+  benchmarksListRefreshAtom,
+  createBenchmarkAtom,
+} from "../atoms/benchmarks.atoms.js";
 import { DEFAULT_TEST_COUNT } from "../lib/evaluate-presets.js";
 import { ApiError } from "../lib/api-client.js";
+import { PastEvaluationsList } from "./past-evaluations-list.js";
 
 interface EvaluatePanelProps {
   currentVersion: PromptVersionDto;
@@ -60,6 +64,11 @@ export const EvaluatePanel = ({
   productionVersionName,
 }: EvaluatePanelProps) => {
   const createBenchmark = useSetAtom(createBenchmarkAtom);
+  // Bumped after a successful create so the Past Evaluations list below
+  // re-fetches without a full page navigation. The user typically navigates
+  // to the new benchmark detail anyway, but bumping covers the case where
+  // they cancel out and return.
+  const bumpBenchmarkListRefresh = useSetAtom(benchmarksListRefreshAtom);
   const navigate = useNavigate();
 
   const defaultVersionIds = useMemo(() => {
@@ -128,6 +137,7 @@ export const EvaluatePanel = ({
         title: "Evaluation ready",
         message: `${benchmark.testCases.length} test cases generated for ${selectedVersionIds.length} version(s)`,
       });
+      bumpBenchmarkListRefresh((n) => n + 1);
       navigate(`/benchmarks/${benchmark.id}`, {
         state: {
           returnTo: `/prompts/${currentVersion.promptId}/versions/${currentVersion.version}`,
@@ -211,6 +221,11 @@ export const EvaluatePanel = ({
           </Group>
         </Stack>
       </Paper>
+
+      <PastEvaluationsList
+        promptVersionId={currentVersion.id}
+        versions={versions}
+      />
     </Stack>
   );
 };

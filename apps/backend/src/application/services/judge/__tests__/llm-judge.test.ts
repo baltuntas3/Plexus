@@ -180,3 +180,151 @@ describe("LLMJudge.grade", () => {
     expect(provider.lastRequest?.temperature).toBe(0);
   });
 });
+
+describe("LLMJudge.gradeBatch", () => {
+  it("delegates to grade for a single-candidate batch (no batched prompt overhead)", async () => {
+    const { judge, provider } = buildJudge(
+      JSON.stringify({
+        accuracy: 4,
+        coherence: 4,
+        instruction: 4,
+        reasoning: "single",
+      }),
+    );
+
+    const result = await judge.gradeBatch({
+      input: "summarize",
+      candidates: ["only candidate"],
+    });
+
+    expect(result.scores).toHaveLength(1);
+    expect(result.scores[0]?.rubric).toEqual({
+      accuracy: 4,
+      coherence: 4,
+      instruction: 4,
+    });
+    // Single-candidate path uses the original (non-batched) prompt; the
+    // user message embeds <candidate>, never <attempt>.
+    const userMessage = String(provider.lastRequest?.messages?.at(-1)?.content ?? "");
+    expect(userMessage).toContain("<candidate>");
+    expect(userMessage).not.toContain("<attempt");
+  });
+
+  it("scores N candidates with a single judge call and restores input order even when labels come back shuffled", async () => {
+    const { judge, provider } = buildJudge(
+      JSON.stringify({
+        scores: [
+          // The judge returned labels in a different order than the
+          // prompt asked for — the scores must still be matched back to
+          // the original candidate index by label, not by position.
+          { label: "ATTEMPT_3", accuracy: 3, coherence: 3, instruction: 3, reasoning: "third" },
+          { label: "ATTEMPT_1", accuracy: 5, coherence: 5, instruction: 5, reasoning: "first" },
+          { label: "ATTEMPT_2", accuracy: 4, coherence: 4, instruction: 4, reasoning: "second" },
+        ],
+      }),
+    );
+
+    const result = await judge.gradeBatch({
+      input: "summarize",
+      candidates: ["alpha", "beta", "gamma"],
+      seed: 7,
+    });
+
+    expect(provider.calls).toBe(1);
+    expect(result.scores).toHaveLength(3);
+    // The judge prompt shuffles candidates with the seed, so we don't
+    // assert which candidate got which label — only that every parsed
+    // score lands at the right input index. The aggregate rubric values
+    // returned by the stub provider are 3, 4, and 5; one of them must
+    // appear at each index, with no duplicates.
+    const accuracyValues = result.scores
+      .map((s) => s?.rubric.accuracy)
+      .sort((a, b) => (a ?? 0) - (b ?? 0));
+    expect(accuracyValues).toEqual([3, 4, 5]);
+    const userMessage = String(provider.lastRequest?.messages?.at(-1)?.content ?? "");
+    expect(userMessage).toContain("ATTEMPT_1");
+    expect(userMessage).toContain("ATTEMPT_2");
+    expect(userMessage).toContain("ATTEMPT_3");
+  });
+
+  it("computes per-candidate verbosity penalty so long attempts score lower than short ones", async () => {
+    const { judge } = buildJudge(
+      JSON.stringify({
+        scores: [
+          { label: "ATTEMPT_1", accuracy: 5, coherence: 5, instruction: 5, reasoning: "ok" },
+          { label: "ATTEMPT_2", accuracy: 5, coherence: 5, instruction: 5, reasoning: "ok" },
+        ],
+      }),
+    );
+
+    const result = await judge.gradeBatch({
+      input: "Write a short greeting.",
+      candidates: ["Hello there!", "Hello there! ".repeat(200)],
+      reference: "Hello there!",
+      seed: 1,
+    });
+
+    // Without batching, the judge would compute verbosity per call;
+    // batched mode must still compute it per candidate so the long
+    // attempt is penalised independently of the short one.
+    const [first, second] = result.scores;
+    expect(first?.verbosityPenalty).toBe(0);
+    expect(second?.verbosityPenalty).toBeGreaterThan(0);
+    expect(second?.finalScore).toBeLessThan(first?.finalScore ?? 0);
+  });
+
+  it("retries on a malformed batch response and surfaces the parsed payload on success", async () => {
+    let callCount = 0;
+    const provider = new FakeAIProvider(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          text: "not json",
+          usage: { inputTokens: 30, outputTokens: 10 },
+          model: "openai/gpt-oss-20b",
+        };
+      }
+      return {
+        text: JSON.stringify({
+          scores: [
+            { label: "ATTEMPT_1", accuracy: 4, coherence: 4, instruction: 4, reasoning: "ok" },
+            { label: "ATTEMPT_2", accuracy: 3, coherence: 3, instruction: 3, reasoning: "ok" },
+          ],
+        }),
+        usage: { inputTokens: 40, outputTokens: 12 },
+        model: "openai/gpt-oss-20b",
+      };
+    });
+    const judge = new LLMJudge(new FakeAIProviderFactory(provider), {
+      judgeModel: "openai/gpt-oss-20b",
+    });
+
+    const result = await judge.gradeBatch({
+      input: "x",
+      candidates: ["a", "b"],
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.scores).toHaveLength(2);
+    // Reported usage covers both attempts (the malformed first call's
+    // tokens are kept so the caller's cost accounting stays honest).
+    expect(result.usage).toEqual({ inputTokens: 70, outputTokens: 22 });
+  });
+
+  it("rejects a batch response missing one of the requested labels", async () => {
+    const { judge } = buildJudge(
+      JSON.stringify({
+        scores: [
+          { label: "ATTEMPT_1", accuracy: 4, coherence: 4, instruction: 4, reasoning: "ok" },
+        ],
+      }),
+    );
+
+    await expect(
+      judge.gradeBatch({ input: "x", candidates: ["a", "b"] }),
+    ).rejects.toMatchObject({
+      name: "JudgeExecutionError",
+      message: expect.stringMatching(/missing labels?/i),
+    });
+  });
+});

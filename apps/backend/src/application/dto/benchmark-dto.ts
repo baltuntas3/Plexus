@@ -61,5 +61,10 @@ export type UpdateTestCasesDto = z.infer<typeof updateTestCasesSchema>;
 export const listBenchmarksQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  // Optional filter: only return benchmarks whose `promptVersionIds`
+  // array contains this id. Used by the Evaluation tab to show "past
+  // evaluations of this version" without scanning every benchmark in
+  // the org.
+  promptVersionId: z.string().min(1).optional(),
 });
 export type ListBenchmarksQueryDto = z.infer<typeof listBenchmarksQuerySchema>;

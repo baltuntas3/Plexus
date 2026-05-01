@@ -4,7 +4,12 @@ import type {
   IAIProvider,
   IAIProviderFactory,
 } from "../../ai-provider.js";
-import type { IJudge, JudgeResult } from "../../judge/judge.js";
+import type {
+  BatchJudgeInput,
+  BatchJudgeResult,
+  IJudge,
+  JudgeResult,
+} from "../../judge/judge.js";
 import { JudgeExecutionError } from "../../judge/judge.js";
 import type { JobContext } from "../../job-queue.js";
 import { JudgeScore } from "../../../../domain/value-objects/judge-score.js";
@@ -96,8 +101,43 @@ class SingleProviderFactory implements IAIProviderFactory {
   }
 }
 
+// Wraps a per-candidate `grade` into a full `IJudge` so test bodies that
+// only care about single-candidate behaviour stay short. The derived
+// `gradeBatch` calls `grade` once per candidate and aggregates — under the
+// new triple-batched runner, this preserves the original test's call-count
+// semantics for size-1 batches and produces sensible per-candidate scores
+// for larger ones.
+const judgeFromGrade = (grade: IJudge["grade"]): IJudge => ({
+  grade,
+  async gradeBatch(input) {
+    const results: JudgeResult[] = [];
+    for (const candidate of input.candidates) {
+      results.push(
+        await grade({
+          input: input.input,
+          candidate,
+          ...(input.seed !== undefined ? { seed: input.seed } : {}),
+          ...(input.reference !== undefined ? { reference: input.reference } : {}),
+          ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+        }),
+      );
+    }
+    return {
+      scores: results.map((r) => r.score),
+      usage: {
+        inputTokens: results.reduce((s, r) => s + r.usage.inputTokens, 0),
+        outputTokens: results.reduce((s, r) => s + r.usage.outputTokens, 0),
+      },
+      model: results[0]?.model ?? "stub",
+    };
+  },
+});
+
 class StubJudge implements IJudge {
   public calls = 0;
+  // Tracks the candidate count of every gradeBatch invocation so tests can
+  // assert that batching collapsed N reps into a single call.
+  public batchSizes: number[] = [];
   constructor(
     private readonly score: { accuracy: number; coherence: number; instruction: number },
     private readonly judgeModel = "openai/gpt-oss-20b",
@@ -107,6 +147,20 @@ class StubJudge implements IJudge {
     return {
       score: JudgeScore.fromRubric(this.score, 0, "stub reasoning"),
       usage: { inputTokens: 20, outputTokens: 10 },
+      model: this.judgeModel,
+    };
+  }
+  async gradeBatch(input: BatchJudgeInput): Promise<BatchJudgeResult> {
+    this.calls += 1;
+    this.batchSizes.push(input.candidates.length);
+    return {
+      scores: input.candidates.map(() =>
+        JudgeScore.fromRubric(this.score, 0, "stub reasoning"),
+      ),
+      usage: {
+        inputTokens: 20 * input.candidates.length,
+        outputTokens: 10 * input.candidates.length,
+      },
       model: this.judgeModel,
     };
   }
@@ -290,19 +344,22 @@ describe("BenchmarkRunner.run", () => {
     expect(seeds.size).toBe(6);
   });
 
-  it("passes deterministic judge seeds so reruns are reproducible", async () => {
+  it("passes deterministic batch-judge seeds so reruns are reproducible", async () => {
     const { benchmarks, results, queries } = await buildScaffold();
     const solverProvider = new RecordingProvider(() => ({
       text: "answer",
       inputTokens: 1,
       outputTokens: 1,
     }));
+    // The runner now batches all reps of a single (testCase, version,
+    // solver) triple into ONE judge call, so the response payload must be
+    // in the batched shape (one entry per ATTEMPT label).
     const judgeProvider = new RecordingProvider(() => ({
       text: JSON.stringify({
-        accuracy: 5,
-        coherence: 5,
-        instruction: 5,
-        reasoning: "ok",
+        scores: [
+          { label: "ATTEMPT_1", accuracy: 5, coherence: 5, instruction: 5, reasoning: "ok" },
+          { label: "ATTEMPT_2", accuracy: 5, coherence: 5, instruction: 5, reasoning: "ok" },
+        ],
       }),
       inputTokens: 2,
       outputTokens: 2,
@@ -324,8 +381,10 @@ describe("BenchmarkRunner.run", () => {
     });
     await runner.run(bm.id, buildContext().ctx);
 
-    expect(judgeProvider.calls).toHaveLength(4);
-    expect(new Set(judgeProvider.calls.map((call) => call.seed)).size).toBe(4);
+    // 2 testCases × 1 version × 1 solver × 1 judge = 2 batched judge calls
+    // (each scoring both reps in a single round-trip).
+    expect(judgeProvider.calls).toHaveLength(2);
+    expect(new Set(judgeProvider.calls.map((call) => call.seed)).size).toBe(2);
     expect(judgeProvider.calls.every((call) => call.seed !== undefined)).toBe(true);
   });
 
@@ -455,16 +514,14 @@ describe("BenchmarkRunner.run", () => {
   it("passes expected output as reference to the judge when present", async () => {
     const { benchmarks, results, queries } = await buildScaffold();
     const gradeCalls: { reference?: string }[] = [];
-    const judge: IJudge = {
-      grade: async (input) => {
-        gradeCalls.push({ reference: input.reference });
-        return {
-          score: JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, 0, "ok"),
-          usage: { inputTokens: 10, outputTokens: 5 },
-          model: "openai/gpt-oss-20b",
-        };
-      },
-    };
+    const judge: IJudge = judgeFromGrade(async (input) => {
+      gradeCalls.push({ reference: input.reference });
+      return {
+        score: JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, 0, "ok"),
+        usage: { inputTokens: 10, outputTokens: 5 },
+        model: "openai/gpt-oss-20b",
+      };
+    });
     const runner = new BenchmarkRunner({
       benchmarks,
       results,
@@ -524,8 +581,8 @@ describe("BenchmarkRunner.run", () => {
       results,
       promptQueries: queries,
       providers: new SingleProviderFactory(provider),
-      judgeFactory: () => ({
-        grade: async () => {
+      judgeFactory: () =>
+        judgeFromGrade(async () => {
           judgeCall += 1;
           if (judgeCall === 2) {
             throw new JudgeExecutionError("judge parse failed", {
@@ -542,8 +599,7 @@ describe("BenchmarkRunner.run", () => {
             usage: { inputTokens: 10, outputTokens: 6 },
             model: "openai/gpt-oss-20b",
           };
-        },
-      }),
+        }),
     });
 
     const bm = await queueBenchmark(benchmarks, {
@@ -640,11 +696,9 @@ describe("BenchmarkRunner.run", () => {
       inputTokens: 12,
       outputTokens: 8,
     }));
-    const judge: IJudge = {
-      grade: async () => {
-        throw new Error("judge exploded");
-      },
-    };
+    const judge: IJudge = judgeFromGrade(async () => {
+      throw new Error("judge exploded");
+    });
 
     const runner = new BenchmarkRunner({
       benchmarks,
@@ -686,14 +740,12 @@ describe("BenchmarkRunner.run", () => {
       inputTokens: 10,
       outputTokens: 5,
     }));
-    const judge: IJudge = {
-      grade: async () => {
-        throw new JudgeExecutionError("judge returned malformed JSON", {
-          usage: { inputTokens: 30, outputTokens: 12 },
-          model: "openai/gpt-oss-20b",
-        });
-      },
-    };
+    const judge: IJudge = judgeFromGrade(async () => {
+      throw new JudgeExecutionError("judge returned malformed JSON", {
+        usage: { inputTokens: 30, outputTokens: 12 },
+        model: "openai/gpt-oss-20b",
+      });
+    });
 
     const runner = new BenchmarkRunner({
       benchmarks,
@@ -793,14 +845,12 @@ describe("BenchmarkRunner.run", () => {
       outputTokens: 2,
     }));
     const judgeA = new StubJudge({ accuracy: 5, coherence: 4, instruction: 4 });
-    const judgeB: IJudge = {
-      grade: async () => {
-        throw new JudgeExecutionError("judge-b malformed JSON", {
-          usage: { inputTokens: 11, outputTokens: 7 },
-          model: "openai/gpt-oss-20b",
-        });
-      },
-    };
+    const judgeB: IJudge = judgeFromGrade(async () => {
+      throw new JudgeExecutionError("judge-b malformed JSON", {
+        usage: { inputTokens: 11, outputTokens: 7 },
+        model: "openai/gpt-oss-20b",
+      });
+    });
 
     const runner = new BenchmarkRunner({
       benchmarks,
@@ -831,7 +881,12 @@ describe("BenchmarkRunner.run", () => {
     expect(row?.judgeCostUsd).toBeGreaterThan(0);
   });
 
-  it("stops at a balanced budget boundary without writing budget-failure rows", async () => {
+  it("stops at a per-testCase bucket boundary so completed testCases keep version balance", async () => {
+    // Triple batching makes the budget gate work at testCase-bucket
+    // granularity: a bucket either runs all of its (version × solver)
+    // triples or none. The fairness contract is therefore "every completed
+    // testCase has full version coverage", instead of the old "every
+    // version has full testCase coverage at runIndex 0".
     const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({
       text: "answer",
@@ -852,13 +907,8 @@ describe("BenchmarkRunner.run", () => {
       repetitions: 3,
       concurrency: 1,
       testCases: [
-        {
-          id: "tc1",
-          input: "q1?",
-          expectedOutput: null,
-          category: null,
-          source: "generated" as const,
-        },
+        { id: "tc1", input: "q1?", expectedOutput: null, category: null, source: "generated" as const },
+        { id: "tc2", input: "q2?", expectedOutput: null, category: null, source: "generated" as const },
       ],
       promptVersionIds: [
         "1",
@@ -875,7 +925,13 @@ describe("BenchmarkRunner.run", () => {
     const rows = await results.listByBenchmark(bm.id);
     expect(final?.status).toBe("completed_with_budget_cap");
     expect(rows.every((row) => row.failureKind !== "budget_exceeded")).toBe(true);
-    expect(rows).toHaveLength(2);
+    // First bucket (tc1) completes both versions × all reps = 6 rows;
+    // second bucket (tc2) is skipped because the projected spend exceeds
+    // the cap.
+    expect(rows).toHaveLength(6);
+
+    const coveredTestCases = new Set(rows.map((row) => row.testCaseId));
+    expect(coveredTestCases.size).toBe(1);
 
     const completedByVersion = new Map<string, number>();
     for (const row of rows) {
@@ -884,7 +940,48 @@ describe("BenchmarkRunner.run", () => {
         (completedByVersion.get(row.promptVersionId) ?? 0) + (row.status === "completed" ? 1 : 0),
       );
     }
-    expect([...completedByVersion.values()]).toEqual([1, 1]);
+    expect([...completedByVersion.values()].sort()).toEqual([3, 3]);
+  });
+
+  it("batches all repetitions of a triple into a single judge call", async () => {
+    const { benchmarks, results, queries } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "answer",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      promptQueries: queries,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      repetitions: 3,
+      concurrency: 1,
+      testCases: [
+        { id: "tc1", input: "q1?", expectedOutput: null, category: null, source: "generated" as const },
+      ],
+    });
+    await runner.run(bm.id, buildContext().ctx);
+
+    // 1 testCase × 1 version × 1 solver × 1 judge → 1 batched judge call;
+    // 3 reps mean 3 solver calls AND a single batch of 3 candidates fed
+    // to the judge in one round-trip.
+    expect(provider.calls).toHaveLength(3);
+    expect(judge.calls).toBe(1);
+    expect(judge.batchSizes).toEqual([3]);
+
+    const rows = await results.listByBenchmark(bm.id);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.status === "completed")).toBe(true);
+    // Per-row judge cost is the equal split of the shared judge call's
+    // total cost, so the 3 rep rows must agree to within float precision.
+    const judgeCosts = rows.map((r) => r.judgeCostUsd);
+    expect(Math.max(...judgeCosts) - Math.min(...judgeCosts)).toBeLessThan(1e-12);
   });
 
   it("counts existing spend before resuming a budget-limited benchmark", async () => {

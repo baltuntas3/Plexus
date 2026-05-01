@@ -79,7 +79,15 @@ export class MongoBenchmarkQueryService implements IBenchmarkQueryService {
   async listBenchmarkSummaries(
     query: ListBenchmarkSummariesQuery,
   ): Promise<BenchmarkSummaryListResult> {
-    const filter = { organizationId: query.organizationId };
+    // promptVersionId filter matches benchmarks whose array field contains
+    // the given id (Mongo treats `field: value` as element-equality on
+    // arrays). The org scope stays as the outer guard.
+    const filter: Record<string, unknown> = {
+      organizationId: query.organizationId,
+    };
+    if (query.promptVersionId) {
+      filter.promptVersionIds = query.promptVersionId;
+    }
     const skip = (query.page - 1) * query.pageSize;
     const [docs, total] = await Promise.all([
       BenchmarkModel.find(filter, { testCases: 0 })

@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Center,
+  Grid,
   Group,
   Loader,
   Paper,
@@ -27,6 +28,8 @@ import {
 } from "../atoms/prompts.atoms.js";
 import { BraidTabPanel } from "../components/braid-tab-panel.js";
 import { EvaluatePanel } from "../components/evaluate-panel.js";
+import { VersionHistoryPanel } from "../components/version-history-panel.js";
+import { currentOrganizationAtom } from "../atoms/auth.atoms.js";
 import { ApiError } from "../lib/api-client.js";
 
 const statusColor: Record<VersionStatus, string> = {
@@ -44,6 +47,7 @@ export const VersionDetailPage = () => {
   const createVersion = useSetAtom(createVersionAtom);
   const updateVersionName = useSetAtom(updateVersionNameAtom);
   const refresh = useAtomValue(promptDetailRefreshAtom);
+  const org = useAtomValue(currentOrganizationAtom);
   const [current, setCurrent] = useState<PromptVersionDto | null>(null);
   const [allVersions, setAllVersions] = useState<PromptVersionDto[]>([]);
   const [prompt, setPrompt] = useState<PromptDto | null>(null);
@@ -205,9 +209,10 @@ export const VersionDetailPage = () => {
           )}
           <Badge color={statusColor[current.status]}>{current.status}</Badge>
           {current.braidGraph && <Badge color="violet">BRAID</Badge>}
+          {prompt && <Badge variant="light">{prompt.taskType}</Badge>}
         </Group>
-        <Button variant="subtle" onClick={() => navigate(`/prompts/${id}`)}>
-          Back
+        <Button variant="subtle" onClick={() => navigate("/prompts")}>
+          Back to prompts
         </Button>
       </Group>
 
@@ -249,96 +254,133 @@ export const VersionDetailPage = () => {
         </Paper>
       )}
 
-      <Tabs defaultValue={hasBraid ? "braid" : "classical"}>
-        <Tabs.List>
-          {!hasBraid && <Tabs.Tab value="classical">Classical Prompt</Tabs.Tab>}
-          <Tabs.Tab value="braid">BRAID Graph</Tabs.Tab>
-          <Tabs.Tab value="evaluate">Evaluate</Tabs.Tab>
-        </Tabs.List>
+      <Grid gutter="md">
+        <Grid.Col span={{ base: 12, md: 9 }}>
+          <Tabs defaultValue={hasBraid ? "braid" : "classical"}>
+            <Tabs.List>
+              {!hasBraid && <Tabs.Tab value="classical">Classical Prompt</Tabs.Tab>}
+              <Tabs.Tab value="braid">BRAID Graph</Tabs.Tab>
+              <Tabs.Tab value="evaluate">Evaluate</Tabs.Tab>
+            </Tabs.List>
 
-        {/* ── Classical tab ─────────────────────────────────────────────── */}
-        {!hasBraid && (
-          <Tabs.Panel value="classical" pt="md">
-            <Group mb="sm" justify="space-between">
-              <Select
-                label="Compare with"
-                placeholder="Select version"
-                value={compareTo}
-                onChange={setCompareTo}
-                clearable
-                disabled={editing}
-                data={allVersions
-                  .filter((v) => v.version !== current.version)
-                  .map((v) => ({
-                    value: v.version,
-                    label: v.name?.trim() ? `${v.name} (${v.version})` : v.version,
-                  }))}
-                w={200}
-              />
-              {!editing && (
-                <Button variant="light" onClick={() => setEditing(true)}>
-                  Edit
-                </Button>
-              )}
-              {editing && (
-                <Group>
-                  <Button variant="subtle" onClick={handleCancelEdit}>
-                    Cancel
-                  </Button>
-                  <Button
-                    loading={saving}
-                    onClick={handleSaveAsNewVersion}
-                    disabled={draftContent === current.sourcePrompt}
-                  >
-                    Save as new version
-                  </Button>
+            {/* ── Classical tab ─────────────────────────────────────────────── */}
+            {!hasBraid && (
+              <Tabs.Panel value="classical" pt="md">
+                <Group mb="sm" justify="space-between">
+                  <Select
+                    label="Compare with"
+                    placeholder="Select version"
+                    value={compareTo}
+                    onChange={setCompareTo}
+                    clearable
+                    disabled={editing}
+                    data={allVersions
+                      .filter((v) => v.version !== current.version)
+                      .map((v) => ({
+                        value: v.version,
+                        label: v.name?.trim() ? `${v.name} (${v.version})` : v.version,
+                      }))}
+                    w={200}
+                  />
+                  {!editing && (
+                    <Button variant="light" onClick={() => setEditing(true)}>
+                      Edit
+                    </Button>
+                  )}
+                  {editing && (
+                    <Group>
+                      <Button variant="subtle" onClick={handleCancelEdit}>
+                        Cancel
+                      </Button>
+                      <Button
+                        loading={saving}
+                        onClick={handleSaveAsNewVersion}
+                        disabled={draftContent === current.sourcePrompt}
+                      >
+                        Save as new version
+                      </Button>
+                    </Group>
+                  )}
                 </Group>
-              )}
-            </Group>
-            <Paper withBorder p={0} style={{ overflow: "hidden" }}>
-              {compareVersion && !editing ? (
-                <DiffEditor
-                  height="60vh"
-                  original={compareVersion.sourcePrompt}
-                  modified={current.sourcePrompt}
-                  language="markdown"
-                  theme="vs-dark"
-                  options={{ readOnly: true, minimap: { enabled: false }, renderSideBySide: true }}
-                />
-              ) : (
-                <Editor
-                  key={editing ? "edit-mode" : "view-mode"}
-                  height="60vh"
-                  defaultLanguage="markdown"
-                  value={editing ? draftContent : current.sourcePrompt}
-                  onChange={editing ? (v) => setDraftContent(v ?? "") : undefined}
-                  theme="vs-dark"
-                  options={{
-                    readOnly: !editing,
-                    minimap: { enabled: false },
-                    wordWrap: "on",
-                    fontSize: 14,
-                  }}
-                />
-              )}
-            </Paper>
-          </Tabs.Panel>
-        )}
+                <Paper withBorder p={0} style={{ overflow: "hidden" }}>
+                  {compareVersion && !editing ? (
+                    <DiffEditor
+                      height="60vh"
+                      original={compareVersion.sourcePrompt}
+                      modified={current.sourcePrompt}
+                      language="markdown"
+                      theme="vs-dark"
+                      options={{ readOnly: true, minimap: { enabled: false }, renderSideBySide: true }}
+                    />
+                  ) : (
+                    <Editor
+                      key={editing ? "edit-mode" : "view-mode"}
+                      height="60vh"
+                      defaultLanguage="markdown"
+                      value={editing ? draftContent : current.sourcePrompt}
+                      onChange={editing ? (v) => setDraftContent(v ?? "") : undefined}
+                      theme="vs-dark"
+                      options={{
+                        readOnly: !editing,
+                        minimap: { enabled: false },
+                        wordWrap: "on",
+                        fontSize: 14,
+                      }}
+                    />
+                  )}
+                </Paper>
+              </Tabs.Panel>
+            )}
 
-        {/* ── BRAID tab ─────────────────────────────────────────────────── */}
-        <Tabs.Panel value="braid" pt="md">
-          <BraidTabPanel promptId={id} current={current} />
-        </Tabs.Panel>
+            {/* ── BRAID tab ─────────────────────────────────────────────────── */}
+            <Tabs.Panel value="braid" pt="md">
+              <BraidTabPanel promptId={id} current={current} />
+            </Tabs.Panel>
 
-        <Tabs.Panel value="evaluate" pt="md">
-          <EvaluatePanel
-            currentVersion={current}
-            versions={allVersions}
-            promptName={prompt?.name ?? "Prompt"}
-            productionVersionName={prompt?.productionVersion ?? null}
-          />
-        </Tabs.Panel>
-      </Tabs>
+            <Tabs.Panel value="evaluate" pt="md">
+              <EvaluatePanel
+                currentVersion={current}
+                versions={allVersions}
+                promptName={prompt?.name ?? "Prompt"}
+                productionVersionName={prompt?.productionVersion ?? null}
+              />
+            </Tabs.Panel>
+          </Tabs>
+        </Grid.Col>
+
+        <Grid.Col span={{ base: 12, md: 3 }}>
+          <Paper withBorder p="sm" style={{ position: "sticky", top: 76 }}>
+            <Stack gap="sm">
+              {prompt && (
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    Prompt
+                  </Text>
+                  <Text size="sm" fw={600}>
+                    {prompt.name}
+                  </Text>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={() => navigate(`/prompts/${id}/versions/new`)}
+                  >
+                    New version
+                  </Button>
+                </Stack>
+              )}
+              <VersionHistoryPanel
+                promptId={id}
+                versions={allVersions}
+                currentVersion={current.version}
+                productionVersion={prompt?.productionVersion ?? null}
+                approvalPolicyActive={
+                  org?.approvalPolicy !== null && org?.approvalPolicy !== undefined
+                }
+              />
+            </Stack>
+          </Paper>
+        </Grid.Col>
+      </Grid>
     </Stack>
   );
 };

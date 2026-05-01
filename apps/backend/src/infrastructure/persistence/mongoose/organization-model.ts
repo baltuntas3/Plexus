@@ -30,6 +30,4 @@ const organizationSchema = new Schema(
   { timestamps: true },
 );
 
-organizationSchema.index({ slug: 1 }, { unique: true });
-
 export const OrganizationModel = model("Organization", organizationSchema);

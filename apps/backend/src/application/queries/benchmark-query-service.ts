@@ -48,6 +48,10 @@ export interface ListBenchmarkSummariesQuery {
   organizationId: string;
   page: number;
   pageSize: number;
+  // When set, only benchmarks whose `promptVersionIds` array contains this
+  // id are returned. Implementations apply the filter alongside the org
+  // scope so paging and totals reflect the filtered set, not the full org.
+  promptVersionId?: string;
 }
 
 export interface BenchmarkSummaryListResult {

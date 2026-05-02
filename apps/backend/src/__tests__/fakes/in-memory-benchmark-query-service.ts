@@ -40,7 +40,6 @@ const toSummary = (benchmark: Benchmark): BenchmarkSummary => ({
   judgeModels: [...benchmark.judgeModels],
   generatorModel: benchmark.generatorModel,
   testGenerationMode: benchmark.testGenerationMode,
-  analysisModel: benchmark.analysisModel,
   taskType: benchmark.taskType,
   costForecast: benchmark.costForecast,
   testCount: benchmark.testCount,

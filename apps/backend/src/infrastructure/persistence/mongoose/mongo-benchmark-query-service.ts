@@ -24,7 +24,6 @@ interface BenchmarkSummaryDoc {
   judgeModels: string[];
   generatorModel: string;
   testGenerationMode: TestGenerationMode;
-  analysisModel: string | null;
   taskType: TaskType;
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
@@ -52,7 +51,6 @@ const toSummary = (doc: BenchmarkSummaryDoc): BenchmarkSummary => ({
   judgeModels: doc.judgeModels,
   generatorModel: doc.generatorModel,
   testGenerationMode: doc.testGenerationMode ?? "shared-core",
-  analysisModel: doc.analysisModel ?? null,
   taskType: doc.taskType ?? "general",
   costForecast: doc.costForecast ?? null,
   testCount: doc.testCount,

@@ -7,14 +7,12 @@ import type { IBenchmarkResultRepository } from "../../../domain/repositories/be
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
-// Read-only analysis endpoint. The deterministic numbers (per-candidate
-// stats, Pareto frontier, PPD, ranking, recommendation) are recomputed
-// from the persisted result rows on every call — they are pure-TS, cheap,
-// and pinning them on the aggregate would force a backfill on every change
-// to the formula. The LLM commentary, by contrast, is written once by the
-// runner at completion and read straight off the aggregate here, so this
-// endpoint never triggers an LLM call regardless of how many times the
-// analysis page is opened.
+// Read-only analysis endpoint. The full analysis — per-candidate stats,
+// Pareto frontier, PPD, ranking, recommendation, and the ensemble judge
+// report (real per-judge reasoning quotes pulled from `judgeVotes`) — is
+// recomputed from the persisted result rows on every call. The
+// computation is pure-TS, cheap, and never triggers an LLM, so the
+// analysis page can be re-rendered freely without spending tokens.
 
 export interface GetBenchmarkAnalysisCommand {
   benchmarkId: string;
@@ -41,13 +39,12 @@ export class GetBenchmarkAnalysisUseCase {
         { category: tc.category, source: tc.source },
       ]),
     );
-    const core = computeAnalysis(results, { testCasesById });
-    return { ...core, commentary: benchmark.analysisCommentary };
+    return computeAnalysis(results, { testCasesById });
   }
 }
 
 // Version label projection used by other read paths (benchmark detail,
-// commentary prompt). Lives here for historical reasons; consumers import
+// HTTP responses). Lives here for historical reasons; consumers import
 // from this module.
 export const buildVersionLabels = async (
   queries: IPromptQueryService,

@@ -76,7 +76,6 @@ export interface BenchmarkPrimitives {
   judgeModels: string[];
   generatorModel: string;
   testGenerationMode: TestGenerationMode;
-  analysisModel: string | null;
   taskType: TaskType;
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
@@ -90,12 +89,6 @@ export interface BenchmarkPrimitives {
   testCases: BenchmarkTestCase[];
   jobId: string | null;
   error: string | null;
-  // LLM-written narrative paragraph attached at completion. Empty string
-  // until the runner finishes and writes it; treat empty as "not produced
-  // yet" rather than an explicit "no comment". Frozen once written — there
-  // is no regenerate path, since the inputs (results) are immutable after
-  // completion.
-  analysisCommentary: string;
   // Aggregate revision last seen in the store. Hydrated from persistence,
   // checked during save, advanced by `commit` on success.
   revision: number;
@@ -123,7 +116,6 @@ export interface CreateBenchmarkParams {
   judgeModels: string[];
   generatorModel: string;
   testGenerationMode: TestGenerationMode;
-  analysisModel: string | null;
   taskType: TaskType;
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
@@ -179,7 +171,6 @@ export class Benchmark {
       judgeModels: [...params.judgeModels],
       generatorModel: params.generatorModel,
       testGenerationMode: params.testGenerationMode,
-      analysisModel: params.analysisModel,
       taskType: params.taskType,
       costForecast: params.costForecast,
       testCount: params.testCount,
@@ -193,7 +184,6 @@ export class Benchmark {
       testCases: params.testCases.map((tc) => ({ ...tc })),
       jobId: null,
       error: null,
-      analysisCommentary: "",
       revision: 0,
       createdAt: now,
       startedAt: null,
@@ -247,9 +237,6 @@ export class Benchmark {
   get testGenerationMode(): TestGenerationMode {
     return this.state.testGenerationMode;
   }
-  get analysisModel(): string | null {
-    return this.state.analysisModel;
-  }
   get taskType(): TaskType {
     return this.state.taskType;
   }
@@ -288,9 +275,6 @@ export class Benchmark {
   }
   get error(): string | null {
     return this.state.error;
-  }
-  get analysisCommentary(): string {
-    return this.state.analysisCommentary;
   }
   get revision(): number {
     return this.state.revision;
@@ -408,21 +392,6 @@ export class Benchmark {
       completedAt,
       error: reason,
     };
-  }
-
-  // Commentary is the narrative paragraph the runner generates once at
-  // completion. The aggregate enforces "only after the run is terminal" so
-  // a stray write during draft/queued/running cannot pollute the field
-  // before the inputs are finalized. There is no clear/regenerate method —
-  // results are immutable post-completion, so the commentary should be too.
-  setAnalysisCommentary(value: string): void {
-    if (
-      this.state.status !== "completed" &&
-      this.state.status !== "completed_with_budget_cap"
-    ) {
-      throw BenchmarkIllegalTransitionError(this.state.status, "commentary");
-    }
-    this.state = { ...this.state, analysisCommentary: value };
   }
 
   // Failure is accepted from any non-terminal state — a crash can happen

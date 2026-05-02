@@ -25,7 +25,6 @@ export interface BenchmarkSummary {
   judgeModels: string[];
   generatorModel: string;
   testGenerationMode: TestGenerationMode;
-  analysisModel: string | null;
   taskType: TaskType;
   costForecast: BenchmarkCostForecast | null;
   testCount: number;

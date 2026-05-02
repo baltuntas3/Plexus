@@ -35,7 +35,6 @@ export interface BenchmarkDto {
   judgeModels: string[];
   generatorModel: string;
   testGenerationMode: "shared-core" | "diff-seeking" | "hybrid";
-  analysisModel: string | null;
   taskType: TaskType;
   costForecast: BenchmarkCostForecastDto | null;
   testCount: number;
@@ -112,10 +111,10 @@ export interface BenchmarkResultDto {
 
 // Minimal public surface: the caller picks which versions to compare, which
 // models to benchmark as solvers, and how many cases to generate. Judge
-// ensemble, generator, generation mode, analysis model, repetitions, seed,
-// concurrency and solver temperature are derived server-side for fairness
-// and reproducibility — solver temperature is fixed at 0 so two benchmarks
-// of the same prompts/models stay directly comparable.
+// ensemble, generator, generation mode, repetitions, seed, concurrency and
+// solver temperature are derived server-side for fairness and
+// reproducibility — solver temperature is fixed at 0 so two benchmarks of
+// the same prompts/models stay directly comparable.
 export interface CreateBenchmarkRequest {
   name: string;
   promptVersionIds: string[];
@@ -277,6 +276,53 @@ export interface VarianceDecompositionDto {
   acrossTestCaseVariance: number;
 }
 
+// Real, attributed judge feedback pulled from each row's `judgeVotes`. This
+// replaces the old single LLM-narrated `commentary` string: the judges
+// already produced reasoning at grade time, so summarising their actual
+// quotes is honest and free.
+export interface EnsembleJudgeQuoteDto {
+  testCaseId: string;
+  runIndex: number;
+  finalScore: number;
+  rubric: { accuracy: number; coherence: number; instruction: number };
+  reasoning: string;
+}
+
+export interface EnsembleJudgePerJudgeDto {
+  model: string;
+  voteCount: number;
+  meanAccuracy: number;
+  meanCoherence: number;
+  meanInstruction: number;
+  topRated: EnsembleJudgeQuoteDto | null;
+  bottomRated: EnsembleJudgeQuoteDto | null;
+}
+
+export interface EnsembleJudgeDisagreementDto {
+  testCaseId: string;
+  runIndex: number;
+  spread: number;
+  perJudge: Array<{
+    model: string;
+    accuracy: number;
+    coherence: number;
+    instruction: number;
+    reasoning: string;
+  }>;
+}
+
+export interface EnsembleJudgeCandidateReportDto {
+  candidateKey: string;
+  promptVersionId: string;
+  solverModel: string;
+  judges: EnsembleJudgePerJudgeDto[];
+  maxDisagreement: EnsembleJudgeDisagreementDto | null;
+}
+
+export interface EnsembleJudgeReportDto {
+  perCandidate: EnsembleJudgeCandidateReportDto[];
+}
+
 export interface BenchmarkAnalysisDto {
   candidates: CandidateStatsDto[];
   categoryBreakdown: CategoryBreakdownRowDto[];
@@ -294,7 +340,7 @@ export interface BenchmarkAnalysisDto {
   exclusionReasons: Record<string, string>;
   suggestedRepetitions: number;
   suggestedRepetitionsRationale: string;
-  commentary: string;
+  ensembleJudgeReport: EnsembleJudgeReportDto;
 }
 
 // SSE progress event payload.

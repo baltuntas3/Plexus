@@ -646,6 +646,102 @@ describe("computeAnalysis", () => {
     expect(stats!.consistencyScore).toBeGreaterThan(0);
   });
 
+  it("builds an ensemble judge report with per-judge top/bottom quotes and the max-disagreement row", () => {
+    const analysis = computeAnalysis([
+      row({
+        promptVersionId: "vA",
+        testCaseId: "tcHigh",
+        runIndex: 0,
+        finalScore: 0.95,
+        judgeAccuracy: 5,
+        judgeCoherence: 5,
+        judgeInstruction: 5,
+        judgeVotes: [
+          {
+            model: "judge-a",
+            accuracy: 5,
+            coherence: 5,
+            instruction: 5,
+            reasoning: "great answer overall",
+            inputTokens: 1,
+            outputTokens: 1,
+            costUsd: 0,
+          },
+          {
+            model: "judge-b",
+            accuracy: 4,
+            coherence: 5,
+            instruction: 5,
+            reasoning: "solid but minor issues",
+            inputTokens: 1,
+            outputTokens: 1,
+            costUsd: 0,
+          },
+        ],
+      }),
+      row({
+        promptVersionId: "vA",
+        testCaseId: "tcLow",
+        runIndex: 0,
+        finalScore: 0.5,
+        judgeAccuracy: 3,
+        judgeCoherence: 3,
+        judgeInstruction: 3,
+        judgeVotes: [
+          {
+            model: "judge-a",
+            accuracy: 4,
+            coherence: 4,
+            instruction: 4,
+            reasoning: "mostly fine",
+            inputTokens: 1,
+            outputTokens: 1,
+            costUsd: 0,
+          },
+          {
+            model: "judge-b",
+            accuracy: 1,
+            coherence: 2,
+            instruction: 2,
+            reasoning: "off-topic and brittle",
+            inputTokens: 1,
+            outputTokens: 1,
+            costUsd: 0,
+          },
+        ],
+      }),
+    ]);
+
+    expect(analysis.ensembleJudgeReport.perCandidate).toHaveLength(1);
+    const entry = analysis.ensembleJudgeReport.perCandidate[0]!;
+    expect(entry.judges.map((j) => j.model)).toEqual(["judge-a", "judge-b"]);
+
+    const judgeB = entry.judges.find((j) => j.model === "judge-b")!;
+    // judge-b liked tcHigh most and tcLow least; the report must surface
+    // that judge's own reasoning verbatim rather than synthesised text.
+    expect(judgeB.topRated?.testCaseId).toBe("tcHigh");
+    expect(judgeB.topRated?.reasoning).toBe("solid but minor issues");
+    expect(judgeB.bottomRated?.testCaseId).toBe("tcLow");
+    expect(judgeB.bottomRated?.reasoning).toBe("off-topic and brittle");
+
+    // tcLow has the wider per-row split (judge-a mean 4 vs judge-b mean ~1.67),
+    // so it must be reported as the disagreement anchor with both judges'
+    // reasoning attached.
+    expect(entry.maxDisagreement?.testCaseId).toBe("tcLow");
+    expect(entry.maxDisagreement?.spread).toBeGreaterThan(0);
+    expect(entry.maxDisagreement?.perJudge.map((v) => v.model)).toEqual([
+      "judge-a",
+      "judge-b",
+    ]);
+  });
+
+  it("returns an empty ensemble report when there are no completed rows", () => {
+    const analysis = computeAnalysis([
+      row({ status: "failed", failureKind: "solver_error", finalScore: 0, totalCostUsd: 0 }),
+    ]);
+    expect(analysis.ensembleJudgeReport.perCandidate).toEqual([]);
+  });
+
   it("scans the full ranking for paired non-significant candidates instead of stopping early", () => {
     const topKey = candidateKey({ promptVersionId: "vTop", solverModel: "llama-3.3-70b-versatile" });
     const middleKey = candidateKey({ promptVersionId: "vMiddle", solverModel: "llama-3.3-70b-versatile" });

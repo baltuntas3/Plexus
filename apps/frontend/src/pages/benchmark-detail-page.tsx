@@ -1138,16 +1138,104 @@ const AnalysisPanel = ({
       </Card>
 
       <Card withBorder>
-        <Stack gap="xs">
+        <Stack gap="md">
           <Group justify="space-between">
-            <Text fw={600}>Commentary</Text>
+            <Stack gap={2}>
+              <Text fw={600}>Ensemble judge feedback</Text>
+              <Text size="xs" c="dimmed">
+                Real, attributed reasoning from each judge — top- and bottom-rated rows per
+                judge, plus the row of maximum disagreement.
+              </Text>
+            </Stack>
             <Button size="xs" variant="subtle" onClick={onLoad} loading={loading}>
-              Re-run
+              Refresh
             </Button>
           </Group>
-          <Text size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>
-            {analysis.commentary}
-          </Text>
+          {analysis.ensembleJudgeReport.perCandidate.length === 0 ? (
+            <Text size="sm" c="dimmed">
+              No judge votes available yet. Run a benchmark to populate this section.
+            </Text>
+          ) : (
+            <Stack gap="md">
+              {analysis.ensembleJudgeReport.perCandidate.map((entry) => (
+                <Card
+                  key={entry.candidateKey}
+                  withBorder
+                  style={
+                    entry.candidateKey === analysis.recommendedKey
+                      ? { borderColor: "var(--mantine-color-teal-6)" }
+                      : undefined
+                  }
+                >
+                  <Stack gap="sm">
+                    <Group gap="xs">
+                      <Text fw={600} size="sm">
+                        {candidateLabel(entry.candidateKey)}
+                      </Text>
+                      {entry.candidateKey === analysis.recommendedKey && (
+                        <Badge color="teal" size="xs">recommended</Badge>
+                      )}
+                    </Group>
+                    {entry.judges.map((judge) => (
+                      <Stack key={judge.model} gap={4}>
+                        <Group gap="xs">
+                          <Badge size="xs" variant="light" color="blue">
+                            {judge.model}
+                          </Badge>
+                          <Text size="xs" c="dimmed">
+                            {judge.voteCount} vote(s) · A {judge.meanAccuracy.toFixed(2)} ·
+                            C {judge.meanCoherence.toFixed(2)} ·
+                            I {judge.meanInstruction.toFixed(2)}
+                          </Text>
+                        </Group>
+                        {judge.topRated && (
+                          <Group gap="xs" align="flex-start" wrap="nowrap">
+                            <Badge size="xs" color="teal" variant="light">top</Badge>
+                            <Text size="xs" c="dimmed">
+                              {judge.topRated.testCaseId.slice(-6)}#{judge.topRated.runIndex} ·
+                              A{judge.topRated.rubric.accuracy} C{judge.topRated.rubric.coherence}
+                              I{judge.topRated.rubric.instruction} ·
+                              "{judge.topRated.reasoning}"
+                            </Text>
+                          </Group>
+                        )}
+                        {judge.bottomRated && (
+                          <Group gap="xs" align="flex-start" wrap="nowrap">
+                            <Badge size="xs" color="orange" variant="light">bottom</Badge>
+                            <Text size="xs" c="dimmed">
+                              {judge.bottomRated.testCaseId.slice(-6)}#{judge.bottomRated.runIndex} ·
+                              A{judge.bottomRated.rubric.accuracy} C{judge.bottomRated.rubric.coherence}
+                              I{judge.bottomRated.rubric.instruction} ·
+                              "{judge.bottomRated.reasoning}"
+                            </Text>
+                          </Group>
+                        )}
+                      </Stack>
+                    ))}
+                    {entry.maxDisagreement && (
+                      <Stack gap={4} pt="xs" style={{ borderTop: "1px solid var(--mantine-color-gray-3)" }}>
+                        <Group gap="xs">
+                          <Badge size="xs" color="grape" variant="light">
+                            biggest split
+                          </Badge>
+                          <Text size="xs" c="dimmed">
+                            {entry.maxDisagreement.testCaseId.slice(-6)}#{entry.maxDisagreement.runIndex} ·
+                            spread {entry.maxDisagreement.spread.toFixed(2)}
+                          </Text>
+                        </Group>
+                        {entry.maxDisagreement.perJudge.map((vote) => (
+                          <Text key={vote.model} size="xs" c="dimmed">
+                            <strong>{vote.model}</strong> · A{vote.accuracy} C{vote.coherence}
+                            I{vote.instruction} · "{vote.reasoning}"
+                          </Text>
+                        ))}
+                      </Stack>
+                    )}
+                  </Stack>
+                </Card>
+              ))}
+            </Stack>
+          )}
         </Stack>
       </Card>
     </Stack>

@@ -78,7 +78,6 @@ export class CreateBenchmarkUseCase {
       command.solverModels,
       command.generatorModel ?? DEFAULT_GENERATOR_MODEL,
     );
-    const analysisModel = judgeModels[0] ?? null;
     const testGenerationMode =
       command.testGenerationMode ??
       (resolvedVersions.length > 1 ? "hybrid" : "shared-core");
@@ -154,7 +153,6 @@ export class CreateBenchmarkUseCase {
       judgeModels,
       generatorModel,
       testGenerationMode,
-      analysisModel,
       taskType,
       costForecast,
       testCount: command.testCount,

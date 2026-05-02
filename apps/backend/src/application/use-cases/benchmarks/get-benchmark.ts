@@ -13,8 +13,9 @@ export interface GetBenchmarkCommand {
 }
 
 // Version labels travel alongside the benchmark so every UI surface —
-// row tables, charts, commentary — renders the user's own naming
-// (falling back to "v1"/"v2" only when a version has no name set yet).
+// row tables, charts, ensemble judge report — renders the user's own
+// naming (falling back to "v1"/"v2" only when a version has no name set
+// yet).
 export interface GetBenchmarkResult {
   benchmark: Benchmark;
   results: BenchmarkResult[];

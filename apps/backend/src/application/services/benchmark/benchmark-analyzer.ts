@@ -22,15 +22,17 @@
 // score floor — so a cheap-but-terrible row never wins. Quality aggregates
 // only use completed rows; failed rows still contribute to latency/cost and
 // reliability telemetry so provider/judge errors do not masquerade as "fast
-// and free". Commentary is an LLM pass that narrates the comparison; it never
-// overrides the deterministic recommendation.
+// and free". The ensemble judge report attaches each candidate's
+// representative judge reasoning quotes (per-judge top/bottom plus the row
+// of maximum disagreement) so the UI can show real, attributed grader
+// feedback without an extra LLM narration call.
 
 import type {
   BenchmarkResult,
+  JudgeVote,
 } from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
 import { PPD } from "../../../domain/value-objects/ppd.js";
-import type { IAIProviderFactory } from "../ai-provider.js";
 
 const BOOTSTRAP_SAMPLES = 10_000;
 const BOOTSTRAP_SEED = 0x9e3779b9;
@@ -154,6 +156,62 @@ export interface VarianceDecomposition {
   acrossTestCaseVariance: number;
 }
 
+// Real, attributed judge feedback surfaced from `judgeVotes` on the result
+// rows. Replaces the old single LLM-narrated commentary string: the judges
+// already produced reasoning per row, so summarising their actual quotes is
+// honest and free, while a separate narration LLM call would have to invent
+// causality on top of the deterministic numbers.
+export interface EnsembleJudgeQuote {
+  testCaseId: string;
+  runIndex: number;
+  finalScore: number;
+  rubric: { accuracy: number; coherence: number; instruction: number };
+  reasoning: string;
+}
+
+export interface EnsembleJudgePerJudge {
+  model: string;
+  voteCount: number;
+  meanAccuracy: number;
+  meanCoherence: number;
+  meanInstruction: number;
+  // Highest- and lowest-scoring rows per this judge alone, so the UI can
+  // show "judge X liked this row best, disliked this one most" with the
+  // judge's own words. Null when the judge has no votes for the candidate.
+  topRated: EnsembleJudgeQuote | null;
+  bottomRated: EnsembleJudgeQuote | null;
+}
+
+export interface EnsembleJudgeDisagreement {
+  testCaseId: string;
+  runIndex: number;
+  // Spread = max(judge mean rubric) − min(judge mean rubric) on the row.
+  // Treats the per-row split between graders as the diagnostic, not the
+  // absolute scores.
+  spread: number;
+  perJudge: Array<{
+    model: string;
+    accuracy: number;
+    coherence: number;
+    instruction: number;
+    reasoning: string;
+  }>;
+}
+
+export interface EnsembleJudgeCandidateReport {
+  candidateKey: string;
+  promptVersionId: string;
+  solverModel: string;
+  judges: EnsembleJudgePerJudge[];
+  // The single completed row where graders disagreed most. Null when fewer
+  // than two judges contributed votes to any row of the candidate.
+  maxDisagreement: EnsembleJudgeDisagreement | null;
+}
+
+export interface EnsembleJudgeReport {
+  perCandidate: EnsembleJudgeCandidateReport[];
+}
+
 export interface BenchmarkAnalysis {
   candidates: CandidateStats[];
   categoryBreakdown: CategoryBreakdownRow[];
@@ -171,7 +229,7 @@ export interface BenchmarkAnalysis {
   exclusionReasons: Record<string, string>;
   suggestedRepetitions: number;
   suggestedRepetitionsRationale: string;
-  commentary: string;
+  ensembleJudgeReport: EnsembleJudgeReport;
 }
 
 export interface RecommendationDecision {
@@ -912,7 +970,7 @@ const computeExclusionReasons = (
 export const computeAnalysis = (
   results: readonly BenchmarkResult[],
   options: AnalyzerOptions = {},
-): Omit<BenchmarkAnalysis, "commentary"> => {
+): BenchmarkAnalysis => {
   const candidates = aggregateResults(
     results,
     options.consistencyStddevCeiling ?? DEFAULT_CONSISTENCY_STDDEV_CEILING,
@@ -953,6 +1011,7 @@ export const computeAnalysis = (
       exclusionReasons: computeExclusionReasons(candidates, [], comparableCoverageKeys),
       suggestedRepetitions: 3,
       suggestedRepetitionsRationale: "No completed results to estimate variance.",
+      ensembleJudgeReport: { perCandidate: [] },
     };
   }
 
@@ -1046,7 +1105,145 @@ export const computeAnalysis = (
     exclusionReasons,
     suggestedRepetitions: power.count,
     suggestedRepetitionsRationale: power.rationale,
+    ensembleJudgeReport: buildEnsembleJudgeReport(candidates, results),
   };
+};
+
+const overallJudgeMean = (vote: JudgeVote): number =>
+  (vote.accuracy + vote.coherence + vote.instruction) / 3;
+
+const buildQuoteFromVote = (
+  row: BenchmarkResult,
+  vote: JudgeVote,
+): EnsembleJudgeQuote => ({
+  testCaseId: row.testCaseId,
+  runIndex: row.runIndex,
+  finalScore: row.finalScore,
+  rubric: {
+    accuracy: vote.accuracy,
+    coherence: vote.coherence,
+    instruction: vote.instruction,
+  },
+  reasoning: vote.reasoning,
+});
+
+// Builds a per-candidate report of representative judge reasoning from the
+// `judgeVotes` already persisted on each row. No LLM call: every quote is
+// the verbatim text the judge produced during grading. Only completed rows
+// with at least one vote contribute; failed rows are surfaced through the
+// reliability axis instead.
+const buildEnsembleJudgeReport = (
+  candidates: readonly CandidateStats[],
+  results: readonly BenchmarkResult[],
+): EnsembleJudgeReport => {
+  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
+  for (const row of results) {
+    if (row.status !== "completed" || row.judgeVotes.length === 0) continue;
+    const key = candidateKey(row);
+    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
+  }
+
+  const perCandidate: EnsembleJudgeCandidateReport[] = [];
+  for (const candidate of candidates) {
+    if (candidate.completedCount === 0) continue;
+    const rows = rowsByCandidate.get(candidate.candidateKey) ?? [];
+    if (rows.length === 0) continue;
+
+    const judgeBuckets = new Map<
+      string,
+      {
+        votes: Array<{ row: BenchmarkResult; vote: JudgeVote }>;
+        accuracies: number[];
+        coherences: number[];
+        instructions: number[];
+      }
+    >();
+    for (const row of rows) {
+      for (const vote of row.judgeVotes) {
+        const bucket = judgeBuckets.get(vote.model) ?? {
+          votes: [],
+          accuracies: [],
+          coherences: [],
+          instructions: [],
+        };
+        bucket.votes.push({ row, vote });
+        bucket.accuracies.push(vote.accuracy);
+        bucket.coherences.push(vote.coherence);
+        bucket.instructions.push(vote.instruction);
+        judgeBuckets.set(vote.model, bucket);
+      }
+    }
+
+    const judges: EnsembleJudgePerJudge[] = [...judgeBuckets.entries()]
+      .map(([model, bucket]) => {
+        // Stable tie-break by (testCaseId, runIndex) so two votes with the
+        // same overall mean always pick the same row across reruns.
+        const sorted = [...bucket.votes].sort((a, b) => {
+          const diff = overallJudgeMean(b.vote) - overallJudgeMean(a.vote);
+          if (diff !== 0) return diff;
+          if (a.row.testCaseId !== b.row.testCaseId) {
+            return a.row.testCaseId.localeCompare(b.row.testCaseId);
+          }
+          return a.row.runIndex - b.row.runIndex;
+        });
+        const top = sorted[0];
+        const bottom = sorted[sorted.length - 1];
+        return {
+          model,
+          voteCount: bucket.votes.length,
+          meanAccuracy: mean(bucket.accuracies),
+          meanCoherence: mean(bucket.coherences),
+          meanInstruction: mean(bucket.instructions),
+          topRated: top ? buildQuoteFromVote(top.row, top.vote) : null,
+          bottomRated:
+            bottom && bottom !== top
+              ? buildQuoteFromVote(bottom.row, bottom.vote)
+              : null,
+        };
+      })
+      .sort((a, b) => a.model.localeCompare(b.model));
+
+    let maxDisagreement: EnsembleJudgeDisagreement | null = null;
+    for (const row of rows) {
+      if (row.judgeVotes.length < 2) continue;
+      const overallScores = row.judgeVotes.map(overallJudgeMean);
+      const spread = Math.max(...overallScores) - Math.min(...overallScores);
+      if (
+        !maxDisagreement ||
+        spread > maxDisagreement.spread ||
+        (spread === maxDisagreement.spread &&
+          (row.testCaseId < maxDisagreement.testCaseId ||
+            (row.testCaseId === maxDisagreement.testCaseId &&
+              row.runIndex < maxDisagreement.runIndex)))
+      ) {
+        maxDisagreement = {
+          testCaseId: row.testCaseId,
+          runIndex: row.runIndex,
+          spread,
+          perJudge: [...row.judgeVotes]
+            .sort((a, b) => a.model.localeCompare(b.model))
+            .map((vote) => ({
+              model: vote.model,
+              accuracy: vote.accuracy,
+              coherence: vote.coherence,
+              instruction: vote.instruction,
+              reasoning: vote.reasoning,
+            })),
+        };
+      }
+    }
+
+    perCandidate.push({
+      candidateKey: candidate.candidateKey,
+      promptVersionId: candidate.promptVersionId,
+      solverModel: candidate.solverModel,
+      judges,
+      maxDisagreement,
+    });
+  }
+
+  perCandidate.sort((a, b) => a.candidateKey.localeCompare(b.candidateKey));
+  return { perCandidate };
 };
 
 const resultSampleKey = (
@@ -1199,86 +1396,6 @@ const comparableCompletedScorePairs = (
     rightScores.push(r.finalScore);
   }
   return [leftScores, rightScores];
-};
-
-// Sentinel strings the runner persists when it cannot produce a real
-// commentary — exported so query-path consumers can recognise them as
-// "no real analysis was attached" and the runner code stays readable.
-export const COMMENTARY_NO_RESULTS = "No completed results to analyze.";
-export const COMMENTARY_GENERATION_FAILED =
-  "Commentary generation failed. Deterministic analysis above remains valid.";
-
-// One-shot LLM narration of a finished benchmark. The runner calls this
-// once at completion and persists the result on the Benchmark aggregate;
-// query-path consumers read the persisted string and never trigger the
-// LLM. Returning a sentinel rather than throwing is intentional — the
-// runner's contract is "always set a string", and a swallowed error is
-// what closes the loop on partial outages without bouncing the benchmark
-// back to the failure state.
-export const generateBenchmarkCommentary = async (args: {
-  results: readonly BenchmarkResult[];
-  testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>;
-  versionLabels: Record<string, string>;
-  commentaryModel: string;
-  providers: IAIProviderFactory;
-}): Promise<string> => {
-  const core = computeAnalysis(args.results, {
-    testCasesById: args.testCasesById,
-  });
-  if (core.candidates.every((c) => c.completedCount === 0)) {
-    return COMMENTARY_NO_RESULTS;
-  }
-
-  const candidateLines = core.candidates
-    .filter((c) => c.completedCount > 0)
-    .map((c) => {
-      const vLabel =
-        args.versionLabels[c.promptVersionId] ?? c.promptVersionId.slice(-6);
-      return [
-        `Candidate: ${vLabel} × ${c.solverModel}`,
-        `  Final score (mean):  ${c.meanFinalScore.toFixed(3)} (95% CI [${c.ci95Low.toFixed(3)}, ${c.ci95High.toFixed(3)}])`,
-        `  Accuracy (1-5):      ${c.meanAccuracy.toFixed(2)}`,
-        `  Coherence (1-5):     ${c.meanCoherence.toFixed(2)}`,
-        `  Instruction (1-5):   ${c.meanInstruction.toFixed(2)}`,
-        `  Consistency:         ${(c.consistencyScore * 100).toFixed(1)}%`,
-        `  Avg latency:         ${Math.round(c.meanLatencyMs)} ms`,
-        `  Avg cost/test:       $${c.meanCostUsd.toFixed(4)}`,
-        `  Completed rows:      ${c.completedCount}`,
-        `  Failure rate:        ${(c.failureRate * 100).toFixed(1)}%`,
-      ].join("\n");
-    })
-    .join("\n\n");
-
-  const prompt = `You are analyzing LLM benchmark results across prompt versions and solver models.
-
-Per-candidate statistics:
-
-${candidateLines}
-
-Rubric dimensions:
-- Accuracy: Does the response correctly answer the question? (1=very wrong, 5=perfect)
-- Coherence: Is the response logically structured and easy to follow? (1=incoherent, 5=excellent)
-- Instruction: Does the response follow the prompt instructions? (1=ignores instructions, 5=follows perfectly)
-- Consistency (%): Stability of scores across runs — 100% means the candidate scored identically on every run.
-- 95% CI: Bootstrap confidence interval on mean final score; two candidates whose CIs overlap are not statistically separable from this sample.
-- Avg latency: Mean response time per row.
-- Avg cost/test: Mean total LLM cost (candidate + ensemble of judges) per row in USD.
-
-Write a detailed analysis paragraph (3-5 sentences) comparing each candidate across all dimensions. Call out where CIs overlap vs. where one candidate is clearly ahead. Do not include a recommendation — just the analysis.
-
-Return only the paragraph text, no JSON, no headings.`;
-
-  try {
-    const provider = args.providers.forModel(args.commentaryModel);
-    const response = await provider.generate({
-      model: args.commentaryModel,
-      temperature: 0,
-      messages: [{ role: "user", content: prompt }],
-    });
-    return response.text.trim();
-  } catch {
-    return COMMENTARY_GENERATION_FAILED;
-  }
 };
 
 // Helpers.

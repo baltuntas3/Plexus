@@ -25,7 +25,6 @@ interface BenchmarkDocShape {
   judgeModels: string[];
   generatorModel: string;
   testGenerationMode: TestGenerationMode;
-  analysisModel: string | null;
   taskType: TaskType;
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
@@ -45,7 +44,6 @@ interface BenchmarkDocShape {
   progress: BenchmarkProgress;
   jobId: string | null;
   error: string | null;
-  analysisCommentary?: string;
   revision?: number;
   createdAt: Date;
   startedAt: Date | null;
@@ -62,7 +60,6 @@ const toPrimitives = (doc: BenchmarkDocShape): BenchmarkPrimitives => ({
   judgeModels: doc.judgeModels,
   generatorModel: doc.generatorModel,
   testGenerationMode: doc.testGenerationMode ?? "shared-core",
-  analysisModel: doc.analysisModel ?? null,
   taskType: doc.taskType ?? "general",
   costForecast: doc.costForecast ?? null,
   testCount: doc.testCount,
@@ -82,10 +79,6 @@ const toPrimitives = (doc: BenchmarkDocShape): BenchmarkPrimitives => ({
   progress: { completed: doc.progress.completed, total: doc.progress.total },
   jobId: doc.jobId,
   error: doc.error,
-  // Pre-existing docs without the field default to "" — same shape an
-  // unfinished benchmark has, which the UI already handles as "no
-  // commentary attached".
-  analysisCommentary: doc.analysisCommentary ?? "",
   // Pre-revision docs are treated as revision 0; the next save writes a
   // real counter and self-heals.
   revision: doc.revision ?? 0,
@@ -133,7 +126,6 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         judgeModels: p.judgeModels,
         generatorModel: p.generatorModel,
         testGenerationMode: p.testGenerationMode,
-        analysisModel: p.analysisModel,
         taskType: p.taskType,
         costForecast: p.costForecast,
         testCount: p.testCount,
@@ -147,7 +139,6 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         progress: p.progress,
         jobId: p.jobId,
         error: p.error,
-        analysisCommentary: p.analysisCommentary,
         revision: p.revision,
         createdAt: p.createdAt,
         startedAt: p.startedAt,
@@ -160,7 +151,6 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         judgeModels: p.judgeModels,
         generatorModel: p.generatorModel,
         testGenerationMode: p.testGenerationMode,
-        analysisModel: p.analysisModel,
         taskType: p.taskType,
         costForecast: p.costForecast,
         testCount: p.testCount,
@@ -174,7 +164,6 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         progress: p.progress,
         jobId: p.jobId,
         error: p.error,
-        analysisCommentary: p.analysisCommentary,
         revision: p.revision,
         startedAt: p.startedAt,
         completedAt: p.completedAt,

@@ -98,7 +98,6 @@ describe("CreateBenchmarkUseCase", () => {
     expect(bm.judgeModels.length).toBeGreaterThanOrEqual(1);
     expect(bm.judgeModels).not.toContain("openai/gpt-oss-20b");
     expect(bm.solverModels).not.toContain(bm.generatorModel);
-    expect(bm.analysisModel).toBe(bm.judgeModels[0] ?? null);
     expect(bm.taskType).toBe("math");
     expect(bm.costForecast?.estimatedTotalCostUsd ?? 0).toBeGreaterThan(0);
     expect(bm.repetitions).toBeGreaterThanOrEqual(1);

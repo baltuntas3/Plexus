@@ -23,7 +23,6 @@ export const toBenchmarkDto = (bm: BenchmarkLike): BenchmarkDto => ({
   judgeModels: [...bm.judgeModels],
   generatorModel: bm.generatorModel,
   testGenerationMode: bm.testGenerationMode,
-  analysisModel: bm.analysisModel,
   taskType: bm.taskType,
   costForecast: bm.costForecast ? { ...bm.costForecast } : null,
   testCount: bm.testCount,
@@ -176,7 +175,46 @@ export const toBenchmarkAnalysisDto = (
   exclusionReasons: { ...analysis.exclusionReasons },
   suggestedRepetitions: analysis.suggestedRepetitions,
   suggestedRepetitionsRationale: analysis.suggestedRepetitionsRationale,
-  commentary: analysis.commentary,
+  ensembleJudgeReport: {
+    perCandidate: analysis.ensembleJudgeReport.perCandidate.map((entry) => ({
+      candidateKey: entry.candidateKey,
+      promptVersionId: entry.promptVersionId,
+      solverModel: entry.solverModel,
+      judges: entry.judges.map((judge) => ({
+        model: judge.model,
+        voteCount: judge.voteCount,
+        meanAccuracy: judge.meanAccuracy,
+        meanCoherence: judge.meanCoherence,
+        meanInstruction: judge.meanInstruction,
+        topRated: judge.topRated
+          ? {
+              testCaseId: judge.topRated.testCaseId,
+              runIndex: judge.topRated.runIndex,
+              finalScore: judge.topRated.finalScore,
+              rubric: { ...judge.topRated.rubric },
+              reasoning: judge.topRated.reasoning,
+            }
+          : null,
+        bottomRated: judge.bottomRated
+          ? {
+              testCaseId: judge.bottomRated.testCaseId,
+              runIndex: judge.bottomRated.runIndex,
+              finalScore: judge.bottomRated.finalScore,
+              rubric: { ...judge.bottomRated.rubric },
+              reasoning: judge.bottomRated.reasoning,
+            }
+          : null,
+      })),
+      maxDisagreement: entry.maxDisagreement
+        ? {
+            testCaseId: entry.maxDisagreement.testCaseId,
+            runIndex: entry.maxDisagreement.runIndex,
+            spread: entry.maxDisagreement.spread,
+            perJudge: entry.maxDisagreement.perJudge.map((vote) => ({ ...vote })),
+          }
+        : null,
+    })),
+  },
 });
 
 export const toBenchmarkDetailDto = (

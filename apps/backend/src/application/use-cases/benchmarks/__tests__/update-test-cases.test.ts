@@ -42,7 +42,6 @@ const buildDraftBenchmark = async (
     judgeModels: ["openai/gpt-oss-20b"],
     generatorModel: "openai/gpt-oss-20b",
     testGenerationMode: "shared-core",
-    analysisModel: null,
     taskType: "general",
     costForecast: null,
     testCount: 2,

@@ -95,10 +95,9 @@ class RecordingProvider implements IAIProvider {
 }
 
 // Solver calls go through the provider with the runner's fixed
-// SOLVER_TEMPERATURE (0.7); the post-completion commentary call uses
-// temperature 0 and lands on the same recorder. Filtering by temperature
-// keeps "how many solver calls happened" assertions readable without each
-// site having to think about commentary.
+// SOLVER_TEMPERATURE (0.7). The runner makes no other LLM calls — the
+// ensemble judge report is built deterministically from `judgeVotes`, so
+// every recorded call is a solver call.
 const solverCalls = (provider: RecordingProvider): GenerateRequest[] =>
   provider.calls.filter((c) => c.temperature !== 0);
 
@@ -230,7 +229,6 @@ type BenchmarkTestOverrides = {
   judgeModels?: string[];
   generatorModel?: string;
   testGenerationMode?: Benchmark["testGenerationMode"];
-  analysisModel?: string | null;
   taskType?: Benchmark["taskType"];
   costForecast?: Benchmark["costForecast"];
   testCount?: number;
@@ -258,7 +256,6 @@ const queueBenchmark = async (
     judgeModels: overrides.judgeModels ?? ["openai/gpt-oss-20b"],
     generatorModel: overrides.generatorModel ?? "openai/gpt-oss-20b",
     testGenerationMode: overrides.testGenerationMode ?? "shared-core",
-    analysisModel: overrides.analysisModel ?? null,
     taskType: overrides.taskType ?? "general",
     costForecast: overrides.costForecast ?? null,
     testCount: overrides.testCount ?? 2,

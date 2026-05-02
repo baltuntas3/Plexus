@@ -54,10 +54,16 @@ import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 
 const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 const DEFAULT_BUDGET_USD = 50;
-// Solver temperature is fixed at 0 for benchmark runs so two benchmarks of
-// the same prompts/models are directly comparable. Anyone needing a higher
-// sampling temperature is doing exploration, not measurement.
-const SOLVER_TEMPERATURE = 0;
+// Solver temperature is server-fixed (not a user knob) so two benchmarks of
+// the same prompts/models stay directly comparable. The value is non-zero
+// on purpose: Plexus measures real production behaviour, where users sample
+// from the model rather than pin it to greedy decoding. With T=0 every
+// repetition would collapse to the same output and the entire uncertainty
+// stack — repetitions, consistencyScore, ci95, paired-difference
+// significance, suggestedRepetitions — would degenerate to "no information
+// per cell". 0.7 matches the default real callers actually use and keeps
+// repetitions doing what they're for: capturing sampling variance.
+const SOLVER_TEMPERATURE = 0.7;
 
 interface Triple {
   testCaseId: string;

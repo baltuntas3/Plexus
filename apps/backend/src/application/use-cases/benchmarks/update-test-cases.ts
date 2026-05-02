@@ -3,7 +3,10 @@ import type { IBenchmarkRepository } from "../../../domain/repositories/benchmar
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
-import { BenchmarkCostEstimator } from "../../services/benchmark/benchmark-cost-estimator.js";
+import {
+  BenchmarkCostEstimator,
+  averageTokenCount,
+} from "../../services/benchmark/benchmark-cost-estimator.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
 export interface UpdateTestCasesCommand {
@@ -58,9 +61,11 @@ export class UpdateTestCasesUseCase {
     if (missing.length > 0) {
       throw ValidationError(`PromptVersion(s) not found: ${missing.join(", ")}`);
     }
+    const inputs = benchmark.testCases.map((testCase) => testCase.input);
     const costForecast = this.costEstimator.estimate({
       versions: benchmark.promptVersionIds.map((id) => versionsById.get(id)!),
-      generatedInputs: benchmark.testCases.map((testCase) => testCase.input),
+      testCount: inputs.length,
+      avgInputTokens: averageTokenCount(inputs),
       solverModels: benchmark.solverModels,
       judgeModels: benchmark.judgeModels,
       repetitions: benchmark.repetitions,

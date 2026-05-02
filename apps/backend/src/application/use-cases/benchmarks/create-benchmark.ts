@@ -17,7 +17,11 @@ import {
   TestCaseGenerator,
   buildEvaluationSpecFromVersions,
 } from "../../services/benchmark/test-case-generator.js";
-import { BenchmarkCostEstimator } from "../../services/benchmark/benchmark-cost-estimator.js";
+import {
+  BenchmarkCostEstimator,
+  STUB_AVG_INPUT_TOKENS,
+  averageTokenCount,
+} from "../../services/benchmark/benchmark-cost-estimator.js";
 import type { IAIProviderFactory } from "../../services/ai-provider.js";
 import { BenchmarkSeed } from "../../../domain/value-objects/benchmark-seed.js";
 
@@ -87,6 +91,27 @@ export class CreateBenchmarkUseCase {
       command.organizationId,
     );
 
+    const repetitions = command.repetitions ?? DEFAULT_REPETITIONS;
+    const budgetUsd = command.budgetUsd ?? DEFAULT_BUDGET_USD;
+
+    // Pre-flight gate: forecast the run cost using a stub for the
+    // not-yet-generated user inputs, BEFORE we spend an LLM call on test
+    // generation. Configs whose model/test-count/repetitions combination
+    // alone blows the budget never reach the generator.
+    const preFlightForecast = this.costEstimator.estimate({
+      versions: resolvedVersions,
+      testCount: command.testCount,
+      avgInputTokens: STUB_AVG_INPUT_TOKENS,
+      solverModels: command.solverModels,
+      judgeModels,
+      repetitions,
+    });
+    if (preFlightForecast.estimatedTotalCostUsd > budgetUsd) {
+      throw ValidationError(
+        `Estimated benchmark cost $${preFlightForecast.estimatedTotalCostUsd.toFixed(4)} exceeds the $${budgetUsd.toFixed(2)} cap. Reduce test count, solver count, or repetitions.`,
+      );
+    }
+
     const spec = buildEvaluationSpecFromVersions(
       resolvedVersions,
       testGenerationMode,
@@ -100,15 +125,19 @@ export class CreateBenchmarkUseCase {
       generatorModel,
       seed,
     );
-    const repetitions = command.repetitions ?? DEFAULT_REPETITIONS;
+
+    // Post-generation forecast: recompute with the real input lengths so the
+    // stored cost estimate reflects what the run will actually cost. Also
+    // re-checks the budget gate in case the generator produced unusually
+    // long inputs that the stub under-estimated.
     const costForecast = this.costEstimator.estimate({
       versions: resolvedVersions,
-      generatedInputs: generated.map((tc) => tc.input),
+      testCount: generated.length,
+      avgInputTokens: averageTokenCount(generated.map((tc) => tc.input)),
       solverModels: command.solverModels,
       judgeModels,
       repetitions,
     });
-    const budgetUsd = command.budgetUsd ?? DEFAULT_BUDGET_USD;
     if (costForecast.estimatedTotalCostUsd > budgetUsd) {
       throw ValidationError(
         `Estimated benchmark cost $${costForecast.estimatedTotalCostUsd.toFixed(4)} exceeds the $${budgetUsd.toFixed(2)} cap. Reduce test count, solver count, or repetitions.`,

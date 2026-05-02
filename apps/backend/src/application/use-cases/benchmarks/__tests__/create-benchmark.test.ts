@@ -298,4 +298,33 @@ describe("CreateBenchmarkUseCase", () => {
       }),
     ).rejects.toThrow(/exceeds the \$1\.00 cap/);
   });
+
+  it("rejects over-budget configs BEFORE invoking the test-case generator", async () => {
+    const { benchmarks, queries, ids, version } = await buildScaffold();
+    let generatorCalls = 0;
+    const failIfCalled: IAIProvider = {
+      generate: async () => {
+        generatorCalls += 1;
+        throw new Error("generator should not be called when pre-flight rejects");
+      },
+    };
+    const useCase = new CreateBenchmarkUseCase(
+      benchmarks,
+      queries,
+      { forModel: () => failIfCalled },
+      ids,
+    );
+
+    await expect(
+      useCase.execute({
+        ...baseCommand(version.id),
+        testCount: 50,
+        solverModels: ["llama-3.3-70b-versatile", "openai/gpt-oss-20b"],
+        repetitions: 10,
+        budgetUsd: 0.01,
+      }),
+    ).rejects.toThrow(/exceeds the \$0\.01 cap/);
+
+    expect(generatorCalls).toBe(0);
+  });
 });

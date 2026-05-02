@@ -6,7 +6,10 @@ import {
   BENCHMARK_JOB_NAME,
   type BenchmarkJobPayload,
 } from "../../services/benchmark/benchmark-job.js";
-import { BenchmarkCostEstimator } from "../../services/benchmark/benchmark-cost-estimator.js";
+import {
+  BenchmarkCostEstimator,
+  averageTokenCount,
+} from "../../services/benchmark/benchmark-cost-estimator.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
 export interface StartBenchmarkCommand {
@@ -51,9 +54,11 @@ export class StartBenchmarkUseCase {
       throw ValidationError(`PromptVersion(s) not found: ${missing.join(", ")}`);
     }
     const versions = benchmark.promptVersionIds.map((id) => versionsById.get(id)!);
+    const inputs = benchmark.testCases.map((testCase) => testCase.input);
     const costForecast = this.costEstimator.estimate({
       versions,
-      generatedInputs: benchmark.testCases.map((testCase) => testCase.input),
+      testCount: inputs.length,
+      avgInputTokens: averageTokenCount(inputs),
       solverModels: benchmark.solverModels,
       judgeModels: benchmark.judgeModels,
       repetitions: benchmark.repetitions,

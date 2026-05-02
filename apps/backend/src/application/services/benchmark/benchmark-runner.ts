@@ -27,6 +27,7 @@ import {
   type IJudge,
 } from "../judge/judge.js";
 import { buildEvaluationPrompt } from "./evaluation-prompt.js";
+import { generateBenchmarkCommentary } from "./benchmark-analyzer.js";
 
 // Orchestrates a single benchmark run end-to-end against the Benchmark
 // aggregate. The runner only performs lifecycle transitions through domain
@@ -219,6 +220,20 @@ export class BenchmarkRunner {
         benchmark.completeNormally();
       }
       await this.deps.benchmarks.save(benchmark);
+
+      // Commentary is a one-shot LLM narration written here and read by the
+      // analysis endpoint without re-invoking the model. Two reasons it lives
+      // outside the lifecycle save above:
+      //   1. The LLM call is slow and unreliable; binding it to the
+      //      completion transition would let a provider outage flip a fully
+      //      successful run to "failed".
+      //   2. The aggregate's optimistic-concurrency revision needs to absorb
+      //      a separate write here so any concurrent reader sees the new
+      //      commentary against the post-completion baseline.
+      // `generateBenchmarkCommentary` swallows its own errors and returns a
+      // sentinel string, so this path never throws — at worst the user sees
+      // the fallback message in the UI.
+      await this.persistCommentary(benchmarkId, versions);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const latest = await this.deps.benchmarks.findById(benchmarkId);
@@ -227,6 +242,46 @@ export class BenchmarkRunner {
         await this.deps.benchmarks.save(latest);
       }
       throw err;
+    }
+  }
+
+  private async persistCommentary(
+    benchmarkId: string,
+    versions: readonly PromptVersionSummary[],
+  ): Promise<void> {
+    try {
+      const benchmark = await this.requireBenchmark(benchmarkId);
+      const commentaryModel =
+        benchmark.analysisModel ?? benchmark.judgeModels[0] ?? null;
+      // No usable model — leave the commentary empty; the UI treats empty
+      // as "not produced" and shows nothing.
+      if (!commentaryModel) return;
+
+      const results = await this.deps.results.listByBenchmark(benchmarkId);
+      const versionLabels: Record<string, string> = {};
+      versions.forEach((v, i) => {
+        versionLabels[v.id] = v.name?.trim() || v.version || `v${i + 1}`;
+      });
+      const testCasesById = Object.fromEntries(
+        benchmark.testCases.map((tc) => [
+          tc.id,
+          { category: tc.category, source: tc.source },
+        ]),
+      );
+
+      const commentary = await generateBenchmarkCommentary({
+        results,
+        testCasesById,
+        versionLabels,
+        commentaryModel,
+        providers: this.deps.providers,
+      });
+
+      benchmark.setAnalysisCommentary(commentary);
+      await this.deps.benchmarks.save(benchmark);
+    } catch {
+      // Persistence-side failures (stale revision, db error) are non-fatal:
+      // the benchmark is already completed. Empty commentary is acceptable.
     }
   }
 

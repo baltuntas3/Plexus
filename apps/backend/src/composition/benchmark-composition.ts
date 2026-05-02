@@ -1,4 +1,3 @@
-import { BenchmarkAnalyzer } from "../application/services/benchmark/benchmark-analyzer.js";
 import { BenchmarkRunner } from "../application/services/benchmark/benchmark-runner.js";
 import { registerBenchmarkJob } from "../application/services/benchmark/benchmark-job.js";
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
@@ -44,8 +43,6 @@ export const createBenchmarkComposition = (
   });
   registerBenchmarkJob(queue, runner);
 
-  const analyzer = new BenchmarkAnalyzer(aiFactory);
-
   return {
     createBenchmark: new CreateBenchmarkUseCase(
       benchmarks,
@@ -56,12 +53,7 @@ export const createBenchmarkComposition = (
     startBenchmark: new StartBenchmarkUseCase(benchmarks, promptQueries, queue),
     listBenchmarks: new ListBenchmarksUseCase(queries),
     getBenchmark: new GetBenchmarkUseCase(benchmarks, results, promptQueries),
-    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(
-      benchmarks,
-      results,
-      promptQueries,
-      analyzer,
-    ),
+    getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results),
     updateTestCases: new UpdateTestCasesUseCase(
       benchmarks,
       promptQueries,

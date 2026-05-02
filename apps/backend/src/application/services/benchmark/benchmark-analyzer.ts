@@ -1201,57 +1201,55 @@ const comparableCompletedScorePairs = (
   return [leftScores, rightScores];
 };
 
-export class BenchmarkAnalyzer {
-  constructor(private readonly providers: IAIProviderFactory) {}
+// Sentinel strings the runner persists when it cannot produce a real
+// commentary — exported so query-path consumers can recognise them as
+// "no real analysis was attached" and the runner code stays readable.
+export const COMMENTARY_NO_RESULTS = "No completed results to analyze.";
+export const COMMENTARY_GENERATION_FAILED =
+  "Commentary generation failed. Deterministic analysis above remains valid.";
 
-  async analyze(
-    results: readonly BenchmarkResult[],
-    testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>,
-    versionLabels: Record<string, string>,
-    commentaryModel: string,
-  ): Promise<BenchmarkAnalysis> {
-    const core = computeAnalysis(results, { testCasesById });
-    if (core.candidates.every((c) => c.completedCount === 0)) {
-      return { ...core, commentary: "No completed results to analyze." };
-    }
-    let commentary: string;
-    try {
-      commentary = await this.generateCommentary(
-        core.candidates,
-        versionLabels,
-        commentaryModel,
-      );
-    } catch {
-      commentary = "Commentary generation failed. Deterministic analysis above remains valid.";
-    }
-    return { ...core, commentary };
+// One-shot LLM narration of a finished benchmark. The runner calls this
+// once at completion and persists the result on the Benchmark aggregate;
+// query-path consumers read the persisted string and never trigger the
+// LLM. Returning a sentinel rather than throwing is intentional — the
+// runner's contract is "always set a string", and a swallowed error is
+// what closes the loop on partial outages without bouncing the benchmark
+// back to the failure state.
+export const generateBenchmarkCommentary = async (args: {
+  results: readonly BenchmarkResult[];
+  testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>;
+  versionLabels: Record<string, string>;
+  commentaryModel: string;
+  providers: IAIProviderFactory;
+}): Promise<string> => {
+  const core = computeAnalysis(args.results, {
+    testCasesById: args.testCasesById,
+  });
+  if (core.candidates.every((c) => c.completedCount === 0)) {
+    return COMMENTARY_NO_RESULTS;
   }
 
-  private async generateCommentary(
-    candidates: readonly CandidateStats[],
-    versionLabels: Record<string, string>,
-    commentaryModel: string,
-  ): Promise<string> {
-    const candidateLines = candidates
-      .filter((c) => c.completedCount > 0)
-      .map((c) => {
-        const vLabel = versionLabels[c.promptVersionId] ?? c.promptVersionId.slice(-6);
-        return [
-          `Candidate: ${vLabel} × ${c.solverModel}`,
-          `  Final score (mean):  ${c.meanFinalScore.toFixed(3)} (95% CI [${c.ci95Low.toFixed(3)}, ${c.ci95High.toFixed(3)}])`,
-          `  Accuracy (1-5):      ${c.meanAccuracy.toFixed(2)}`,
-          `  Coherence (1-5):     ${c.meanCoherence.toFixed(2)}`,
-          `  Instruction (1-5):   ${c.meanInstruction.toFixed(2)}`,
-          `  Consistency:         ${(c.consistencyScore * 100).toFixed(1)}%`,
-          `  Avg latency:         ${Math.round(c.meanLatencyMs)} ms`,
-          `  Avg cost/test:       $${c.meanCostUsd.toFixed(4)}`,
-          `  Completed rows:      ${c.completedCount}`,
-          `  Failure rate:        ${(c.failureRate * 100).toFixed(1)}%`,
-        ].join("\n");
-      })
-      .join("\n\n");
+  const candidateLines = core.candidates
+    .filter((c) => c.completedCount > 0)
+    .map((c) => {
+      const vLabel =
+        args.versionLabels[c.promptVersionId] ?? c.promptVersionId.slice(-6);
+      return [
+        `Candidate: ${vLabel} × ${c.solverModel}`,
+        `  Final score (mean):  ${c.meanFinalScore.toFixed(3)} (95% CI [${c.ci95Low.toFixed(3)}, ${c.ci95High.toFixed(3)}])`,
+        `  Accuracy (1-5):      ${c.meanAccuracy.toFixed(2)}`,
+        `  Coherence (1-5):     ${c.meanCoherence.toFixed(2)}`,
+        `  Instruction (1-5):   ${c.meanInstruction.toFixed(2)}`,
+        `  Consistency:         ${(c.consistencyScore * 100).toFixed(1)}%`,
+        `  Avg latency:         ${Math.round(c.meanLatencyMs)} ms`,
+        `  Avg cost/test:       $${c.meanCostUsd.toFixed(4)}`,
+        `  Completed rows:      ${c.completedCount}`,
+        `  Failure rate:        ${(c.failureRate * 100).toFixed(1)}%`,
+      ].join("\n");
+    })
+    .join("\n\n");
 
-    const prompt = `You are analyzing LLM benchmark results across prompt versions and solver models.
+  const prompt = `You are analyzing LLM benchmark results across prompt versions and solver models.
 
 Per-candidate statistics:
 
@@ -1270,15 +1268,18 @@ Write a detailed analysis paragraph (3-5 sentences) comparing each candidate acr
 
 Return only the paragraph text, no JSON, no headings.`;
 
-    const provider = this.providers.forModel(commentaryModel);
+  try {
+    const provider = args.providers.forModel(args.commentaryModel);
     const response = await provider.generate({
-      model: commentaryModel,
+      model: args.commentaryModel,
       temperature: 0,
       messages: [{ role: "user", content: prompt }],
     });
     return response.text.trim();
+  } catch {
+    return COMMENTARY_GENERATION_FAILED;
   }
-}
+};
 
 // Helpers.
 

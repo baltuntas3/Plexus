@@ -103,6 +103,9 @@ const benchmarkSchema = new Schema(
     },
     jobId: { type: String, default: null },
     error: { type: String, default: null },
+    // LLM-generated narrative paragraph attached at completion. Empty string
+    // until the runner finishes; never regenerated.
+    analysisCommentary: { type: String, default: "" },
     // Optimistic-concurrency token bumped on every aggregate save. Filtering
     // by this on update guarantees lost-update detection if two writers ever
     // race (the runner and a user edit path are the plausible offenders).

@@ -94,6 +94,14 @@ class RecordingProvider implements IAIProvider {
   }
 }
 
+// Solver calls go through the provider with the runner's fixed
+// SOLVER_TEMPERATURE (0.7); the post-completion commentary call uses
+// temperature 0 and lands on the same recorder. Filtering by temperature
+// keeps "how many solver calls happened" assertions readable without each
+// site having to think about commentary.
+const solverCalls = (provider: RecordingProvider): GenerateRequest[] =>
+  provider.calls.filter((c) => c.temperature !== 0);
+
 class SingleProviderFactory implements IAIProviderFactory {
   constructor(private readonly provider: IAIProvider) {}
   forModel(): IAIProvider {
@@ -286,7 +294,7 @@ describe("BenchmarkRunner.run", () => {
     const { ctx, events } = buildContext();
     await runner.run(bm.id, ctx);
 
-    expect(provider.calls).toHaveLength(2);
+    expect(solverCalls(provider)).toHaveLength(2);
     expect(judge.calls).toBe(2);
 
     const rows = await results.listByBenchmark(bm.id);
@@ -338,7 +346,7 @@ describe("BenchmarkRunner.run", () => {
     }
 
     // Solver seeds are distinct across runs of the same cell.
-    const seeds = new Set(provider.calls.map((c) => c.seed));
+    const seeds = new Set(solverCalls(provider).map((c) => c.seed));
     expect(seeds.size).toBe(6);
   });
 
@@ -556,10 +564,10 @@ describe("BenchmarkRunner.run", () => {
 
     const bm = await queueBenchmark(benchmarks);
     await runner.run(bm.id, buildContext().ctx);
-    expect(provider.calls).toHaveLength(2);
+    expect(solverCalls(provider)).toHaveLength(2);
 
     await runner.run(bm.id, buildContext().ctx);
-    expect(provider.calls).toHaveLength(2);
+    expect(solverCalls(provider)).toHaveLength(2);
     expect(judge.calls).toBe(2);
     const rows = await results.listByBenchmark(bm.id);
     expect(rows).toHaveLength(2);
@@ -642,10 +650,10 @@ describe("BenchmarkRunner.run", () => {
 
     const bm = await queueBenchmark(benchmarks, { concurrency: 1 });
     await runner.run(bm.id, buildContext().ctx);
-    expect(provider.calls).toHaveLength(2);
+    expect(solverCalls(provider)).toHaveLength(2);
 
     await runner.run(bm.id, buildContext().ctx);
-    expect(provider.calls).toHaveLength(3);
+    expect(solverCalls(provider)).toHaveLength(3);
 
     const rows = await results.listByBenchmark(bm.id);
     expect(rows.filter((row) => row.status === "failed")).toHaveLength(0);
@@ -823,11 +831,16 @@ describe("BenchmarkRunner.run", () => {
     const rows = await results.listByBenchmark(bm.id);
     expect(rows).toHaveLength(2);
 
+    // BRAID versions are wrapped at runtime so the model treats the
+    // mermaid graph as a workflow to execute silently rather than narrate.
+    // The wrapper is fixed (same for every BRAID version) and includes
+    // the original graph verbatim, so we check both.
     const braidCall = provider.calls.find((c) =>
       (c.messages[0]?.content ?? "").includes("graph TD"),
     );
     expect(braidCall).toBeDefined();
-    expect(braidCall?.messages[0]?.content).toBe("graph TD\nA[start] --> B[end]");
+    expect(braidCall?.messages[0]?.content).toContain("graph TD\nA[start] --> B[end]");
+    expect(braidCall?.messages[0]?.content).toContain("OUTPUT ONLY THE FINAL RESULT");
 
     const classicalCall = provider.calls.find((c) =>
       (c.messages[0]?.content ?? "") === "Answer concisely.",
@@ -969,7 +982,7 @@ describe("BenchmarkRunner.run", () => {
     // 1 testCase × 1 version × 1 solver × 1 judge → 1 batched judge call;
     // 3 reps mean 3 solver calls AND a single batch of 3 candidates fed
     // to the judge in one round-trip.
-    expect(provider.calls).toHaveLength(3);
+    expect(solverCalls(provider)).toHaveLength(3);
     expect(judge.calls).toBe(1);
     expect(judge.batchSizes).toEqual([3]);
 

@@ -1,20 +1,20 @@
-import type { BenchmarkAnalysis } from "../../services/benchmark/benchmark-analyzer.js";
-import type { BenchmarkAnalyzer } from "../../services/benchmark/benchmark-analyzer.js";
+import {
+  computeAnalysis,
+  type BenchmarkAnalysis,
+} from "../../services/benchmark/benchmark-analyzer.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
-// Loads the raw rows for a benchmark and hands them to the unified analyzer.
-// Commentary uses the benchmark's configured analysisModel if set, otherwise
-// falls back to the first judge model. Analysis numbers are deterministic;
-// only the commentary model is configurable.
-//
-// Version labels feed both the commentary and the UI row labels. Preference
-// order: the version's user-set `name`, then its auto-generated `version`
-// field (e.g. "v1"), then a positional fallback — so a comparison a user
-// named "baseline" vs "with-safety" reads that way everywhere, not as
-// anonymous "v1" / "v2".
+// Read-only analysis endpoint. The deterministic numbers (per-candidate
+// stats, Pareto frontier, PPD, ranking, recommendation) are recomputed
+// from the persisted result rows on every call — they are pure-TS, cheap,
+// and pinning them on the aggregate would force a backfill on every change
+// to the formula. The LLM commentary, by contrast, is written once by the
+// runner at completion and read straight off the aggregate here, so this
+// endpoint never triggers an LLM call regardless of how many times the
+// analysis page is opened.
 
 export interface GetBenchmarkAnalysisCommand {
   benchmarkId: string;
@@ -26,8 +26,6 @@ export class GetBenchmarkAnalysisUseCase {
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly results: IBenchmarkResultRepository,
-    private readonly promptQueries: IPromptQueryService,
-    private readonly analyzer: BenchmarkAnalyzer,
   ) {}
 
   async execute(command: GetBenchmarkAnalysisCommand): Promise<BenchmarkAnalysis> {
@@ -37,26 +35,20 @@ export class GetBenchmarkAnalysisUseCase {
       command.organizationId,
     );
     const results = await this.results.listByBenchmark(benchmark.id);
-    const versionLabels = await buildVersionLabels(
-      this.promptQueries,
-      [...benchmark.promptVersionIds],
-      benchmark.organizationId,
-    );
     const testCasesById = Object.fromEntries(
       benchmark.testCases.map((tc) => [
         tc.id,
         { category: tc.category, source: tc.source },
       ]),
     );
-    const commentaryModel =
-      benchmark.analysisModel ?? (benchmark.judgeModels[0] ?? null);
-    if (!commentaryModel) {
-      throw new Error("Benchmark has no analysis or judge model configured");
-    }
-    return this.analyzer.analyze(results, testCasesById, versionLabels, commentaryModel);
+    const core = computeAnalysis(results, { testCasesById });
+    return { ...core, commentary: benchmark.analysisCommentary };
   }
 }
 
+// Version label projection used by other read paths (benchmark detail,
+// commentary prompt). Lives here for historical reasons; consumers import
+// from this module.
 export const buildVersionLabels = async (
   queries: IPromptQueryService,
   ids: readonly string[],

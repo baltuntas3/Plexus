@@ -40,7 +40,6 @@ export interface BenchmarkDto {
   costForecast: BenchmarkCostForecastDto | null;
   testCount: number;
   repetitions: number;
-  solverTemperature: number;
   seed: number;
   concurrency: number;
   cellTimeoutMs: number | null;
@@ -113,13 +112,14 @@ export interface BenchmarkResultDto {
 
 // Minimal public surface: the caller picks which versions to compare, which
 // models to benchmark as solvers, and how many cases to generate. Judge
-// ensemble, generator, generation mode, analysis model, repetitions, seed and
-// concurrency are derived server-side for fairness and reproducibility.
+// ensemble, generator, generation mode, analysis model, repetitions, seed,
+// concurrency and solver temperature are derived server-side for fairness
+// and reproducibility — solver temperature is fixed at 0 so two benchmarks
+// of the same prompts/models stay directly comparable.
 export interface CreateBenchmarkRequest {
   name: string;
   promptVersionIds: string[];
   solverModels: string[];
-  solverTemperature?: number;
   testCount: number;
 }
 

@@ -28,7 +28,6 @@ export const toBenchmarkDto = (bm: BenchmarkLike): BenchmarkDto => ({
   costForecast: bm.costForecast ? { ...bm.costForecast } : null,
   testCount: bm.testCount,
   repetitions: bm.repetitions,
-  solverTemperature: bm.solverTemperature,
   seed: bm.seed,
   concurrency: bm.concurrency,
   cellTimeoutMs: bm.cellTimeoutMs,

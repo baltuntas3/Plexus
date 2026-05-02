@@ -47,7 +47,6 @@ const buildDraftBenchmark = async (
     costForecast: null,
     testCount: 2,
     repetitions: 1,
-    solverTemperature: 0.7,
     seed: 42,
     testCases: [
       {

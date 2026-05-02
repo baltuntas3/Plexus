@@ -59,6 +59,7 @@ export class LLMJudge implements IJudge {
         messages,
         temperature: this.config.temperature ?? 0,
         seed: input.seed,
+        responseFormat: "json",
       });
     } catch (err) {
       if (err instanceof AIProviderError) {
@@ -70,10 +71,11 @@ export class LLMJudge implements IJudge {
       throw err;
     }
 
-    // Malformed-JSON retry: judges occasionally wrap the object in prose or
-    // markdown fences even with the explicit instruction. One additional
-    // attempt with a strict reminder recovers those rows cheaply; after that
-    // we surface the usage from both attempts so partial cost is preserved.
+    // Defensive retry: provider JSON mode normally guarantees parseable
+    // output, but the rubric still has to clear zod's structural checks
+    // (integer 1-5, non-empty reasoning). One additional attempt with a
+    // strict reminder recovers those rows cheaply; after that we surface
+    // the usage from both attempts so partial cost is preserved.
     let parsed: z.infer<typeof rubricSchema>;
     let totalInputTokens = response.usage.inputTokens;
     let totalOutputTokens = response.usage.outputTokens;
@@ -95,6 +97,7 @@ export class LLMJudge implements IJudge {
           ],
           temperature: 0,
           seed: input.seed,
+          responseFormat: "json",
         });
         totalInputTokens += retry.usage.inputTokens;
         totalOutputTokens += retry.usage.outputTokens;
@@ -166,6 +169,7 @@ export class LLMJudge implements IJudge {
         messages: built.messages,
         temperature: this.config.temperature ?? 0,
         seed: input.seed,
+        responseFormat: "json",
       });
     } catch (err) {
       if (err instanceof AIProviderError) {
@@ -199,6 +203,7 @@ export class LLMJudge implements IJudge {
           ],
           temperature: 0,
           seed: input.seed,
+          responseFormat: "json",
         });
         totalInputTokens += retry.usage.inputTokens;
         totalOutputTokens += retry.usage.outputTokens;

@@ -30,7 +30,6 @@ export interface BenchmarkSummary {
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
-  solverTemperature: number;
   seed: number;
   concurrency: number;
   cellTimeoutMs: number | null;

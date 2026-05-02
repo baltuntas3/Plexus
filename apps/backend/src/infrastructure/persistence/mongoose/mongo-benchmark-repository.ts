@@ -30,7 +30,6 @@ interface BenchmarkDocShape {
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
-  solverTemperature: number;
   seed: number;
   testCases: Array<{
     id: string;
@@ -67,7 +66,6 @@ const toPrimitives = (doc: BenchmarkDocShape): BenchmarkPrimitives => ({
   costForecast: doc.costForecast ?? null,
   testCount: doc.testCount,
   repetitions: doc.repetitions,
-  solverTemperature: doc.solverTemperature,
   seed: doc.seed,
   testCases: (doc.testCases ?? []).map((tc) => ({
     id: tc.id,
@@ -135,7 +133,6 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         costForecast: p.costForecast,
         testCount: p.testCount,
         repetitions: p.repetitions,
-        solverTemperature: p.solverTemperature,
         seed: p.seed,
         testCases: p.testCases,
         concurrency: p.concurrency,
@@ -162,7 +159,6 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         costForecast: p.costForecast,
         testCount: p.testCount,
         repetitions: p.repetitions,
-        solverTemperature: p.solverTemperature,
         seed: p.seed,
         testCases: p.testCases,
         concurrency: p.concurrency,

@@ -45,7 +45,6 @@ const toSummary = (benchmark: Benchmark): BenchmarkSummary => ({
   costForecast: benchmark.costForecast,
   testCount: benchmark.testCount,
   repetitions: benchmark.repetitions,
-  solverTemperature: benchmark.solverTemperature,
   seed: benchmark.seed,
   concurrency: benchmark.concurrency,
   cellTimeoutMs: benchmark.cellTimeoutMs,

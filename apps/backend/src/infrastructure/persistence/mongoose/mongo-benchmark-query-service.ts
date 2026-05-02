@@ -29,7 +29,6 @@ interface BenchmarkSummaryDoc {
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
-  solverTemperature: number;
   seed: number;
   concurrency: number;
   cellTimeoutMs: number | null;
@@ -58,7 +57,6 @@ const toSummary = (doc: BenchmarkSummaryDoc): BenchmarkSummary => ({
   costForecast: doc.costForecast ?? null,
   testCount: doc.testCount,
   repetitions: doc.repetitions,
-  solverTemperature: doc.solverTemperature,
   seed: doc.seed,
   concurrency: doc.concurrency,
   cellTimeoutMs: doc.cellTimeoutMs ?? null,

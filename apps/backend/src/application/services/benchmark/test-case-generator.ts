@@ -257,6 +257,7 @@ export class TestCaseGenerator {
       model,
       messages: baseMessages,
       temperature: 0.8,
+      responseFormat: "json",
       ...(seed !== undefined ? { seed } : {}),
     });
 
@@ -282,6 +283,7 @@ export class TestCaseGenerator {
         },
       ],
       temperature: 0,
+      responseFormat: "json",
       ...(seed !== undefined ? { seed } : {}),
     });
 

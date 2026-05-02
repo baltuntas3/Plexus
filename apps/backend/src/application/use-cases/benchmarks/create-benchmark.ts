@@ -34,7 +34,6 @@ import { BenchmarkSeed } from "../../../domain/value-objects/benchmark-seed.js";
 const DEFAULT_GENERATOR_MODEL = "openai/gpt-oss-120b";
 const DEFAULT_JUDGE_COUNT = 2;
 const DEFAULT_REPETITIONS = 3;
-const DEFAULT_SOLVER_TEMPERATURE = 0.7;
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_BUDGET_USD = 50;
 
@@ -131,7 +130,6 @@ export class CreateBenchmarkUseCase {
       costForecast,
       testCount: command.testCount,
       repetitions,
-      solverTemperature: command.solverTemperature ?? DEFAULT_SOLVER_TEMPERATURE,
       seed,
       concurrency: command.concurrency ?? DEFAULT_CONCURRENCY,
       cellTimeoutMs: command.cellTimeoutMs ?? null,

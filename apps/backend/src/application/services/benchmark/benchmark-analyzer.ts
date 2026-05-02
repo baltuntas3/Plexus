@@ -196,6 +196,12 @@ export const aggregateResults = (
     promptVersionId: string;
     solverModel: string;
     finalScores: number[];
+    // Reps grouped by testCaseId. The runner judges all reps of the same
+    // (candidate, testCase) in a single batched LLM call, so per-rep noise
+    // is correlated within these groups. The CI is computed via cluster
+    // bootstrap over these groups so the resampling distribution preserves
+    // that correlation; treating reps as i.i.d. would understate spread.
+    scoresByTestCase: Map<string, number[]>;
     accuracies: number[];
     coherences: number[];
     instructions: number[];
@@ -216,6 +222,7 @@ export const aggregateResults = (
         promptVersionId: r.promptVersionId,
         solverModel: r.solverModel,
         finalScores: [],
+        scoresByTestCase: new Map(),
         accuracies: [],
         coherences: [],
         instructions: [],
@@ -239,6 +246,9 @@ export const aggregateResults = (
     }
 
     bucket.finalScores.push(r.finalScore);
+    const cluster = bucket.scoresByTestCase.get(r.testCaseId) ?? [];
+    cluster.push(r.finalScore);
+    bucket.scoresByTestCase.set(r.testCaseId, cluster);
     bucket.accuracies.push(r.judgeAccuracy);
     bucket.coherences.push(r.judgeCoherence);
     bucket.instructions.push(r.judgeInstruction);
@@ -256,7 +266,10 @@ export const aggregateResults = (
     const completedCount = bucket.completedCount;
     const m = mean(bucket.finalScores);
     const sd = stddev(bucket.finalScores);
-    const ci = bootstrapCI(bucket.finalScores, rng);
+    const ci = clusterBootstrapCI(
+      [...bucket.scoresByTestCase.values()],
+      rng,
+    );
     const totalRows = completedCount + bucket.failedCount;
     out.push({
       candidateKey: key,
@@ -642,6 +655,16 @@ const computePairwiseComparisons = (
   return comparisons;
 };
 
+// `withinRunVariance` here is the OBSERVED spread of finalScore across reps
+// of the same (candidate, testCase). Reps within the same triple share a
+// batched judge call, so this number is a *lower bound* on per-rep noise —
+// it does not include the judge-session noise that would appear if each
+// rep had been judged in isolation. Treat it as a diagnostic for "how
+// stable does the candidate look under batched judging" rather than a
+// pure measurement-error estimate. The CI/PPD paths that need an honest
+// uncertainty estimate use the cluster bootstrap above instead, which
+// preserves the within-cluster correlation that this number does not
+// expose.
 const computeVarianceDecomposition = (
   results: readonly BenchmarkResult[],
 ): VarianceDecomposition => {
@@ -1039,15 +1062,27 @@ const pairedDifferenceCI = (
   const sharedKeys = [...left.keys()].filter((key) => right.has(key)).sort();
   if (sharedKeys.length < 2) return null;
 
-  const diffs = sharedKeys.map((key) => {
+  // Bucket per-rep diffs by testCaseId. Both candidates' reps for a single
+  // testCase are judged in independent batched LLM calls (one per
+  // candidate's triple), but each side's reps are internally correlated
+  // because they share a judge call. Cluster-bootstrapping on testCaseId
+  // preserves that correlation in the diff distribution.
+  const diffsByTestCase = new Map<string, number[]>();
+  for (const key of sharedKeys) {
     const l = left.get(key);
     const r = right.get(key);
-    if (!l || !r || l.status !== "completed" || r.status !== "completed") return null;
-    return l.finalScore - r.finalScore;
-  }).filter((diff): diff is number => diff !== null);
-  if (diffs.length < 2) return null;
+    if (!l || !r || l.status !== "completed" || r.status !== "completed") continue;
+    const bucket = diffsByTestCase.get(l.testCaseId) ?? [];
+    bucket.push(l.finalScore - r.finalScore);
+    diffsByTestCase.set(l.testCaseId, bucket);
+  }
+  const totalDiffs = [...diffsByTestCase.values()].reduce(
+    (sum, bucket) => sum + bucket.length,
+    0,
+  );
+  if (totalDiffs < 2) return null;
   const rng = mulberry32(hashString(sharedKeys.join("|")));
-  return bootstrapCI(diffs, rng);
+  return clusterBootstrapCI([...diffsByTestCase.values()], rng);
 };
 
 // Pick the top-composite candidate; if a runner-up is not statistically
@@ -1266,23 +1301,41 @@ const consistencyFromStddev = (
   return Math.max(0, Math.min(1, 1 - sd / ceiling));
 };
 
-const bootstrapCI = (
-  values: readonly number[],
+// Cluster (block) bootstrap on the mean. `groups` are clusters of
+// observations that share judging-session noise — typically one cluster
+// per testCaseId, holding all reps that were graded in the same batched
+// judge call. Resampling whole clusters with replacement preserves the
+// intra-cluster correlation that an i.i.d. row-level bootstrap would
+// erase, so the resulting CI is honest about how much information the
+// reps actually carry. Reduces to standard bootstrap when every cluster
+// has size 1 (i.e. repetitions == 1).
+const clusterBootstrapCI = (
+  groups: readonly (readonly number[])[],
   rng: () => number,
 ): { low: number; high: number } => {
-  if (values.length === 0) return { low: 0, high: 0 };
-  if (values.length === 1) {
-    const only = values[0] ?? 0;
-    return { low: only, high: only };
+  const nonEmpty = groups.filter((g) => g.length > 0);
+  if (nonEmpty.length === 0) return { low: 0, high: 0 };
+  if (nonEmpty.length === 1) {
+    const only = nonEmpty[0] ?? [];
+    if (only.length === 0) return { low: 0, high: 0 };
+    if (only.length === 1) {
+      const v = only[0] ?? 0;
+      return { low: v, high: v };
+    }
   }
   const samples: number[] = new Array(BOOTSTRAP_SAMPLES);
   for (let i = 0; i < BOOTSTRAP_SAMPLES; i += 1) {
     let sum = 0;
-    for (let j = 0; j < values.length; j += 1) {
-      const idx = Math.floor(rng() * values.length);
-      sum += values[idx] ?? 0;
+    let count = 0;
+    for (let j = 0; j < nonEmpty.length; j += 1) {
+      const idx = Math.floor(rng() * nonEmpty.length);
+      const cluster = nonEmpty[idx] ?? [];
+      for (const v of cluster) {
+        sum += v;
+        count += 1;
+      }
     }
-    samples[i] = sum / values.length;
+    samples[i] = count === 0 ? 0 : sum / count;
   }
   samples.sort((a, b) => a - b);
   const lowIdx = Math.floor(0.025 * BOOTSTRAP_SAMPLES);

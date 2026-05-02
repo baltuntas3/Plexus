@@ -31,6 +31,13 @@ export class GroqProvider implements IAIProvider {
       temperature: request.temperature ?? DEFAULT_TEMPERATURE,
       max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
       ...(request.seed !== undefined ? { seed: request.seed } : {}),
+      // Groq's OpenAI-compatible API supports JSON mode via response_format.
+      // The caller is responsible for asking for JSON in the prompt itself
+      // (Groq rejects `json_object` requests whose prompt does not mention
+      // "JSON") — we only forward the flag.
+      ...(request.responseFormat === "json"
+        ? { response_format: { type: "json_object" as const } }
+        : {}),
     };
 
     // Groq-only parameters (`include_reasoning`, `reasoning_format`) don't

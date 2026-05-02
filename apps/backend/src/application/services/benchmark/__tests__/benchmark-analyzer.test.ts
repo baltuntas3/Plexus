@@ -101,15 +101,26 @@ describe("aggregateResults", () => {
     expect(stats?.operationalIssueRate).toBe(1);
   });
 
-  it("produces a deterministic 95% CI whose width shrinks as sample size grows", () => {
+  it("produces a deterministic 95% CI that widens with score spread across testCases", () => {
+    // Tight: 20 testCases with low spread around 0.8 — cluster bootstrap on
+    // testCases gives a narrow CI because resampling testCases varies the
+    // mean only slightly.
     const tight = aggregateResults(
       Array.from({ length: 20 }, (_, i) =>
-        row({ testCaseId: `tc${i}`, finalScore: 0.8, runIndex: i }),
+        row({
+          testCaseId: `tc${i}`,
+          finalScore: 0.8 + (i % 2 === 0 ? 0.01 : -0.01),
+          runIndex: 0,
+        }),
       ),
     );
+    // Wide: 4 testCases with large spread — fewer clusters AND much higher
+    // between-cluster variance, so the bootstrap CI is materially wider.
     const wide = aggregateResults([
-      row({ testCaseId: "a", runIndex: 0, finalScore: 0.2 }),
-      row({ testCaseId: "a", runIndex: 1, finalScore: 1.0 }),
+      row({ testCaseId: "a", runIndex: 0, finalScore: 0.0 }),
+      row({ testCaseId: "b", runIndex: 0, finalScore: 0.4 }),
+      row({ testCaseId: "c", runIndex: 0, finalScore: 0.6 }),
+      row({ testCaseId: "d", runIndex: 0, finalScore: 1.0 }),
     ]);
 
     const tightWidth = tight[0]!.ci95High - tight[0]!.ci95Low;
@@ -118,11 +129,29 @@ describe("aggregateResults", () => {
 
     const again = aggregateResults(
       Array.from({ length: 20 }, (_, i) =>
-        row({ testCaseId: `tc${i}`, finalScore: 0.8, runIndex: i }),
+        row({
+          testCaseId: `tc${i}`,
+          finalScore: 0.8 + (i % 2 === 0 ? 0.01 : -0.01),
+          runIndex: 0,
+        }),
       ),
     );
     expect(again[0]!.ci95Low).toBeCloseTo(tight[0]!.ci95Low, 10);
     expect(again[0]!.ci95High).toBeCloseTo(tight[0]!.ci95High, 10);
+  });
+
+  it("collapses CI to a point when only one testCase cluster exists", () => {
+    // With a single testCase cluster, the cluster bootstrap can never draw
+    // anything but that cluster — the CI is a point estimate. This is the
+    // honest behaviour: with one input, you cannot estimate how the
+    // candidate would do on different inputs, no matter how many reps you
+    // collect. (Standard i.i.d. bootstrap would lie and produce a width.)
+    const [stats] = aggregateResults([
+      row({ testCaseId: "only", runIndex: 0, finalScore: 0.2 }),
+      row({ testCaseId: "only", runIndex: 1, finalScore: 1.0 }),
+    ]);
+    expect(stats?.ci95High).toBe(stats?.ci95Low);
+    expect(stats?.meanFinalScore).toBeCloseTo(0.6, 10);
   });
 
   it("returns 100% consistency when all rows are identical", () => {

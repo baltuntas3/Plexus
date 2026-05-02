@@ -54,6 +54,10 @@ import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 
 const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 const DEFAULT_BUDGET_USD = 50;
+// Solver temperature is fixed at 0 for benchmark runs so two benchmarks of
+// the same prompts/models are directly comparable. Anyone needing a higher
+// sampling temperature is doing exploration, not measurement.
+const SOLVER_TEMPERATURE = 0;
 
 interface Triple {
   testCaseId: string;
@@ -297,7 +301,7 @@ export class BenchmarkRunner {
               { role: "system", content: systemPrompt },
               { role: "user", content: cell.testCase.input },
             ],
-            temperature: benchmark.solverTemperature,
+            temperature: SOLVER_TEMPERATURE,
             seed: solverSeed,
           });
           const cost = calculateCost(

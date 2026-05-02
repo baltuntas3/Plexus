@@ -13,6 +13,12 @@ export interface GenerateRequest {
   // Deterministic sampling seed. Providers that do not support seeds (e.g.
   // Anthropic) are expected to ignore this field silently.
   seed?: number;
+  // Ask the provider to constrain output to a JSON object. Eliminates the
+  // markdown-fence / prose-prefix failure mode when the caller plans to
+  // JSON.parse the response. Providers that do not support structured
+  // output ignore this silently — callers must still defend against parse
+  // errors at the boundary.
+  responseFormat?: "json";
 }
 
 export interface TokenUsage {

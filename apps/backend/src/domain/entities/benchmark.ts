@@ -7,7 +7,6 @@ import {
   BenchmarkNotInDraftError,
 } from "../errors/domain-error.js";
 import { BudgetUsd } from "../value-objects/budget-usd.js";
-import { SolverTemperature } from "../value-objects/solver-temperature.js";
 import { BenchmarkSeed } from "../value-objects/benchmark-seed.js";
 import type { BenchmarkCostForecast } from "../value-objects/benchmark-cost-forecast.js";
 
@@ -82,7 +81,6 @@ export interface BenchmarkPrimitives {
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
-  solverTemperature: number;
   seed: number;
   concurrency: number;
   cellTimeoutMs: number | null;
@@ -124,7 +122,6 @@ export interface CreateBenchmarkParams {
   costForecast: BenchmarkCostForecast | null;
   testCount: number;
   repetitions: number;
-  solverTemperature: number;
   seed: number;
   concurrency: number;
   cellTimeoutMs: number | null;
@@ -155,7 +152,6 @@ export class Benchmark {
     // Run the VOs for their side-effect: they throw on invalid input and
     // keep the creation boundary consistent without us having to rewrite
     // the same check in every caller.
-    SolverTemperature.of(params.solverTemperature);
     BenchmarkSeed.of(params.seed);
     if (params.budgetUsd !== null) {
       BudgetUsd.of(params.budgetUsd);
@@ -182,7 +178,6 @@ export class Benchmark {
       costForecast: params.costForecast,
       testCount: params.testCount,
       repetitions: params.repetitions,
-      solverTemperature: params.solverTemperature,
       seed: params.seed,
       concurrency: params.concurrency,
       cellTimeoutMs: params.cellTimeoutMs,
@@ -259,9 +254,6 @@ export class Benchmark {
   }
   get repetitions(): number {
     return this.state.repetitions;
-  }
-  get solverTemperature(): number {
-    return this.state.solverTemperature;
   }
   get seed(): number {
     return this.state.seed;

@@ -182,13 +182,24 @@ describe("LLMJudge.grade", () => {
 });
 
 describe("LLMJudge.gradeBatch", () => {
-  it("delegates to grade for a single-candidate batch (no batched prompt overhead)", async () => {
+  it("uses the batched prompt even for length-1 inputs so judging methodology stays uniform", async () => {
+    // Length-1 batches happen when a triple loses all but one rep to
+    // solver failures. Grading that survivor with the single-candidate
+    // prompt would let solver reliability leak into the score: rows from
+    // a partially-failed triple would be judged under different
+    // instructions than rows from a fully-successful triple. The batch
+    // path is therefore the only path; this test pins that contract.
     const { judge, provider } = buildJudge(
       JSON.stringify({
-        accuracy: 4,
-        coherence: 4,
-        instruction: 4,
-        reasoning: "single",
+        scores: [
+          {
+            label: "ATTEMPT_1",
+            accuracy: 4,
+            coherence: 4,
+            instruction: 4,
+            reasoning: "single",
+          },
+        ],
       }),
     );
 
@@ -203,11 +214,9 @@ describe("LLMJudge.gradeBatch", () => {
       coherence: 4,
       instruction: 4,
     });
-    // Single-candidate path uses the original (non-batched) prompt; the
-    // user message embeds <candidate>, never <attempt>.
     const userMessage = String(provider.lastRequest?.messages?.at(-1)?.content ?? "");
-    expect(userMessage).toContain("<candidate>");
-    expect(userMessage).not.toContain("<attempt");
+    expect(userMessage).toContain("<attempt");
+    expect(userMessage).not.toContain("<candidate>");
   });
 
   it("scores N candidates with a single judge call and restores input order even when labels come back shuffled", async () => {

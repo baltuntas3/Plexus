@@ -24,6 +24,23 @@ import { calculateCost } from "../model-registry.js";
 // stored estimate, so this number only affects the budget gate.
 export const STUB_AVG_INPUT_TOKENS = 150;
 
+// Fixed overhead for the judge prompt itself (BASE_JUDGE_PROMPT plus the
+// task-type guidance, the BATCH_JUDGE_INSTRUCTIONS block, and the XML tag
+// scaffolding around <input>/<reference>/<attempt label="...">). Empirical
+// midpoint: the static templates total ~340 tokens once tokenised by the
+// proxy counter below; rounding to 350 keeps the forecast on the safe side
+// of provider-specific tokenisation differences.
+const JUDGE_PROMPT_OVERHEAD_TOKENS = 350;
+// Per-attempt wrapping cost inside the batched user message
+// (`<attempt label="ATTEMPT_N">...</attempt>` plus newlines). Constant
+// across batch sizes; multiplied by `repetitions` below.
+const ATTEMPT_WRAPPER_TOKENS = 12;
+// Output tokens per per-candidate rubric entry — one JSON object with
+// three integer scores and a one-sentence reasoning. Holds across batch
+// sizes since the judge writes one entry per ATTEMPT label, not one per
+// call.
+const JUDGE_OUTPUT_TOKENS_PER_CANDIDATE = 32;
+
 export interface BenchmarkCostEstimatorInput {
   versions: readonly PromptVersionSummary[];
   testCount: number;
@@ -62,22 +79,39 @@ export class BenchmarkCostEstimator {
         input.repetitions;
     }
 
-    const judgeInputTokensPerVote = Math.round(
-      avgSystemPromptTokens * 2 +
-        avgUserInputTokens +
-        avgCandidateOutputTokens +
-        140,
+    // Batched judging: the runner issues ONE call per
+    // (testCase × version × solver × judgeModel). All `repetitions`
+    // candidate outputs of that triple share the call's static prompt
+    // (judge system prompt + system_prompt_under_evaluation + input +
+    // reference) and only the per-attempt wrapping plus the candidate
+    // body scale with `repetitions`. The output scales linearly because
+    // the judge writes one rubric entry per ATTEMPT label.
+    const judgeCallsPerJudgeModel =
+      input.testCount * input.versions.length * input.solverModels.length;
+    const judgeFixedInputTokens = Math.round(
+      JUDGE_PROMPT_OVERHEAD_TOKENS +
+        avgSystemPromptTokens +
+        avgUserInputTokens,
     );
-    const judgeOutputTokensPerVote = 32;
+    const judgePerAttemptInputTokens =
+      avgCandidateOutputTokens + ATTEMPT_WRAPPER_TOKENS;
+    const judgeInputTokensPerCall =
+      judgeFixedInputTokens + judgePerAttemptInputTokens * input.repetitions;
+    const judgeOutputTokensPerCall =
+      JUDGE_OUTPUT_TOKENS_PER_CANDIDATE * input.repetitions;
+
     let estimatedJudgeCostUsd = 0;
     for (const judgeModel of input.judgeModels) {
-      const perVote = calculateCost(
+      const perCall = calculateCost(
         judgeModel,
-        judgeInputTokensPerVote,
-        judgeOutputTokensPerVote,
+        judgeInputTokensPerCall,
+        judgeOutputTokensPerCall,
       );
-      estimatedJudgeCostUsd += perVote.totalUsd * estimatedMatrixCells;
+      estimatedJudgeCostUsd += perCall.totalUsd * judgeCallsPerJudgeModel;
     }
+
+    const totalJudgeCalls =
+      judgeCallsPerJudgeModel * input.judgeModels.length;
 
     return {
       estimatedMatrixCells,
@@ -87,13 +121,9 @@ export class BenchmarkCostEstimator {
       estimatedCandidateOutputTokens:
         avgCandidateOutputTokens * estimatedMatrixCells,
       estimatedJudgeInputTokens:
-        judgeInputTokensPerVote *
-        estimatedMatrixCells *
-        input.judgeModels.length,
+        judgeInputTokensPerCall * totalJudgeCalls,
       estimatedJudgeOutputTokens:
-        judgeOutputTokensPerVote *
-        estimatedMatrixCells *
-        input.judgeModels.length,
+        judgeOutputTokensPerCall * totalJudgeCalls,
       estimatedCandidateCostUsd,
       estimatedJudgeCostUsd,
       estimatedTotalCostUsd: estimatedCandidateCostUsd + estimatedJudgeCostUsd,

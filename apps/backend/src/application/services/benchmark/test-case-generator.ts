@@ -286,22 +286,16 @@ export class TestCaseGenerator {
       return finaliseTestCases(firstParsed.value, count);
     }
 
-    // Retry once with the previous assistant turn echoed back so the model
-    // sees exactly what failed and a strict correction instruction. We keep
-    // temperature at 0 here because the retry is about format compliance,
-    // not exploration.
+    // Retry once at temperature 0 with the same base prompt. Echoing the
+    // bad assistant turn back would roughly double input tokens (the
+    // base prompt is long: spec + category plan + examples), and JSON
+    // parse failures with `responseFormat: "json"` are almost always
+    // format-compliance noise rather than the model needing to "see"
+    // what it got wrong. T=0 collapses sampling variance, which is the
+    // cheap fix this case actually needs.
     const retryResponse = await provider.generate({
       model,
-      messages: [
-        ...baseMessages,
-        { role: "assistant", content: firstResponse.text },
-        {
-          role: "user",
-          content:
-            "Your previous response could not be parsed as valid JSON. " +
-            `Respond again with ONLY the JSON object in the exact shape requested, containing exactly ${count} test cases. No markdown, no prose.`,
-        },
-      ],
+      messages: baseMessages,
       temperature: 0,
       responseFormat: "json",
       ...(seed !== undefined ? { seed } : {}),

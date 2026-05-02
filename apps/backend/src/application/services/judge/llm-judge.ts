@@ -73,9 +73,12 @@ export class LLMJudge implements IJudge {
 
     // Defensive retry: provider JSON mode normally guarantees parseable
     // output, but the rubric still has to clear zod's structural checks
-    // (integer 1-5, non-empty reasoning). One additional attempt with a
-    // strict reminder recovers those rows cheaply; after that we surface
-    // the usage from both attempts so partial cost is preserved.
+    // (integer 1-5, non-empty reasoning). One additional attempt at T=0
+    // recovers those rows cheaply. We reissue the same prompt rather
+    // than echoing the bad response back — the messages array is large
+    // (judge system prompt + eval system prompt + input + candidate +
+    // optional reference), so resending it doubled input tokens for a
+    // recovery that almost always works on a fresh deterministic try.
     let parsed: z.infer<typeof rubricSchema>;
     let totalInputTokens = response.usage.inputTokens;
     let totalOutputTokens = response.usage.outputTokens;
@@ -86,15 +89,7 @@ export class LLMJudge implements IJudge {
       try {
         const retry = await provider.generate({
           model: this.config.judgeModel,
-          messages: [
-            ...messages,
-            { role: "assistant", content: response.text },
-            {
-              role: "user",
-              content:
-                "Your previous response was not valid JSON. Respond with ONLY the JSON object specified — no markdown fences, no prose.",
-            },
-          ],
+          messages,
           temperature: 0,
           seed: input.seed,
           responseFormat: "json",
@@ -147,19 +142,14 @@ export class LLMJudge implements IJudge {
     if (input.candidates.length === 0) {
       throw ValidationError("gradeBatch requires at least one candidate");
     }
-    // Single-candidate batches degenerate to single grade — same call shape
-    // and same prompt form, so callers don't need a length-1 special case.
-    if (input.candidates.length === 1) {
-      const single = await this.grade({
-        input: input.input,
-        candidate: input.candidates[0] as string,
-        seed: input.seed,
-        reference: input.reference,
-        systemPrompt: input.systemPrompt,
-      });
-      return { scores: [single.score], usage: single.usage, model: single.model };
-    }
-
+    // Always go through the batch prompt — even for length-1 inputs.
+    // Falling back to single `grade()` here would judge that one row with
+    // a different system prompt (BASE + JSON_INSTRUCTION) than its
+    // siblings (BASE + BATCH_JUDGE_INSTRUCTIONS), which lets solver
+    // reliability sneak into the score: a row whose triple-mates all
+    // failed would be judged under a different methodology than rows
+    // from a fully-successful triple. Length-1 batches still use the
+    // batch path; the prompt is uniform across the benchmark.
     const provider = this.providers.forModel(this.config.judgeModel);
     const built = buildBatchJudgeMessages(input, this.config.taskType);
     let response;
@@ -189,18 +179,14 @@ export class LLMJudge implements IJudge {
       parsed = parseBatchRubric(response.text, built.labelToOriginalIndex);
     } catch (firstErr) {
       try {
+        // Same retry shape as the single-grade path: reissue the same
+        // batched prompt at T=0 instead of echoing the bad response
+        // back. Batched prompts carry N candidate outputs in the user
+        // message, so resending the conversation would roughly double
+        // input tokens for what is usually a format-compliance recovery.
         const retry = await provider.generate({
           model: this.config.judgeModel,
-          messages: [
-            ...built.messages,
-            { role: "assistant", content: response.text },
-            {
-              role: "user",
-              content:
-                "Your previous response was not valid JSON or did not match the required shape. " +
-                `Respond again with ONLY the JSON object {"scores": [...]} containing exactly ${input.candidates.length} entries — one per ATTEMPT label, reusing the labels exactly. No markdown, no prose.`,
-            },
-          ],
+          messages: built.messages,
           temperature: 0,
           seed: input.seed,
           responseFormat: "json",

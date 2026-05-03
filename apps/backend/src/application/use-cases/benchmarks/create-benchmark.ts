@@ -70,21 +70,14 @@ export class CreateBenchmarkUseCase {
       ModelRegistry.require(model);
     }
 
-    const judgeModels = pickJudgeModels(
-      command.solverModels,
-      command.judgeCount ?? DEFAULT_JUDGE_COUNT,
-    );
+    const judgeModels = pickJudgeModels(command.solverModels, DEFAULT_JUDGE_COUNT);
     const generatorModel = pickGeneratorModel(
       command.solverModels,
-      command.generatorModel ?? DEFAULT_GENERATOR_MODEL,
+      DEFAULT_GENERATOR_MODEL,
     );
     const testGenerationMode =
-      command.testGenerationMode ??
-      (resolvedVersions.length > 1 ? "hybrid" : "shared-core");
-    const seed =
-      command.seed !== undefined
-        ? BenchmarkSeed.of(command.seed).toNumber()
-        : BenchmarkSeed.random().toNumber();
+      resolvedVersions.length > 1 ? "hybrid" : "shared-core";
+    const seed = BenchmarkSeed.random().toNumber();
     const taskType = await this.resolveTaskType(
       resolvedVersions,
       command.organizationId,
@@ -158,8 +151,8 @@ export class CreateBenchmarkUseCase {
       testCount: command.testCount,
       repetitions,
       seed,
-      concurrency: command.concurrency ?? DEFAULT_CONCURRENCY,
-      cellTimeoutMs: command.cellTimeoutMs ?? null,
+      concurrency: DEFAULT_CONCURRENCY,
+      cellTimeoutMs: null,
       budgetUsd,
       testCases: generated.map((tc) => ({
         id: this.idGenerator.newId(),

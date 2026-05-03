@@ -8,10 +8,8 @@ import {
   type BatchJudgeInput,
   type BatchJudgeResult,
   type IJudge,
-  type JudgeInput,
-  type JudgeResult,
 } from "./judge.js";
-import { buildBatchJudgeMessages, buildJudgeMessages } from "./judge-prompt.js";
+import { buildBatchJudgeMessages } from "./judge-prompt.js";
 
 export interface LLMJudgeConfig {
   judgeModel: string;
@@ -25,23 +23,23 @@ export interface LLMJudgeConfig {
 // stochastic mode and break the rest of the analyzer.
 //
 // This is a fairness contract, not a knob:
-// - reproducibility (same benchmark twice → same scores)
-// - stable bias measurements (judgeBias rows actually mean something)
-// - honest pairwise CIs (pairwiseComparisons.isSignificant)
-// - cluster bootstrap CI assumes within-batch correlation comes only
-//   from the shared prompt; a stochastic judge would invalidate it.
+// - reproducibility — the same benchmark rerun produces the same scores,
+//   so persisted rows are stable across recomputed analyses.
+// - cluster bootstrap CI (analyzer's clusterBootstrapCI) assumes within-
+//   batch correlation comes only from the shared judge prompt; a
+//   stochastic judge would inject an extra noise source and invalidate
+//   the resampling distribution.
+// - paired bootstrap tie-break in pickWithPairedSignificanceTieBreak
+//   compares per-cell score differences; with a stochastic judge those
+//   differences would partly reflect judge re-roll noise rather than
+//   real solver gaps.
+// - judgeAgreement diffs would conflate genuine rubric disagreement
+//   with the same judge sampling differently from itself.
 //
 // There is intentionally no caller surface to override this; if you
 // ever want a stochastic judge, build it as a separate class so the
 // policy stays explicit at the type level.
 const JUDGE_TEMPERATURE = 0;
-
-const rubricSchema = z.object({
-  accuracy: z.number().int().min(1).max(5),
-  coherence: z.number().int().min(1).max(5),
-  instruction: z.number().int().min(1).max(5),
-  reasoning: z.string().min(1),
-});
 
 const batchRubricSchema = z.object({
   scores: z
@@ -57,110 +55,21 @@ const batchRubricSchema = z.object({
     .min(1),
 });
 
-const JSON_OBJECT_REGEX = /\{[\s\S]*?\}/;
-
 export class LLMJudge implements IJudge {
   constructor(
     private readonly providers: IAIProviderFactory,
     private readonly config: LLMJudgeConfig,
   ) {}
 
-  async grade(input: JudgeInput): Promise<JudgeResult> {
-    const provider = this.providers.forModel(this.config.judgeModel);
-    const messages = buildJudgeMessages(input, this.config.taskType);
-    let response;
-    try {
-      response = await provider.generate({
-        model: this.config.judgeModel,
-        messages,
-        temperature: JUDGE_TEMPERATURE,
-        seed: input.seed,
-        responseFormat: "json",
-      });
-    } catch (err) {
-      if (err instanceof AIProviderError) {
-        throw new JudgeExecutionError(err.message, {
-          usage: err.partial?.usage,
-          model: err.partial?.model ?? this.config.judgeModel,
-        }, { cause: err });
-      }
-      throw err;
-    }
-
-    // Defensive retry: provider JSON mode normally guarantees parseable
-    // output, but the rubric still has to clear zod's structural checks
-    // (integer 1-5, non-empty reasoning). One additional attempt at T=0
-    // recovers those rows cheaply. We reissue the same prompt rather
-    // than echoing the bad response back — the messages array is large
-    // (judge system prompt + eval system prompt + input + candidate +
-    // optional reference), so resending it doubled input tokens for a
-    // recovery that almost always works on a fresh deterministic try.
-    let parsed: z.infer<typeof rubricSchema>;
-    let totalInputTokens = response.usage.inputTokens;
-    let totalOutputTokens = response.usage.outputTokens;
-    let lastModel = response.model;
-    try {
-      parsed = parseRubric(response.text);
-    } catch (firstErr) {
-      try {
-        const retry = await provider.generate({
-          model: this.config.judgeModel,
-          messages,
-          temperature: JUDGE_TEMPERATURE,
-          seed: input.seed,
-          responseFormat: "json",
-        });
-        totalInputTokens += retry.usage.inputTokens;
-        totalOutputTokens += retry.usage.outputTokens;
-        lastModel = retry.model;
-        parsed = parseRubric(retry.text);
-      } catch (retryErr) {
-        const cause = retryErr instanceof Error ? retryErr : firstErr;
-        const message = cause instanceof Error ? cause.message : String(cause);
-        throw new JudgeExecutionError(message, {
-          usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
-          model: lastModel,
-        }, { cause });
-      }
-    }
-
-    try {
-      const score = JudgeScore.fromRubric(
-        {
-          accuracy: parsed.accuracy,
-          coherence: parsed.coherence,
-          instruction: parsed.instruction,
-        },
-        parsed.reasoning,
-      );
-      return {
-        score,
-        usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
-        model: lastModel,
-      };
-    } catch (err) {
-      if (err instanceof Error) {
-        throw new JudgeExecutionError(err.message, {
-          usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
-          model: lastModel,
-        }, { cause: err });
-      }
-      throw err;
-    }
-  }
-
   async gradeBatch(input: BatchJudgeInput): Promise<BatchJudgeResult> {
     if (input.candidates.length === 0) {
       throw ValidationError("gradeBatch requires at least one candidate");
     }
-    // Always go through the batch prompt — even for length-1 inputs.
-    // Falling back to single `grade()` here would judge that one row with
-    // a different system prompt (BASE + JSON_INSTRUCTION) than its
-    // siblings (BASE + BATCH_JUDGE_INSTRUCTIONS), which lets solver
-    // reliability sneak into the score: a row whose triple-mates all
-    // failed would be judged under a different methodology than rows
-    // from a fully-successful triple. Length-1 batches still use the
-    // batch path; the prompt is uniform across the benchmark.
+    // Length-1 batches still go through the batch prompt. Routing them to
+    // a single-candidate prompt would judge survivors of a partially-failed
+    // triple under different instructions than rows from a fully-successful
+    // one, letting solver reliability leak into the score. The prompt is
+    // uniform across the benchmark; this is a fairness contract.
     const provider = this.providers.forModel(this.config.judgeModel);
     const built = buildBatchJudgeMessages(input, this.config.taskType);
     let response;
@@ -190,11 +99,10 @@ export class LLMJudge implements IJudge {
       parsed = parseBatchRubric(response.text, built.labelToOriginalIndex);
     } catch (firstErr) {
       try {
-        // Same retry shape as the single-grade path: reissue the same
-        // batched prompt at T=0 instead of echoing the bad response
-        // back. Batched prompts carry N candidate outputs in the user
-        // message, so resending the conversation would roughly double
-        // input tokens for what is usually a format-compliance recovery.
+        // One defensive retry at T=0. Batched prompts carry N candidate
+        // outputs in the user message, so reissuing the same prompt is
+        // far cheaper than echoing the bad response back for a recovery
+        // that almost always works on a fresh deterministic try.
         const retry = await provider.generate({
           model: this.config.judgeModel,
           messages: built.messages,
@@ -257,30 +165,8 @@ export class LLMJudge implements IJudge {
   }
 }
 
-const parseRubric = (text: string): z.infer<typeof rubricSchema> => {
-  const match = JSON_OBJECT_REGEX.exec(text.trim());
-  if (!match) {
-    throw ValidationError("Judge returned no JSON object");
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(match[0]);
-  } catch {
-    throw ValidationError("Judge returned malformed JSON");
-  }
-  const result = rubricSchema.safeParse(json);
-  if (!result.success) {
-    throw ValidationError("Judge output failed rubric validation", {
-      issues: result.error.issues,
-    });
-  }
-  return result.data;
-};
-
-// Depth-tracking extractor — the simple non-greedy regex above stops at the
-// first `}`, which would clip the inner score object out of a batched
-// response. Skipping content inside JSON strings keeps a `}` inside a
-// reasoning sentence from prematurely closing the match.
+// Depth-tracking extractor that skips content inside JSON strings so a `}`
+// inside a reasoning sentence cannot prematurely close the match.
 const extractTopLevelJsonObject = (text: string): string | null => {
   const start = text.indexOf("{");
   if (start === -1) return null;

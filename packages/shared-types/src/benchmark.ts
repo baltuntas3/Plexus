@@ -89,10 +89,7 @@ export interface BenchmarkResultDto {
   judgeCoherence: number;
   judgeInstruction: number;
   judgeVotes: JudgeVoteDto[];
-  rawScore: number;
   finalScore: number;
-  exactMatch: boolean | null;
-  fuzzyMatchScore: number | null;
   candidateInputTokens: number;
   candidateOutputTokens: number;
   candidateCostUsd: number;
@@ -182,7 +179,6 @@ export interface CandidateStatsDto {
   // Bootstrap 95% CI on meanFinalScore across per-row samples.
   ci95Low: number;
   ci95High: number;
-  stderr: number;
   consistencyScore: number;
   meanLatencyMs: number;
   meanCostUsd: number;
@@ -234,17 +230,6 @@ export interface RecommendationDecisionDto {
   pairedDiffCiHigh: number | null;
 }
 
-export interface PairwiseComparisonDto {
-  candidateKeyA: string;
-  candidateKeyB: string;
-  meanDiff: number;
-  ci95Low: number;
-  ci95High: number;
-  isSignificant: boolean;
-  effectSize: number;
-  effectLabel: "negligible" | "small" | "medium" | "large";
-}
-
 export interface JudgeAgreementRowDto {
   judgeModelA: string;
   judgeModelB: string;
@@ -254,25 +239,6 @@ export interface JudgeAgreementRowDto {
   meanAbsInstructionDiff: number;
   exactAgreementRate: number;
   agreementScore: number;
-}
-
-export interface JudgeBiasRowDto {
-  judgeModel: string;
-  voteCount: number;
-  meanAccuracy: number;
-  meanCoherence: number;
-  meanInstruction: number;
-  meanSignedAccuracyBias: number;
-  meanSignedCoherenceBias: number;
-  meanSignedInstructionBias: number;
-  meanSignedOverallBias: number;
-  biasLabel: "harsher" | "aligned" | "lenient";
-}
-
-export interface VarianceDecompositionDto {
-  totalVariance: number;
-  withinRunVariance: number;
-  acrossTestCaseVariance: number;
 }
 
 // Real, attributed judge feedback pulled from each row's `judgeVotes`. This
@@ -332,13 +298,7 @@ export interface BenchmarkAnalysisDto {
   recommendedKey: string | null;
   recommendedReasoning: string;
   recommendationDecision: RecommendationDecisionDto;
-  pairwiseComparisons: PairwiseComparisonDto[];
   judgeAgreement: JudgeAgreementRowDto[];
-  judgeBias: JudgeBiasRowDto[];
-  varianceDecomposition: VarianceDecompositionDto;
-  exclusionReasons: Record<string, string>;
-  suggestedRepetitions: number;
-  suggestedRepetitionsRationale: string;
   ensembleJudgeReport: EnsembleJudgeReportDto;
 }
 

@@ -54,10 +54,7 @@ const benchmarkResultSchema = new Schema(
     judgeCoherence: { type: Number, required: true },
     judgeInstruction: { type: Number, required: true },
     judgeVotes: { type: [judgeVoteSchema], default: [] },
-    rawScore: { type: Number, required: true },
     finalScore: { type: Number, required: true },
-    exactMatch: { type: Boolean, default: null },
-    fuzzyMatchScore: { type: Number, default: null },
 
     candidateInputTokens: { type: Number, required: true, default: 0 },
     candidateOutputTokens: { type: Number, required: true, default: 0 },

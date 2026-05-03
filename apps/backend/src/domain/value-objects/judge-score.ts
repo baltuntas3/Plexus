@@ -1,10 +1,9 @@
 // LLM-as-judge output scored on a three-axis rubric (paper §3).
 //
-// Raw rubric values are 1..5 integers produced by the grader model. `rawScore`
-// is the rubric mean normalised to 0..1 (so it can feed PPD directly).
-// `finalScore` mirrors `rawScore` — there is no length penalty on top.
-// Length / brevity expectations belong in the prompt itself; the judge's
-// `instruction` axis already grades whether the candidate respected them.
+// `finalScore` is the rubric mean normalised to 0..1 so it can feed PPD and
+// the analyzer directly. Length / brevity expectations belong in the prompt
+// itself; the judge's `instruction` axis already grades whether the
+// candidate respected them, so there is no separate verbosity penalty layer.
 
 export interface JudgeRubric {
   accuracy: number;
@@ -15,7 +14,6 @@ export interface JudgeRubric {
 export class JudgeScore {
   constructor(
     public readonly rubric: JudgeRubric,
-    public readonly rawScore: number,
     public readonly finalScore: number,
     public readonly reasoning: string,
   ) {}
@@ -29,8 +27,7 @@ export class JudgeScore {
     assertInRange("instruction", rubric.instruction);
 
     const mean = (rubric.accuracy + rubric.coherence + rubric.instruction) / 3;
-    const rawScore = (mean - 1) / 4;
-    return new JudgeScore(rubric, rawScore, rawScore, reasoning);
+    return new JudgeScore(rubric, (mean - 1) / 4, reasoning);
   }
 }
 

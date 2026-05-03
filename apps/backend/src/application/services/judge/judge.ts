@@ -1,8 +1,14 @@
 import type { JudgeScore } from "../../../domain/value-objects/judge-score.js";
 
-export interface JudgeInput {
+// Batch grading: N candidates produced by the SAME (system prompt, input)
+// — i.e. repetitions of the same cell. The judge sees the candidates with
+// shuffled anonymous labels and is instructed to score each one
+// independently, so per-candidate scores are still comparable. This is NOT
+// used for cross-version comparison; mixing candidates from different
+// prompt versions in one call would introduce inter-version anchoring bias.
+export interface BatchJudgeInput {
   input: string;
-  candidate: string;
+  candidates: readonly string[];
   seed?: number;
   reference?: string;
   // The system prompt under evaluation — required for the judge's
@@ -11,30 +17,9 @@ export interface JudgeInput {
   systemPrompt?: string;
 }
 
-// Batch grading: N candidates produced by the SAME (system prompt, input)
-// — i.e. repetitions of the same cell. The judge sees the candidates with
-// shuffled anonymous labels and is instructed to score each one
-// independently, so per-candidate scores are comparable to scores from a
-// single-call grade. This is NOT used for cross-version comparison; mixing
-// candidates from different prompt versions in one call would introduce
-// inter-version anchoring bias.
-export interface BatchJudgeInput {
-  input: string;
-  candidates: readonly string[];
-  seed?: number;
-  reference?: string;
-  systemPrompt?: string;
-}
-
 export interface JudgeUsage {
   inputTokens: number;
   outputTokens: number;
-}
-
-export interface JudgeResult {
-  score: JudgeScore;
-  usage: JudgeUsage;
-  model: string;
 }
 
 export interface BatchJudgeResult {
@@ -66,6 +51,5 @@ export class JudgeExecutionError extends Error {
 }
 
 export interface IJudge {
-  grade(input: JudgeInput): Promise<JudgeResult>;
   gradeBatch(input: BatchJudgeInput): Promise<BatchJudgeResult>;
 }

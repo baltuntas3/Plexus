@@ -1,6 +1,7 @@
 import type { TaskType } from "@plexus/shared-types";
 import type { ChatMessage } from "../ai-provider.js";
-import type { BatchJudgeInput, JudgeInput } from "./judge.js";
+import { seededShuffle } from "../../utils/seeded-shuffle.js";
+import type { BatchJudgeInput } from "./judge.js";
 
 const BASE_JUDGE_PROMPT = `You are a strict, impartial grader. Given the system prompt under evaluation, the user's input, and a candidate assistant response, score the response on three 1-5 axes:
 
@@ -42,36 +43,6 @@ const TASK_TYPE_GUIDANCE: Record<TaskType, string> = {
 - instruction: pay close attention to requested language, API, framework, and output format constraints.`,
 };
 
-const JSON_INSTRUCTION = `
-Output ONLY a single JSON object, no markdown fences, no prose before or after:
-{"accuracy": <1-5>, "coherence": <1-5>, "instruction": <1-5>, "reasoning": "<one short sentence>"}
-
-All three scores MUST be integers in [1, 5]. "reasoning" MUST be one sentence. Do not add any other keys.`;
-
-export const buildJudgeSystemPrompt = (taskType: TaskType = "general"): string => {
-  const guidance = TASK_TYPE_GUIDANCE[taskType];
-  if (!guidance) return BASE_JUDGE_PROMPT + JSON_INSTRUCTION;
-  return BASE_JUDGE_PROMPT + "\n\n" + guidance + JSON_INSTRUCTION;
-};
-
-export const JUDGE_SYSTEM_PROMPT = buildJudgeSystemPrompt("general");
-
-export const buildJudgeMessages = (input: JudgeInput, taskType?: TaskType): ChatMessage[] => {
-  const parts: string[] = [];
-  if (input.systemPrompt) {
-    parts.push(`<system_prompt_under_evaluation>\n${input.systemPrompt}\n</system_prompt_under_evaluation>`);
-  }
-  parts.push(`<input>\n${input.input}\n</input>`);
-  parts.push(`<candidate>\n${input.candidate}\n</candidate>`);
-  if (input.reference) {
-    parts.push(`<reference>\n${input.reference}\n</reference>`);
-  }
-  return [
-    { role: "system", content: buildJudgeSystemPrompt(taskType) },
-    { role: "user", content: parts.join("\n\n") },
-  ];
-};
-
 // Batch judge prompt — N attempts of the SAME prompt × input combination,
 // presented with shuffled anonymous labels (ATTEMPT_<n>) so the judge cannot
 // anchor on order or on which attempt was first/last. The judge is
@@ -98,25 +69,6 @@ export const buildBatchJudgeSystemPrompt = (taskType: TaskType = "general"): str
   const guidance = TASK_TYPE_GUIDANCE[taskType];
   if (!guidance) return BASE_JUDGE_PROMPT + BATCH_JUDGE_INSTRUCTIONS;
   return BASE_JUDGE_PROMPT + "\n\n" + guidance + BATCH_JUDGE_INSTRUCTIONS;
-};
-
-// Deterministic shuffle so a (seed, candidates) tuple yields the same label
-// permutation across retries — keeps reruns reproducible and lets the
-// caller stay agnostic of internal ordering.
-const seededShuffle = <T>(items: readonly T[], seed: number): T[] => {
-  const out = [...items];
-  let state = (seed >>> 0) || 1;
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    state >>>= 0;
-    const j = state % (i + 1);
-    const tmp = out[i] as T;
-    out[i] = out[j] as T;
-    out[j] = tmp;
-  }
-  return out;
 };
 
 export interface BuiltBatchJudgePrompt {

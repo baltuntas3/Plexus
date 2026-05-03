@@ -2,9 +2,9 @@
 //
 // Every candidate is (promptVersionId × solverModel). For each candidate the
 // analyzer computes: rubric means across all graded rows, a consistency score
-// from across-row variance, mean latency + cost, total cost, and a bootstrap
-// 95% confidence interval on `meanFinalScore` so two candidates can be
-// compared as "significantly different vs. within noise".
+// from across-row variance, mean latency + cost, total cost, and a cluster
+// bootstrap 95% confidence interval on `meanFinalScore` so two candidates
+// can be compared as "significantly different vs. within noise".
 //
 // The analyzer then produces three ranked views:
 //
@@ -19,13 +19,15 @@
 //      alone ignores consistency.
 //
 // Recommendation is the highest-composite candidate that also passes the
-// score floor — so a cheap-but-terrible row never wins. Quality aggregates
-// only use completed rows; failed rows still contribute to latency/cost and
-// reliability telemetry so provider/judge errors do not masquerade as "fast
-// and free". The ensemble judge report attaches each candidate's
-// representative judge reasoning quotes (per-judge top/bottom plus the row
-// of maximum disagreement) so the UI can show real, attributed grader
-// feedback without an extra LLM narration call.
+// score floor — so a cheap-but-terrible row never wins. If a runner-up is
+// statistically inseparable from the top under paired bootstrap, the
+// cheaper candidate wins. Quality aggregates only use completed rows;
+// failed rows still contribute to latency/cost and reliability telemetry
+// so provider/judge errors do not masquerade as "fast and free". The
+// ensemble judge report attaches each candidate's representative judge
+// reasoning quotes (per-judge top/bottom plus the row of maximum
+// disagreement) so the UI can show real, attributed grader feedback
+// without an extra LLM narration call.
 
 import type {
   BenchmarkResult,
@@ -72,7 +74,6 @@ export interface CandidateStats {
   meanFinalScore: number;
   ci95Low: number;
   ci95High: number;
-  stderr: number;
   consistencyScore: number;
   meanLatencyMs: number;
   meanCostUsd: number;
@@ -115,17 +116,6 @@ export interface CategoryBreakdownRow {
   operationalIssueRate: number;
 }
 
-export interface PairwiseComparison {
-  candidateKeyA: string;
-  candidateKeyB: string;
-  meanDiff: number;
-  ci95Low: number;
-  ci95High: number;
-  isSignificant: boolean;
-  effectSize: number;
-  effectLabel: "negligible" | "small" | "medium" | "large";
-}
-
 export interface JudgeAgreementRow {
   judgeModelA: string;
   judgeModelB: string;
@@ -135,25 +125,6 @@ export interface JudgeAgreementRow {
   meanAbsInstructionDiff: number;
   exactAgreementRate: number;
   agreementScore: number;
-}
-
-export interface JudgeBiasRow {
-  judgeModel: string;
-  voteCount: number;
-  meanAccuracy: number;
-  meanCoherence: number;
-  meanInstruction: number;
-  meanSignedAccuracyBias: number;
-  meanSignedCoherenceBias: number;
-  meanSignedInstructionBias: number;
-  meanSignedOverallBias: number;
-  biasLabel: "harsher" | "aligned" | "lenient";
-}
-
-export interface VarianceDecomposition {
-  totalVariance: number;
-  withinRunVariance: number;
-  acrossTestCaseVariance: number;
 }
 
 // Real, attributed judge feedback surfaced from `judgeVotes` on the result
@@ -222,13 +193,7 @@ export interface BenchmarkAnalysis {
   recommendedKey: string | null;
   recommendedReasoning: string;
   recommendationDecision: RecommendationDecision;
-  pairwiseComparisons: PairwiseComparison[];
   judgeAgreement: JudgeAgreementRow[];
-  judgeBias: JudgeBiasRow[];
-  varianceDecomposition: VarianceDecomposition;
-  exclusionReasons: Record<string, string>;
-  suggestedRepetitions: number;
-  suggestedRepetitionsRationale: string;
   ensembleJudgeReport: EnsembleJudgeReport;
 }
 
@@ -320,9 +285,7 @@ export const aggregateResults = (
   const rng = mulberry32(BOOTSTRAP_SEED);
   const out: CandidateStats[] = [];
   for (const [key, bucket] of buckets) {
-    const sampleCount = bucket.finalScores.length;
     const completedCount = bucket.completedCount;
-    const m = mean(bucket.finalScores);
     const sd = stddev(bucket.finalScores);
     const ci = clusterBootstrapCI(
       [...bucket.scoresByTestCase.values()],
@@ -336,10 +299,9 @@ export const aggregateResults = (
       meanAccuracy: mean(bucket.accuracies),
       meanCoherence: mean(bucket.coherences),
       meanInstruction: mean(bucket.instructions),
-      meanFinalScore: m,
+      meanFinalScore: mean(bucket.finalScores),
       ci95Low: ci.low,
       ci95High: ci.high,
-      stderr: sampleCount === 0 ? 0 : sd / Math.sqrt(sampleCount),
       consistencyScore: consistencyFromStddev(sd, consistencyStddevCeiling),
       meanLatencyMs: mean(bucket.latencies),
       meanCostUsd: mean(bucket.costs),
@@ -661,120 +623,9 @@ const aggregateCategoryBreakdown = (
     });
 };
 
-const effectSizeLabel = (d: number): PairwiseComparison["effectLabel"] => {
-  const abs = Math.abs(d);
-  if (abs < 0.2) return "negligible";
-  if (abs < 0.5) return "small";
-  if (abs < 0.8) return "medium";
-  return "large";
-};
-
-const computePairwiseComparisons = (
-  candidates: readonly CandidateStats[],
+const computeJudgeAgreement = (
   results: readonly BenchmarkResult[],
-): PairwiseComparison[] => {
-  const reliable = candidates.filter(isReliableForComparativeViews);
-  if (reliable.length < 2) return [];
-
-  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
-  for (const row of results) {
-    const key = candidateKey(row);
-    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
-  }
-
-  const comparisons: PairwiseComparison[] = [];
-  for (let i = 0; i < reliable.length; i += 1) {
-    for (let j = i + 1; j < reliable.length; j += 1) {
-      const a = reliable[i]!;
-      const b = reliable[j]!;
-      const aRows = rowsByCandidate.get(a.candidateKey) ?? [];
-      const bRows = rowsByCandidate.get(b.candidateKey) ?? [];
-      const ci = pairedDifferenceCI(aRows, bRows);
-
-      const [aComparableScores, bComparableScores] = comparableCompletedScorePairs(aRows, bRows);
-      const pooledSd = Math.sqrt(
-        (stddev(aComparableScores) ** 2 + stddev(bComparableScores) ** 2) / 2,
-      );
-      const diff = a.meanFinalScore - b.meanFinalScore;
-      const d = pooledSd > 0 ? diff / pooledSd : 0;
-
-      comparisons.push({
-        candidateKeyA: a.candidateKey,
-        candidateKeyB: b.candidateKey,
-        meanDiff: diff,
-        ci95Low: ci?.low ?? diff,
-        ci95High: ci?.high ?? diff,
-        isSignificant: ci ? ci.low > 0 || ci.high < 0 : false,
-        effectSize: d,
-        effectLabel: effectSizeLabel(d),
-      });
-    }
-  }
-  return comparisons;
-};
-
-// `withinRunVariance` here is the OBSERVED spread of finalScore across reps
-// of the same (candidate, testCase). Reps within the same triple share a
-// batched judge call, so this number is a *lower bound* on per-rep noise —
-// it does not include the judge-session noise that would appear if each
-// rep had been judged in isolation. Treat it as a diagnostic for "how
-// stable does the candidate look under batched judging" rather than a
-// pure measurement-error estimate. The CI/PPD paths that need an honest
-// uncertainty estimate use the cluster bootstrap above instead, which
-// preserves the within-cluster correlation that this number does not
-// expose.
-const computeVarianceDecomposition = (
-  results: readonly BenchmarkResult[],
-): VarianceDecomposition => {
-  const completedScores = results
-    .filter((r) => r.status === "completed")
-    .map((r) => r.finalScore);
-  const totalVar = variance(completedScores);
-
-  const byConfig = new Map<string, Map<string, number[]>>();
-  for (const r of results) {
-    if (r.status !== "completed") continue;
-    const configKey = candidateKey(r);
-    if (!byConfig.has(configKey)) byConfig.set(configKey, new Map());
-    const testCaseBucket = byConfig.get(configKey)!;
-    const bucket = testCaseBucket.get(r.testCaseId) ?? [];
-    bucket.push(r.finalScore);
-    testCaseBucket.set(r.testCaseId, bucket);
-  }
-
-  const withinRunVars: number[] = [];
-  const configMeans: number[] = [];
-  for (const testCaseBuckets of byConfig.values()) {
-    const allScoresForConfig: number[] = [];
-    for (const scores of testCaseBuckets.values()) {
-      if (scores.length > 1) withinRunVars.push(variance(scores));
-      allScoresForConfig.push(...scores);
-    }
-    const testCaseMeans = [...testCaseBuckets.values()].map((s) => mean(s));
-    if (testCaseMeans.length > 1) {
-      configMeans.push(variance(testCaseMeans));
-    }
-  }
-
-  return {
-    totalVariance: totalVar,
-    withinRunVariance: withinRunVars.length > 0 ? mean(withinRunVars) : 0,
-    acrossTestCaseVariance: configMeans.length > 0 ? mean(configMeans) : 0,
-  };
-};
-
-const biasLabelFromMean = (bias: number): JudgeBiasRow["biasLabel"] => {
-  if (bias <= -0.25) return "harsher";
-  if (bias >= 0.25) return "lenient";
-  return "aligned";
-};
-
-const computeJudgeDiagnostics = (
-  results: readonly BenchmarkResult[],
-): {
-  agreement: JudgeAgreementRow[];
-  bias: JudgeBiasRow[];
-} => {
+): JudgeAgreementRow[] => {
   type AgreementBucket = {
     count: number;
     absAccuracyDiffs: number[];
@@ -782,60 +633,11 @@ const computeJudgeDiagnostics = (
     absInstructionDiffs: number[];
     exactAgreements: number;
   };
-  type BiasBucket = {
-    voteCount: number;
-    accuracies: number[];
-    coherences: number[];
-    instructions: number[];
-    accuracyBiases: number[];
-    coherenceBiases: number[];
-    instructionBiases: number[];
-    overallBiases: number[];
-  };
 
   const agreementBuckets = new Map<string, AgreementBucket>();
-  const biasBuckets = new Map<string, BiasBucket>();
-  const uniqueJudgeModels = new Set<string>();
 
   for (const row of results) {
-    if (row.status !== "completed" || row.judgeVotes.length === 0) continue;
-    row.judgeVotes.forEach((vote) => uniqueJudgeModels.add(vote.model));
-
-    for (let i = 0; i < row.judgeVotes.length; i += 1) {
-      const vote = row.judgeVotes[i]!;
-      const others = row.judgeVotes.filter((_, index) => index !== i);
-      const bucket = biasBuckets.get(vote.model) ?? {
-        voteCount: 0,
-        accuracies: [],
-        coherences: [],
-        instructions: [],
-        accuracyBiases: [],
-        coherenceBiases: [],
-        instructionBiases: [],
-        overallBiases: [],
-      };
-      bucket.voteCount += 1;
-      bucket.accuracies.push(vote.accuracy);
-      bucket.coherences.push(vote.coherence);
-      bucket.instructions.push(vote.instruction);
-      if (others.length > 0) {
-        const accuracyBias = vote.accuracy - mean(others.map((other) => other.accuracy));
-        const coherenceBias = vote.coherence - mean(others.map((other) => other.coherence));
-        const instructionBias =
-          vote.instruction - mean(others.map((other) => other.instruction));
-        bucket.accuracyBiases.push(accuracyBias);
-        bucket.coherenceBiases.push(coherenceBias);
-        bucket.instructionBiases.push(instructionBias);
-        bucket.overallBiases.push(mean([accuracyBias, coherenceBias, instructionBias]));
-      } else {
-        bucket.accuracyBiases.push(0);
-        bucket.coherenceBiases.push(0);
-        bucket.instructionBiases.push(0);
-        bucket.overallBiases.push(0);
-      }
-      biasBuckets.set(vote.model, bucket);
-    }
-
+    if (row.status !== "completed" || row.judgeVotes.length < 2) continue;
     for (let i = 0; i < row.judgeVotes.length; i += 1) {
       for (let j = i + 1; j < row.judgeVotes.length; j += 1) {
         const left = row.judgeVotes[i]!;
@@ -865,7 +667,7 @@ const computeJudgeDiagnostics = (
     }
   }
 
-  const agreement = [...agreementBuckets.entries()]
+  return [...agreementBuckets.entries()]
     .map(([key, bucket]) => {
       const [judgeModelA = "", judgeModelB = ""] = key.split("::");
       const meanAbsAccuracyDiff = mean(bucket.absAccuracyDiffs);
@@ -888,83 +690,6 @@ const computeJudgeDiagnostics = (
       };
     })
     .sort((a, b) => b.agreementScore - a.agreementScore);
-
-  const bias = [...biasBuckets.entries()]
-    .map(([judgeModel, bucket]) => {
-      const meanSignedOverallBias = mean(bucket.overallBiases);
-      return {
-        judgeModel,
-        voteCount: bucket.voteCount,
-        meanAccuracy: mean(bucket.accuracies),
-        meanCoherence: mean(bucket.coherences),
-        meanInstruction: mean(bucket.instructions),
-        meanSignedAccuracyBias: mean(bucket.accuracyBiases),
-        meanSignedCoherenceBias: mean(bucket.coherenceBiases),
-        meanSignedInstructionBias: mean(bucket.instructionBiases),
-        meanSignedOverallBias,
-        biasLabel: biasLabelFromMean(meanSignedOverallBias),
-      };
-    })
-    .sort((a, b) => Math.abs(b.meanSignedOverallBias) - Math.abs(a.meanSignedOverallBias));
-
-  return {
-    agreement,
-    bias: uniqueJudgeModels.size >= 3 ? bias : [],
-  };
-};
-
-const Z_ALPHA_HALF = 1.96;
-const Z_BETA_80 = 0.84;
-const MIN_DETECTABLE_DIFF = 0.1;
-
-const computeSuggestedRepetitions = (
-  candidates: readonly CandidateStats[],
-): { count: number; rationale: string } => {
-  const reliable = candidates.filter((c) => c.completedCount > 0);
-  if (reliable.length === 0) {
-    return { count: 3, rationale: "No completed results to estimate variance." };
-  }
-  const pooledStderr = mean(reliable.map((c) => c.stderr));
-  const sampleSizes = reliable.map((c) => c.completedCount);
-  const avgN = mean(sampleSizes);
-  const estimatedSd = pooledStderr * Math.sqrt(avgN);
-  if (estimatedSd <= 0) {
-    return { count: 3, rationale: "Scores are perfectly consistent; minimum repetitions suffice." };
-  }
-  const required = Math.ceil(
-    (2 * ((Z_ALPHA_HALF + Z_BETA_80) ** 2) * estimatedSd ** 2) /
-      MIN_DETECTABLE_DIFF ** 2,
-  );
-  const clamped = Math.max(3, Math.min(50, required));
-  return {
-    count: clamped,
-    rationale:
-      `Pooled SD=${estimatedSd.toFixed(3)}. To detect a ${MIN_DETECTABLE_DIFF} point ` +
-      `difference at 95% confidence / 80% power: ~${clamped} repetitions per cell.`,
-  };
-};
-
-const computeExclusionReasons = (
-  candidates: readonly CandidateStats[],
-  ranking: readonly CompositeRanking[],
-  comparableCoverageKeys: ReadonlySet<string>,
-): Record<string, string> => {
-  const rankedKeys = new Set(ranking.map((r) => r.candidateKey));
-  const reasons: Record<string, string> = {};
-  for (const c of candidates) {
-    if (rankedKeys.has(c.candidateKey)) continue;
-    if (c.completedCount === 0) {
-      reasons[c.candidateKey] = "No completed results — all runs failed.";
-    } else if (c.operationalIssueRate > MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION) {
-      reasons[c.candidateKey] =
-        `Operational issue rate ${(c.operationalIssueRate * 100).toFixed(1)}% exceeds ` +
-        `${(MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION * 100).toFixed(0)}% reliability threshold.`;
-    } else if (!comparableCoverageKeys.has(c.candidateKey)) {
-      reasons[c.candidateKey] =
-        "Completed-sample coverage differs from the comparable candidate set, so ranking would be unfair.";
-    }
-  }
-  return reasons;
 };
 
 export const computeAnalysis = (
@@ -1004,13 +729,7 @@ export const computeAnalysis = (
         pairedDiffCiLow: null,
         pairedDiffCiHigh: null,
       },
-      pairwiseComparisons: [],
       judgeAgreement: [],
-      judgeBias: [],
-      varianceDecomposition: { totalVariance: 0, withinRunVariance: 0, acrossTestCaseVariance: 0 },
-      exclusionReasons: computeExclusionReasons(candidates, [], comparableCoverageKeys),
-      suggestedRepetitions: 3,
-      suggestedRepetitionsRationale: "No completed results to estimate variance.",
       ensembleJudgeReport: { perCandidate: [] },
     };
   }
@@ -1060,16 +779,6 @@ export const computeAnalysis = (
       ? computePPD(comparableCandidates, baseline)
       : [];
 
-  const pairwiseComparisons = computePairwiseComparisons(comparableCandidates, results);
-  const judgeDiagnostics = computeJudgeDiagnostics(results);
-  const varianceDecomposition = computeVarianceDecomposition(results);
-  const exclusionReasons = computeExclusionReasons(
-    candidates,
-    ranking,
-    comparableCoverageKeys,
-  );
-  const power = computeSuggestedRepetitions(candidates);
-
   return {
     candidates,
     categoryBreakdown,
@@ -1097,14 +806,8 @@ export const computeAnalysis = (
           comparedAgainstKey: null,
           pairedDiffCiLow: null,
           pairedDiffCiHigh: null,
-    },
-    pairwiseComparisons,
-    judgeAgreement: judgeDiagnostics.agreement,
-    judgeBias: judgeDiagnostics.bias,
-    varianceDecomposition,
-    exclusionReasons,
-    suggestedRepetitions: power.count,
-    suggestedRepetitionsRationale: power.rationale,
+        },
+    judgeAgreement: computeJudgeAgreement(results),
     ensembleJudgeReport: buildEnsembleJudgeReport(candidates, results),
   };
 };
@@ -1380,36 +1083,17 @@ const operationalIssueWeight = (row: BenchmarkResult): number => {
   return row.judgeFailureCount / totalJudges;
 };
 
-const comparableCompletedScorePairs = (
-  leftRows: readonly BenchmarkResult[],
-  rightRows: readonly BenchmarkResult[],
-): [number[], number[]] => {
-  const left = new Map(leftRows.map((r) => [resultSampleKey(r), r] as const));
-  const right = new Map(rightRows.map((r) => [resultSampleKey(r), r] as const));
-  const leftScores: number[] = [];
-  const rightScores: number[] = [];
-  for (const key of left.keys()) {
-    const l = left.get(key);
-    const r = right.get(key);
-    if (!l || !r || l.status !== "completed" || r.status !== "completed") continue;
-    leftScores.push(l.finalScore);
-    rightScores.push(r.finalScore);
-  }
-  return [leftScores, rightScores];
-};
-
 // Helpers.
 
 const mean = (values: readonly number[]): number =>
   values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
-const variance = (values: readonly number[]): number => {
+const stddev = (values: readonly number[]): number => {
   if (values.length < 2) return 0;
   const m = mean(values);
-  return values.reduce((s, v) => s + (v - m) ** 2, 0) / (values.length - 1);
+  const v = values.reduce((s, x) => s + (x - m) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(v);
 };
-
-const stddev = (values: readonly number[]): number => Math.sqrt(variance(values));
 
 const consistencyFromStddev = (
   sd: number,

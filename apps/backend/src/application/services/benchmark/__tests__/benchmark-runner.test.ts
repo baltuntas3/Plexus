@@ -8,7 +8,7 @@ import type {
   BatchJudgeInput,
   BatchJudgeResult,
   IJudge,
-  JudgeResult,
+  JudgeUsage,
 } from "../../judge/judge.js";
 import { JudgeExecutionError } from "../../judge/judge.js";
 import type { JobContext } from "../../job-queue.js";
@@ -108,19 +108,29 @@ class SingleProviderFactory implements IAIProviderFactory {
   }
 }
 
-// Wraps a per-candidate `grade` into a full `IJudge` so test bodies that
-// only care about single-candidate behaviour stay short. The derived
-// `gradeBatch` calls `grade` once per candidate and aggregates — under the
-// new triple-batched runner, this preserves the original test's call-count
-// semantics for size-1 batches and produces sensible per-candidate scores
-// for larger ones.
-const judgeFromGrade = (grade: IJudge["grade"]): IJudge => ({
-  grade,
+// Wraps a per-candidate scoring fn into a full `IJudge`. The runner only
+// calls `gradeBatch`; this helper keeps test bodies that want
+// per-candidate semantics short by iterating internally and aggregating.
+interface PerCandidateInput {
+  input: string;
+  candidate: string;
+  seed?: number;
+  reference?: string;
+  systemPrompt?: string;
+}
+interface PerCandidateResult {
+  score: JudgeScore;
+  usage: JudgeUsage;
+  model: string;
+}
+const judgeFromPerCandidate = (
+  perCandidate: (input: PerCandidateInput) => Promise<PerCandidateResult>,
+): IJudge => ({
   async gradeBatch(input) {
-    const results: JudgeResult[] = [];
+    const results: PerCandidateResult[] = [];
     for (const candidate of input.candidates) {
       results.push(
-        await grade({
+        await perCandidate({
           input: input.input,
           candidate,
           ...(input.seed !== undefined ? { seed: input.seed } : {}),
@@ -149,14 +159,6 @@ class StubJudge implements IJudge {
     private readonly score: { accuracy: number; coherence: number; instruction: number },
     private readonly judgeModel = "openai/gpt-oss-20b",
   ) {}
-  async grade(): Promise<JudgeResult> {
-    this.calls += 1;
-    return {
-      score: JudgeScore.fromRubric(this.score, "stub reasoning"),
-      usage: { inputTokens: 20, outputTokens: 10 },
-      model: this.judgeModel,
-    };
-  }
   async gradeBatch(input: BatchJudgeInput): Promise<BatchJudgeResult> {
     this.calls += 1;
     this.batchSizes.push(input.candidates.length);
@@ -394,7 +396,7 @@ describe("BenchmarkRunner.run", () => {
   it("scores rows purely from rubric — candidate length never penalises finalScore", async () => {
     // Length expectations belong in the prompt; the judge's `instruction`
     // axis already grades whether the candidate respected them. The runner
-    // must NOT clip finalScore below rawScore for long or short outputs.
+    // must NOT apply any length-based penalty on top of the rubric mean.
     const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider((req) => {
       const text =
@@ -434,7 +436,6 @@ describe("BenchmarkRunner.run", () => {
 
     await runner.run(bm.id, buildContext().ctx);
     const rows = await results.listByBenchmark(bm.id);
-    expect(rows.every((row) => row.finalScore === row.rawScore)).toBe(true);
     expect(rows.every((row) => row.finalScore === 1)).toBe(true);
   });
 
@@ -485,7 +486,7 @@ describe("BenchmarkRunner.run", () => {
   it("passes expected output as reference to the judge when present", async () => {
     const { benchmarks, results, queries } = await buildScaffold();
     const gradeCalls: { reference?: string }[] = [];
-    const judge: IJudge = judgeFromGrade(async (input) => {
+    const judge: IJudge = judgeFromPerCandidate(async (input) => {
       gradeCalls.push({ reference: input.reference });
       return {
         score: JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, "ok"),
@@ -553,7 +554,7 @@ describe("BenchmarkRunner.run", () => {
       promptQueries: queries,
       providers: new SingleProviderFactory(provider),
       judgeFactory: () =>
-        judgeFromGrade(async () => {
+        judgeFromPerCandidate(async () => {
           judgeCall += 1;
           if (judgeCall === 2) {
             throw new JudgeExecutionError("judge parse failed", {
@@ -666,7 +667,7 @@ describe("BenchmarkRunner.run", () => {
       inputTokens: 12,
       outputTokens: 8,
     }));
-    const judge: IJudge = judgeFromGrade(async () => {
+    const judge: IJudge = judgeFromPerCandidate(async () => {
       throw new Error("judge exploded");
     });
 
@@ -710,7 +711,7 @@ describe("BenchmarkRunner.run", () => {
       inputTokens: 10,
       outputTokens: 5,
     }));
-    const judge: IJudge = judgeFromGrade(async () => {
+    const judge: IJudge = judgeFromPerCandidate(async () => {
       throw new JudgeExecutionError("judge returned malformed JSON", {
         usage: { inputTokens: 30, outputTokens: 12 },
         model: "openai/gpt-oss-20b",
@@ -820,7 +821,7 @@ describe("BenchmarkRunner.run", () => {
       outputTokens: 2,
     }));
     const judgeA = new StubJudge({ accuracy: 5, coherence: 4, instruction: 4 });
-    const judgeB: IJudge = judgeFromGrade(async () => {
+    const judgeB: IJudge = judgeFromPerCandidate(async () => {
       throw new JudgeExecutionError("judge-b malformed JSON", {
         usage: { inputTokens: 11, outputTokens: 7 },
         model: "openai/gpt-oss-20b",
@@ -993,10 +994,7 @@ describe("BenchmarkRunner.run", () => {
       judgeCoherence: 5,
       judgeInstruction: 5,
       judgeVotes: [],
-      rawScore: 1,
       finalScore: 1,
-      exactMatch: null,
-      fuzzyMatchScore: null,
       candidateInputTokens: 10000,
       candidateOutputTokens: 5000,
       candidateCostUsd: 0.01,

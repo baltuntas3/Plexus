@@ -17,6 +17,7 @@ import type { IBenchmarkResultRepository } from "../../../domain/repositories/be
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { mapConcurrent } from "../../utils/map-concurrent.js";
+import { seededShuffle } from "../../utils/seeded-shuffle.js";
 import type { IAIProviderFactory, GenerateResponse } from "../ai-provider.js";
 import type { JobContext } from "../job-queue.js";
 import { calculateCost } from "../model-registry.js";
@@ -122,7 +123,7 @@ export class BenchmarkRunner {
       const estimatedCellCostUsd = estimateCellCostUsd(benchmark, cells.length);
       const existingRows = await this.deps.results.listByBenchmark(benchmarkId);
       const existingByKey = new Map(
-        existingRows.map((row) => [resultKey(row), row] as const),
+        existingRows.map((row) => [rowKey(row), row] as const),
       );
       const total = cells.length;
       let processed = cells.reduce((sum, cell) => {
@@ -159,7 +160,7 @@ export class BenchmarkRunner {
 
       // Group triples into version-balance buckets per testCase so a budget
       // cap leaves balanced version coverage at a triple boundary.
-      const tripleBuckets = bucketByTestCase(triples);
+      const tripleBuckets = bucketByTestCase(triples, benchmark.seed);
       for (const bucket of tripleBuckets) {
         const estimatedBucketCostUsd =
           reservePerCellUsd() *
@@ -298,7 +299,7 @@ export class BenchmarkRunner {
     }
     const solverOutcomes: SolverOutcome[] = await Promise.all(
       triple.cells.map(async (cell) => {
-        const solverSeed = deriveSeed(benchmark.seed, cell);
+        const solverSeed = deriveSolverSeed(benchmark.seed, cell);
         const start = Date.now();
         try {
           const candidate = await provider.generate({
@@ -505,7 +506,6 @@ export class BenchmarkRunner {
           judgeCoherence: meanCoherence,
           judgeInstruction: meanInstruction,
           judgeVotes: votesForCell,
-          rawScore: score.rawScore,
           finalScore: score.finalScore,
           judgeInputTokens,
           judgeOutputTokens,
@@ -562,7 +562,7 @@ const cellKey = (cell: MatrixCell): string =>
 const tripleKey = (cell: MatrixCell): string =>
   `${cell.testCase.id}::${cell.version.id}::${cell.solverModel}`;
 
-const resultKey = (
+const rowKey = (
   row: Pick<
     UpsertableBenchmarkResult,
     "testCaseId" | "promptVersionId" | "solverModel" | "runIndex"
@@ -685,25 +685,40 @@ const buildTriples = (cells: readonly MatrixCell[]): Triple[] => {
   return [...byKey.values()];
 };
 
-// Group triples by testCase, shuffle the (version, solver) pairs inside each
-// bucket, and order the buckets themselves by a seeded shuffle. Budget caps
-// stop on a bucket boundary, leaving each completed testCase fully covered
-// across all version × solver triples — preserving the version-balance the
-// per-rep slicing strategy used to give us.
-const bucketByTestCase = (triples: readonly Triple[]): Triple[][] => {
+// Group triples by testCase, then seed-shuffle both the (version, solver)
+// triples inside each bucket and the bucket order itself. Budget caps stop
+// at a bucket boundary, so completed testCases retain full version × solver
+// coverage; the shuffle prevents matrix-order from systematically privileging
+// the same testCases / triples whenever a benchmark hits its budget cap.
+// The shuffle is deterministic in `benchmarkSeed` so reruns are reproducible.
+const bucketByTestCase = (
+  triples: readonly Triple[],
+  benchmarkSeed: number,
+): Triple[][] => {
   const byTestCase = new Map<string, Triple[]>();
   for (const triple of triples) {
     const list = byTestCase.get(triple.testCaseId) ?? [];
     list.push(triple);
     byTestCase.set(triple.testCaseId, list);
   }
-  return [...byTestCase.values()];
+  // Distinct seeds per axis so within-bucket and cross-bucket permutations
+  // are independent — using the same seed for both would correlate them.
+  const innerSeed = fnvSeed(benchmarkSeed, "bucket:inner");
+  const outerSeed = fnvSeed(benchmarkSeed, "bucket:outer");
+  const shuffledBuckets = [...byTestCase.values()].map((bucket) =>
+    seededShuffle(bucket, innerSeed),
+  );
+  return seededShuffle(shuffledBuckets, outerSeed);
 };
 
-// Deterministic 32-bit seed derivation so each (testCase, version, solver,
-// runIndex) gets a distinct but reproducible sampling seed.
-const deriveSeed = (benchmarkSeed: number, cell: MatrixCell): number => {
-  const str = `${cell.testCase.id}|${cell.version.id}|${cell.solverModel}|${cell.runIndex}`;
+// Deterministic 32-bit FNV-1a derivation: positive int seed reproducible
+// from (benchmarkSeed, namespacing string).
+//   - solver path passes the cell coordinates so each rep gets a distinct
+//     sampling seed.
+//   - batch-judge path passes (triple, judgeModel) so the judge sees a
+//     deterministic label permutation that is fixed across the triple's
+//     reps but distinct per (triple, judgeModel).
+const fnvSeed = (benchmarkSeed: number, str: string): number => {
   let h = benchmarkSeed >>> 0;
   for (let i = 0; i < str.length; i += 1) {
     h = (h ^ str.charCodeAt(i)) >>> 0;
@@ -712,20 +727,18 @@ const deriveSeed = (benchmarkSeed: number, cell: MatrixCell): number => {
   return h & 0x7fffffff;
 };
 
-// Triple-level seed for batch judging: fixed across the triple's reps so
-// the judge sees a deterministic label permutation, but distinct per
-// (triple, judgeModel) so different judges and different cells stay
-// independent.
+const deriveSolverSeed = (benchmarkSeed: number, cell: MatrixCell): number =>
+  fnvSeed(
+    benchmarkSeed,
+    `${cell.testCase.id}|${cell.version.id}|${cell.solverModel}|${cell.runIndex}`,
+  );
+
 const deriveBatchJudgeSeed = (
   benchmarkSeed: number,
   triple: Triple,
   judgeModel: string,
-): number => {
-  const str = `${triple.testCaseId}|${triple.versionId}|${triple.solverModel}|${judgeModel}`;
-  let h = benchmarkSeed >>> 0;
-  for (let i = 0; i < str.length; i += 1) {
-    h = (h ^ str.charCodeAt(i)) >>> 0;
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h & 0x7fffffff;
-};
+): number =>
+  fnvSeed(
+    benchmarkSeed,
+    `${triple.testCaseId}|${triple.versionId}|${triple.solverModel}|${judgeModel}`,
+  );

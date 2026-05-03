@@ -44,19 +44,16 @@ export interface BenchmarkResult {
   input: string;
   candidateOutput: string;
 
-  // Rubric values are means across the judge ensemble (1..5). rawScore and
-  // finalScore are normalised to [0,1] (matching JudgeScore's contract).
-  // finalScore equals rawScore — there is no length penalty applied on top.
+  // Rubric values are means across the judge ensemble (1..5). finalScore is
+  // the normalised rubric mean in [0,1] (matching JudgeScore's contract).
   // Length expectations belong in the prompt; the judge's `instruction`
-  // axis already grades whether the candidate respected them.
+  // axis already grades whether the candidate respected them, so there is
+  // no separate length-penalty layer.
   judgeAccuracy: number;
   judgeCoherence: number;
   judgeInstruction: number;
   judgeVotes: JudgeVote[];
-  rawScore: number;
   finalScore: number;
-  exactMatch: boolean | null;
-  fuzzyMatchScore: number | null;
 
   candidateInputTokens: number;
   candidateOutputTokens: number;
@@ -95,7 +92,6 @@ export interface CompletedResultInput {
   judgeCoherence: number;
   judgeInstruction: number;
   judgeVotes: readonly JudgeVote[];
-  rawScore: number;
   finalScore: number;
   judgeInputTokens: number;
   judgeOutputTokens: number;
@@ -131,10 +127,7 @@ export const completedBenchmarkResult = (
     judgeCoherence: input.judgeCoherence,
     judgeInstruction: input.judgeInstruction,
     judgeVotes: [...input.judgeVotes],
-    rawScore: input.rawScore,
     finalScore: input.finalScore,
-    exactMatch: null,
-    fuzzyMatchScore: null,
 
     candidateInputTokens: input.candidateInputTokens,
     candidateOutputTokens: input.candidateOutputTokens,
@@ -199,10 +192,7 @@ export const failedBenchmarkResult = (
     judgeCoherence: 0,
     judgeInstruction: 0,
     judgeVotes: [],
-    rawScore: 0,
     finalScore: 0,
-    exactMatch: null,
-    fuzzyMatchScore: null,
 
     candidateInputTokens: input.candidateInputTokens ?? 0,
     candidateOutputTokens: input.candidateOutputTokens ?? 0,

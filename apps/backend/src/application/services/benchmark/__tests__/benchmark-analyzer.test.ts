@@ -21,10 +21,7 @@ const row = (overrides: Partial<BenchmarkResult>): BenchmarkResult => ({
   judgeCoherence: 5,
   judgeInstruction: 5,
   judgeVotes: [],
-  rawScore: 1,
   finalScore: 1,
-  exactMatch: null,
-  fuzzyMatchScore: null,
   candidateInputTokens: 0,
   candidateOutputTokens: 0,
   candidateCostUsd: 0,
@@ -363,22 +360,11 @@ describe("computeAnalysis", () => {
     ]);
 
     expect(analysis.recommendedKey).toBeNull();
-    expect(analysis.exclusionReasons).toEqual(
-      expect.objectContaining({
-        [candidateKey({ promptVersionId: "vB", solverModel: "llama-3.3-70b-versatile" })]:
-          expect.stringContaining("Completed-sample coverage differs"),
-        }),
-    );
-  });
-
-  it("suppresses pairwise comparisons when completed coverage is unequal", () => {
-    const analysis = computeAnalysis([
-      row({ promptVersionId: "vA", testCaseId: "a", runIndex: 0, finalScore: 0.91 }),
-      row({ promptVersionId: "vA", testCaseId: "b", runIndex: 0, finalScore: 0.9 }),
-      row({ promptVersionId: "vB", testCaseId: "a", runIndex: 0, finalScore: 0.89 }),
-    ]);
-
-    expect(analysis.pairwiseComparisons).toEqual([]);
+    expect(
+      analysis.ranking.some((entry) =>
+        entry.candidateKey.includes("vB"),
+      ),
+    ).toBe(false);
   });
 
   it("derives the score floor from reliable candidates when available", () => {
@@ -553,7 +539,7 @@ describe("computeAnalysis", () => {
     );
   });
 
-  it("computes judge agreement and suppresses relative severity with only two judges", () => {
+  it("computes judge agreement when at least two judges score a row", () => {
     const analysis = computeAnalysis([
       row({
         testCaseId: "a",
@@ -573,68 +559,7 @@ describe("computeAnalysis", () => {
 
     expect(analysis.judgeAgreement).toHaveLength(1);
     expect(analysis.judgeAgreement[0]?.judgeModelA).toBe("judge-a");
-    expect(analysis.judgeBias).toEqual([]);
-  });
-
-  it("includes pairwise comparisons with significance and effect size", () => {
-    const aScores = [0.85, 0.88, 0.92, 0.95, 0.90];
-    const bScores = [0.45, 0.50, 0.55, 0.48, 0.52];
-    const analysis = computeAnalysis([
-      ...aScores.map((f, i) =>
-        row({ promptVersionId: "vA", testCaseId: `tc${i}`, finalScore: f, totalCostUsd: 0.1 }),
-      ),
-      ...bScores.map((f, i) =>
-        row({ promptVersionId: "vB", testCaseId: `tc${i}`, finalScore: f, totalCostUsd: 0.1 }),
-      ),
-    ]);
-    expect(analysis.pairwiseComparisons).toHaveLength(1);
-    const pair = analysis.pairwiseComparisons[0]!;
-    expect(pair.candidateKeyA).toContain("vA");
-    expect(pair.candidateKeyB).toContain("vB");
-    expect(pair.meanDiff).toBeGreaterThan(0);
-    expect(pair.isSignificant).toBe(true);
-    expect(pair.effectSize).toBeGreaterThan(0);
-    expect(["small", "medium", "large"]).toContain(pair.effectLabel);
-  });
-
-  it("computes variance decomposition", () => {
-    const analysis = computeAnalysis([
-      row({ promptVersionId: "vA", testCaseId: "tc1", runIndex: 0, finalScore: 0.9 }),
-      row({ promptVersionId: "vA", testCaseId: "tc1", runIndex: 1, finalScore: 0.8 }),
-      row({ promptVersionId: "vA", testCaseId: "tc2", runIndex: 0, finalScore: 0.5 }),
-      row({ promptVersionId: "vA", testCaseId: "tc2", runIndex: 1, finalScore: 0.6 }),
-    ]);
-    expect(analysis.varianceDecomposition.totalVariance).toBeGreaterThan(0);
-    expect(analysis.varianceDecomposition.withinRunVariance).toBeGreaterThanOrEqual(0);
-    expect(analysis.varianceDecomposition.acrossTestCaseVariance).toBeGreaterThan(0);
-  });
-
-  it("provides suggested repetitions based on observed variance", () => {
-    const analysis = computeAnalysis([
-      ...Array.from({ length: 10 }, (_, i) =>
-        row({ testCaseId: `tc${i}`, finalScore: 0.5 + Math.random() * 0.5 }),
-      ),
-    ]);
-    expect(analysis.suggestedRepetitions).toBeGreaterThanOrEqual(3);
-    expect(analysis.suggestedRepetitionsRationale).toContain("SD=");
-  });
-
-  it("reports exclusion reasons for unreliable candidates", () => {
-    const analysis = computeAnalysis([
-      row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.8, totalCostUsd: 0.5 }),
-      row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.82, totalCostUsd: 0.5 }),
-      row({ promptVersionId: "vFlaky", testCaseId: "a", finalScore: 1, totalCostUsd: 0.1 }),
-      row({
-        promptVersionId: "vFlaky",
-        testCaseId: "b",
-        status: "failed",
-        failureKind: "solver_error",
-        finalScore: 0,
-        totalCostUsd: 0,
-      }),
-    ]);
-    const flakyKey = candidateKey({ promptVersionId: "vFlaky", solverModel: "llama-3.3-70b-versatile" });
-    expect(analysis.exclusionReasons[flakyKey]).toContain("Operational issue rate");
+    expect(analysis.judgeAgreement[0]?.sharedVotes).toBe(2);
   });
 
   it("uses a gentler consistency ceiling of 0.4", () => {
@@ -766,7 +691,6 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.9,
           ci95Low: 0.85,
           ci95High: 0.9,
-          stderr: 0.01,
           consistencyScore: 1,
           meanLatencyMs: 100,
           meanCostUsd: 1.0,
@@ -787,7 +711,6 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.4,
           ci95Low: 0.1,
           ci95High: 0.2,
-          stderr: 0.02,
           consistencyScore: 1,
           meanLatencyMs: 100,
           meanCostUsd: 0.7,
@@ -808,7 +731,6 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.88,
           ci95Low: 0.87,
           ci95High: 0.89,
-          stderr: 0.01,
           consistencyScore: 1,
           meanLatencyMs: 100,
           meanCostUsd: 0.2,

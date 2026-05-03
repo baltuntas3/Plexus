@@ -30,10 +30,7 @@ interface BenchmarkResultDoc {
   judgeCoherence: number;
   judgeInstruction: number;
   judgeVotes: JudgeVote[];
-  rawScore: number;
   finalScore: number;
-  exactMatch: boolean | null;
-  fuzzyMatchScore: number | null;
   candidateInputTokens: number;
   candidateOutputTokens: number;
   candidateCostUsd: number;
@@ -62,10 +59,7 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   judgeCoherence: doc.judgeCoherence,
   judgeInstruction: doc.judgeInstruction,
   judgeVotes: (doc.judgeVotes ?? []).map((v) => ({ ...v })),
-  rawScore: doc.rawScore,
   finalScore: doc.finalScore,
-  exactMatch: doc.exactMatch ?? null,
-  fuzzyMatchScore: doc.fuzzyMatchScore ?? null,
   candidateInputTokens: doc.candidateInputTokens,
   candidateOutputTokens: doc.candidateOutputTokens,
   candidateCostUsd: doc.candidateCostUsd,

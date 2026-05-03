@@ -11,7 +11,6 @@ import {
   Progress,
   RingProgress,
   Select,
-  SimpleGrid,
   Stack,
   Table,
   Tabs,
@@ -926,102 +925,46 @@ const AnalysisPanel = ({
         </Card>
       )}
 
-      <SimpleGrid cols={{ base: 1, md: 2 }}>
-        <Card withBorder>
-          <Stack gap="xs">
-            <Text fw={600}>Judge agreement</Text>
-            <Text size="xs" c="dimmed">
-              Pairwise disagreement across judge votes on the same completed rows.
-            </Text>
-            {analysis.judgeAgreement.length === 0 ? (
-              <Text size="sm" c="dimmed">Not enough multi-judge data.</Text>
-            ) : (
-              <Table striped highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Judge pair</Table.Th>
-                    <Table.Th>Shared rows</Table.Th>
-                    <Table.Th>Agreement</Table.Th>
-                    <Table.Th>Exact match</Table.Th>
+      <Card withBorder>
+        <Stack gap="xs">
+          <Text fw={600}>Judge agreement</Text>
+          <Text size="xs" c="dimmed">
+            Pairwise disagreement across judge votes on the same completed rows.
+          </Text>
+          {analysis.judgeAgreement.length === 0 ? (
+            <Text size="sm" c="dimmed">Not enough multi-judge data.</Text>
+          ) : (
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Judge pair</Table.Th>
+                  <Table.Th>Shared rows</Table.Th>
+                  <Table.Th>Agreement</Table.Th>
+                  <Table.Th>Exact match</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {analysis.judgeAgreement.map((row) => (
+                  <Table.Tr key={`${row.judgeModelA}-${row.judgeModelB}`}>
+                    <Table.Td>
+                      <Text size="sm">{row.judgeModelA} vs {row.judgeModelB}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">{row.sharedVotes}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{(row.agreementScore * 100).toFixed(1)}%</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">{(row.exactAgreementRate * 100).toFixed(1)}%</Text>
+                    </Table.Td>
                   </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {analysis.judgeAgreement.map((row) => (
-                    <Table.Tr key={`${row.judgeModelA}-${row.judgeModelB}`}>
-                      <Table.Td>
-                        <Text size="sm">{row.judgeModelA} vs {row.judgeModelB}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">{row.sharedVotes}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm">{(row.agreementScore * 100).toFixed(1)}%</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">{(row.exactAgreementRate * 100).toFixed(1)}%</Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            )}
-          </Stack>
-        </Card>
-
-        <Card withBorder>
-          <Stack gap="xs">
-            <Text fw={600}>Judge relative severity</Text>
-            <Text size="xs" c="dimmed">
-              Shown only when at least 3 judges scored the benchmark. Values are relative to the
-              rest of the judge ensemble, not an absolute bias estimate.
-            </Text>
-            {analysis.judgeBias.length === 0 ? (
-              <Text size="sm" c="dimmed">Need at least 3 judges for a meaningful relative-severity view.</Text>
-            ) : (
-              <Table striped highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Judge</Table.Th>
-                    <Table.Th>Votes</Table.Th>
-                    <Table.Th>Overall bias</Table.Th>
-                    <Table.Th>Label</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {analysis.judgeBias.map((row) => (
-                    <Table.Tr key={row.judgeModel}>
-                      <Table.Td>
-                        <Text size="sm">{row.judgeModel}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">{row.voteCount}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm">{row.meanSignedOverallBias.toFixed(2)}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge
-                          size="xs"
-                          color={
-                            row.biasLabel === "aligned"
-                              ? "gray"
-                              : row.biasLabel === "lenient"
-                                ? "green"
-                                : "orange"
-                          }
-                          variant="light"
-                        >
-                          {row.biasLabel}
-                        </Badge>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            )}
-          </Stack>
-        </Card>
-      </SimpleGrid>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
+        </Stack>
+      </Card>
 
       <Card withBorder>
         <Stack gap="xs">

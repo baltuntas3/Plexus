@@ -47,13 +47,6 @@ export class PPD {
     return new PPD(candidateRatio / baselineRatio, candidate, baseline);
   }
 
-  // Multiplicative speedup the candidate gives over the baseline. Equal to
-  // `value` but exposed under the user-facing name from the paper ("Nx
-  // savings").
-  get savingsMultiplier(): number {
-    return this.value;
-  }
-
   get isMoreEfficient(): boolean {
     return this.value > 1;
   }

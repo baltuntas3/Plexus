@@ -18,7 +18,6 @@ describe("PPD.compute", () => {
     );
     expect(ppd.value).toBeCloseTo(2, 6);
     expect(ppd.isMoreEfficient).toBe(true);
-    expect(ppd.savingsMultiplier).toBe(ppd.value);
   });
 
   it("returns <1 when the candidate is less efficient", () => {

@@ -44,7 +44,6 @@ const buildDraftBenchmark = async (
     testGenerationMode: "shared-core",
     taskType: "general",
     costForecast: null,
-    testCount: 2,
     repetitions: 1,
     seed: 42,
     testCases: [

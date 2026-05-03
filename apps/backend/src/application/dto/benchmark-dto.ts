@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { TEST_CASE_CATEGORIES } from "../../domain/entities/benchmark.js";
+import { TEST_CASE_CATEGORIES } from "@plexus/shared-types";
 
 const uniqueStringArray = (field: string, min = 1) =>
   z

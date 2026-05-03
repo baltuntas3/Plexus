@@ -1,4 +1,4 @@
-import type { TaskType } from "@plexus/shared-types";
+import type { TaskType, TestCaseCategory } from "@plexus/shared-types";
 import {
   BenchmarkIllegalTransitionError,
   BenchmarkInvalidRepetitionsError,
@@ -41,17 +41,6 @@ export interface BenchmarkProgress {
   total: number;
 }
 
-export const TEST_CASE_CATEGORIES = [
-  "typical",
-  "complex",
-  "ambiguous",
-  "adversarial",
-  "edge_case",
-  "contradictory",
-  "stress",
-] as const;
-export type TestCaseCategory = (typeof TEST_CASE_CATEGORIES)[number];
-
 export type TestCaseSource = "generated" | "manual";
 export type TestGenerationMode = "shared-core" | "diff-seeking" | "hybrid";
 
@@ -78,7 +67,6 @@ export interface BenchmarkPrimitives {
   testGenerationMode: TestGenerationMode;
   taskType: TaskType;
   costForecast: BenchmarkCostForecast | null;
-  testCount: number;
   repetitions: number;
   seed: number;
   concurrency: number;
@@ -118,7 +106,6 @@ export interface CreateBenchmarkParams {
   testGenerationMode: TestGenerationMode;
   taskType: TaskType;
   costForecast: BenchmarkCostForecast | null;
-  testCount: number;
   repetitions: number;
   seed: number;
   concurrency: number;
@@ -173,7 +160,6 @@ export class Benchmark {
       testGenerationMode: params.testGenerationMode,
       taskType: params.taskType,
       costForecast: params.costForecast,
-      testCount: params.testCount,
       repetitions: params.repetitions,
       seed: params.seed,
       concurrency: params.concurrency,
@@ -243,8 +229,11 @@ export class Benchmark {
   get costForecast(): BenchmarkCostForecast | null {
     return this.state.costForecast;
   }
+  // Derived from `testCases.length` so editDraftTestCases additions/removals
+  // always agree with the persisted count — no risk of drift between the
+  // array and a separate counter field.
   get testCount(): number {
-    return this.state.testCount;
+    return this.state.testCases.length;
   }
   get repetitions(): number {
     return this.state.repetitions;

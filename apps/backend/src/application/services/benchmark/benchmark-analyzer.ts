@@ -35,6 +35,7 @@ import type {
 } from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
 import { PPD } from "../../../domain/value-objects/ppd.js";
+import { mean } from "../../utils/statistics.js";
 
 const BOOTSTRAP_SAMPLES = 10_000;
 const BOOTSTRAP_SEED = 0x9e3779b9;
@@ -1084,9 +1085,6 @@ const operationalIssueWeight = (row: BenchmarkResult): number => {
 };
 
 // Helpers.
-
-const mean = (values: readonly number[]): number =>
-  values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
 const stddev = (values: readonly number[]): number => {
   if (values.length < 2) return 0;

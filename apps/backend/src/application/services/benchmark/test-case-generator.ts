@@ -1,7 +1,12 @@
 import { z } from "zod";
+import {
+  TEST_CASE_CATEGORIES,
+  type TestCaseCategory,
+} from "@plexus/shared-types";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import type { TestGenerationMode } from "../../../domain/entities/benchmark.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
+import { seededShuffle } from "../../utils/seeded-shuffle.js";
 import type { IAIProviderFactory } from "../ai-provider.js";
 import { buildVersionGenerationSection } from "./evaluation-prompt.js";
 
@@ -27,17 +32,6 @@ import { buildVersionGenerationSection } from "./evaluation-prompt.js";
 // support seeded sampling (e.g. Anthropic) fall back to non-determinism and
 // this module does not try to simulate determinism on top; in those cases,
 // higher repetition counts are the mechanism that captures variance.
-
-export const TEST_CASE_CATEGORIES = [
-  "typical",
-  "complex",
-  "ambiguous",
-  "adversarial",
-  "edge_case",
-  "contradictory",
-  "stress",
-] as const;
-export type TestCaseCategory = (typeof TEST_CASE_CATEGORIES)[number];
 
 export interface GeneratedTestCase {
   input: string;
@@ -120,22 +114,6 @@ export const buildEvaluationSpecFromVersions = (
     seed,
     taskType,
   );
-
-const seededShuffle = <T>(items: readonly T[], seed: number): T[] => {
-  const shuffled = [...items];
-  let state = (seed >>> 0) || 1;
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    state >>>= 0;
-    const j = state % (i + 1);
-    const tmp = shuffled[i] as T;
-    shuffled[i] = shuffled[j] as T;
-    shuffled[j] = tmp;
-  }
-  return shuffled;
-};
 
 const extractJsonObject = (text: string): string | null => {
   const start = text.indexOf("{");

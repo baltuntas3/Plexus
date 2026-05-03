@@ -18,6 +18,7 @@ import type { IPromptQueryService } from "../../queries/prompt-query-service.js"
 import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { mapConcurrent } from "../../utils/map-concurrent.js";
 import { seededShuffle } from "../../utils/seeded-shuffle.js";
+import { mean } from "../../utils/statistics.js";
 import type { IAIProviderFactory, GenerateResponse } from "../ai-provider.js";
 import type { JobContext } from "../job-queue.js";
 import { calculateCost } from "../model-registry.js";
@@ -115,7 +116,6 @@ export class BenchmarkRunner {
         testCases: benchmark.testCases,
         versions,
         solverModels: [...benchmark.solverModels],
-        judgeModels: [...benchmark.judgeModels],
         repetitions: benchmark.repetitions,
       });
 
@@ -646,9 +646,6 @@ const splitPartialEqually = (
     costUsd: partial.costUsd / count,
   };
 };
-
-const mean = (values: readonly number[]): number =>
-  values.length === 0 ? 0 : values.reduce((s, v) => s + v, 0) / values.length;
 
 const estimateCellCostUsd = (
   benchmark: Benchmark,

@@ -233,7 +233,6 @@ type BenchmarkTestOverrides = {
   testGenerationMode?: Benchmark["testGenerationMode"];
   taskType?: Benchmark["taskType"];
   costForecast?: Benchmark["costForecast"];
-  testCount?: number;
   repetitions?: number;
   seed?: number;
   testCases?: Benchmark["testCases"][number][];
@@ -260,7 +259,6 @@ const queueBenchmark = async (
     testGenerationMode: overrides.testGenerationMode ?? "shared-core",
     taskType: overrides.taskType ?? "general",
     costForecast: overrides.costForecast ?? null,
-    testCount: overrides.testCount ?? 2,
     repetitions: overrides.repetitions ?? 1,
     seed: overrides.seed ?? 42,
     testCases: overrides.testCases ?? TEST_CASES,

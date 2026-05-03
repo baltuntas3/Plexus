@@ -1,6 +1,7 @@
 import type { BenchmarkCostForecast } from "../../../domain/value-objects/benchmark-cost-forecast.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import { calculateCost } from "../model-registry.js";
+import { mean } from "../../utils/statistics.js";
 
 // Cost forecasting for a benchmark configuration. Lives in the application
 // layer because pricing comes from the model registry (a provider-aware
@@ -53,7 +54,7 @@ export interface BenchmarkCostEstimatorInput {
 export class BenchmarkCostEstimator {
   estimate(input: BenchmarkCostEstimatorInput): BenchmarkCostForecast {
     const versionPrompts = input.versions.map((v) => v.executablePrompt);
-    const avgSystemPromptTokens = average(versionPrompts.map(estimateTokenCount));
+    const avgSystemPromptTokens = mean(versionPrompts.map(estimateTokenCount));
     const avgUserInputTokens = input.avgInputTokens;
     const avgCandidateOutputTokens = Math.max(
       64,
@@ -136,14 +137,9 @@ export class BenchmarkCostEstimator {
 // the one used internally by the estimator so pre-flight and post-flight
 // forecasts share the same length model.
 export const averageTokenCount = (texts: readonly string[]): number =>
-  average(texts.map(estimateTokenCount));
+  mean(texts.map(estimateTokenCount));
 
 const estimateTokenCount = (text: string): number => {
   const matches = text.match(/[\p{L}\p{N}]+(?:['_-][\p{L}\p{N}]+)*|[^\s]/gu);
   return matches?.length ?? 0;
 };
-
-const average = (values: readonly number[]): number =>
-  values.length === 0
-    ? 0
-    : values.reduce((sum, value) => sum + value, 0) / values.length;

@@ -1,12 +1,11 @@
 import type { Types } from "mongoose";
-import type { TaskType } from "@plexus/shared-types";
+import type { TaskType, TestCaseCategory } from "@plexus/shared-types";
 import {
   Benchmark,
   type BenchmarkPrimitives,
   type BenchmarkProgress,
   type BenchmarkStatus,
   type TestGenerationMode,
-  type TestCaseCategory,
   type TestCaseSource,
 } from "../../../domain/entities/benchmark.js";
 import type { BenchmarkCostForecast } from "../../../domain/value-objects/benchmark-cost-forecast.js";
@@ -62,7 +61,6 @@ const toPrimitives = (doc: BenchmarkDocShape): BenchmarkPrimitives => ({
   testGenerationMode: doc.testGenerationMode ?? "shared-core",
   taskType: doc.taskType ?? "general",
   costForecast: doc.costForecast ?? null,
-  testCount: doc.testCount,
   repetitions: doc.repetitions,
   seed: doc.seed,
   testCases: (doc.testCases ?? []).map((tc) => ({
@@ -128,7 +126,10 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         testGenerationMode: p.testGenerationMode,
         taskType: p.taskType,
         costForecast: p.costForecast,
-        testCount: p.testCount,
+        // Denormalized for the list-summary projection (which excludes
+        // `testCases` for pagination cost). Always derived from the array
+        // here so the two stay in lock-step.
+        testCount: p.testCases.length,
         repetitions: p.repetitions,
         seed: p.seed,
         testCases: p.testCases,
@@ -153,7 +154,9 @@ export class MongoBenchmarkRepository implements IBenchmarkRepository {
         testGenerationMode: p.testGenerationMode,
         taskType: p.taskType,
         costForecast: p.costForecast,
-        testCount: p.testCount,
+        // See note in toCreateDoc — derived from the array on every save so
+        // editDraftTestCases additions/removals never leave the count stale.
+        testCount: p.testCases.length,
         repetitions: p.repetitions,
         seed: p.seed,
         testCases: p.testCases,

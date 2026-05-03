@@ -1,4 +1,4 @@
-import { TASK_TYPES } from "@plexus/shared-types";
+import { TASK_TYPES, TEST_CASE_CATEGORIES } from "@plexus/shared-types";
 import { Schema, model } from "mongoose";
 
 const BENCHMARK_STATUSES = [
@@ -8,15 +8,6 @@ const BENCHMARK_STATUSES = [
   "completed",
   "completed_with_budget_cap",
   "failed",
-] as const;
-const TEST_CASE_CATEGORIES = [
-  "typical",
-  "complex",
-  "ambiguous",
-  "adversarial",
-  "edge_case",
-  "contradictory",
-  "stress",
 ] as const;
 const TEST_CASE_SOURCES = ["generated", "manual"] as const;
 const TEST_GENERATION_MODES = ["shared-core", "diff-seeking", "hybrid"] as const;

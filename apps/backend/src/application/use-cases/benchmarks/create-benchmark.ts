@@ -148,7 +148,6 @@ export class CreateBenchmarkUseCase {
       testGenerationMode,
       taskType,
       costForecast,
-      testCount: command.testCount,
       repetitions,
       seed,
       concurrency: DEFAULT_CONCURRENCY,

@@ -55,7 +55,6 @@ const benchmarkResultSchema = new Schema(
     judgeInstruction: { type: Number, required: true },
     judgeVotes: { type: [judgeVoteSchema], default: [] },
     rawScore: { type: Number, required: true },
-    verbosityPenalty: { type: Number, required: true },
     finalScore: { type: Number, required: true },
     exactMatch: { type: Boolean, default: null },
     fuzzyMatchScore: { type: Number, default: null },

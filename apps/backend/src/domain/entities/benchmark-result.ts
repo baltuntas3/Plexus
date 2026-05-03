@@ -46,12 +46,14 @@ export interface BenchmarkResult {
 
   // Rubric values are means across the judge ensemble (1..5). rawScore and
   // finalScore are normalised to [0,1] (matching JudgeScore's contract).
+  // finalScore equals rawScore — there is no length penalty applied on top.
+  // Length expectations belong in the prompt; the judge's `instruction`
+  // axis already grades whether the candidate respected them.
   judgeAccuracy: number;
   judgeCoherence: number;
   judgeInstruction: number;
   judgeVotes: JudgeVote[];
   rawScore: number;
-  verbosityPenalty: number;
   finalScore: number;
   exactMatch: boolean | null;
   fuzzyMatchScore: number | null;
@@ -94,7 +96,6 @@ export interface CompletedResultInput {
   judgeInstruction: number;
   judgeVotes: readonly JudgeVote[];
   rawScore: number;
-  verbosityPenalty: number;
   finalScore: number;
   judgeInputTokens: number;
   judgeOutputTokens: number;
@@ -131,7 +132,6 @@ export const completedBenchmarkResult = (
     judgeInstruction: input.judgeInstruction,
     judgeVotes: [...input.judgeVotes],
     rawScore: input.rawScore,
-    verbosityPenalty: input.verbosityPenalty,
     finalScore: input.finalScore,
     exactMatch: null,
     fuzzyMatchScore: null,
@@ -200,7 +200,6 @@ export const failedBenchmarkResult = (
     judgeInstruction: 0,
     judgeVotes: [],
     rawScore: 0,
-    verbosityPenalty: 0,
     finalScore: 0,
     exactMatch: null,
     fuzzyMatchScore: null,

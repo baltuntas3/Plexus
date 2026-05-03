@@ -22,7 +22,6 @@ const row = (overrides: Partial<BenchmarkResult>): BenchmarkResult => ({
   judgeInstruction: 5,
   judgeVotes: [],
   rawScore: 1,
-  verbosityPenalty: 0,
   finalScore: 1,
   exactMatch: null,
   fuzzyMatchScore: null,

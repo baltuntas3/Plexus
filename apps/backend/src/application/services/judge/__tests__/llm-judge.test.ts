@@ -39,52 +39,12 @@ describe("LLMJudge.grade", () => {
     expect(score.rubric).toEqual({ accuracy: 5, coherence: 4, instruction: 3 });
     expect(score.rawScore).toBeCloseTo(0.75, 6);
     expect(score.reasoning).toContain("constraint");
-    expect(score.verbosityPenalty).toBe(0);
+    // finalScore mirrors rawScore — there is no length penalty on top.
+    // Length expectations belong in the prompt; the judge's `instruction`
+    // axis already grades whether the candidate respected them.
     expect(score.finalScore).toBeCloseTo(0.75, 6);
     expect(result.usage).toEqual({ inputTokens: 50, outputTokens: 30 });
     expect(result.model).toBe("openai/gpt-oss-20b");
-  });
-
-  it("applies verbosity penalty when the candidate is much longer than the reference", async () => {
-    const { judge } = buildJudge(
-      JSON.stringify({
-        accuracy: 5,
-        coherence: 5,
-        instruction: 5,
-        reasoning: "Perfect content.",
-      }),
-    );
-
-    const { score } = await judge.grade({
-      input: "Write a short greeting.",
-      candidate: "Hello there! ".repeat(200),
-      reference: "Hello there!",
-    });
-
-    expect(score.rawScore).toBe(1);
-    expect(score.verbosityPenalty).toBe(0.5);
-    expect(score.finalScore).toBe(0.5);
-  });
-
-  it("applies brevity penalty when the candidate is much shorter than the reference", async () => {
-    const { judge } = buildJudge(
-      JSON.stringify({
-        accuracy: 5,
-        coherence: 5,
-        instruction: 5,
-        reasoning: "Too terse.",
-      }),
-    );
-
-    const { score } = await judge.grade({
-      input: "Summarize the policy.",
-      candidate: "Approved.",
-      reference: "Approved after full policy review and documented mitigation steps.",
-    });
-
-    expect(score.rawScore).toBe(1);
-    expect(score.verbosityPenalty).toBeGreaterThan(0);
-    expect(score.finalScore).toBeLessThan(1);
   });
 
   it("extracts JSON even when the judge adds stray prose", async () => {
@@ -256,7 +216,11 @@ describe("LLMJudge.gradeBatch", () => {
     expect(userMessage).toContain("ATTEMPT_3");
   });
 
-  it("computes per-candidate verbosity penalty so long attempts score lower than short ones", async () => {
+  it("returns identical finalScore for identical rubric regardless of candidate length", async () => {
+    // No length penalty is applied on top of the rubric. Two attempts
+    // with the same rubric but very different lengths must return the
+    // same finalScore — length is the prompt's responsibility (and the
+    // judge's `instruction` axis grades adherence).
     const { judge } = buildJudge(
       JSON.stringify({
         scores: [
@@ -273,13 +237,9 @@ describe("LLMJudge.gradeBatch", () => {
       seed: 1,
     });
 
-    // Without batching, the judge would compute verbosity per call;
-    // batched mode must still compute it per candidate so the long
-    // attempt is penalised independently of the short one.
     const [first, second] = result.scores;
-    expect(first?.verbosityPenalty).toBe(0);
-    expect(second?.verbosityPenalty).toBeGreaterThan(0);
-    expect(second?.finalScore).toBeLessThan(first?.finalScore ?? 0);
+    expect(first?.finalScore).toBe(1);
+    expect(second?.finalScore).toBe(1);
   });
 
   it("retries on a malformed batch response and surfaces the parsed payload on success", async () => {

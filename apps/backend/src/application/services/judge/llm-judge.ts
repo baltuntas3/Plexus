@@ -12,7 +12,6 @@ import {
   type JudgeResult,
 } from "./judge.js";
 import { buildBatchJudgeMessages, buildJudgeMessages } from "./judge-prompt.js";
-import { computeVerbosityPenalty } from "./verbosity-penalty.js";
 
 export interface LLMJudgeConfig {
   judgeModel: string;
@@ -126,17 +125,12 @@ export class LLMJudge implements IJudge {
     }
 
     try {
-      const verbosityPenalty = computeVerbosityPenalty(
-        input.candidate,
-        input.reference,
-      );
       const score = JudgeScore.fromRubric(
         {
           accuracy: parsed.accuracy,
           coherence: parsed.coherence,
           instruction: parsed.instruction,
         },
-        verbosityPenalty,
         parsed.reasoning,
       );
       return {
@@ -231,15 +225,12 @@ export class LLMJudge implements IJudge {
             `Batch judge returned an unknown label "${entry.label}"`,
           );
         }
-        const candidate = input.candidates[originalIndex] as string;
-        const verbosityPenalty = computeVerbosityPenalty(candidate, input.reference);
         orderedScores[originalIndex] = JudgeScore.fromRubric(
           {
             accuracy: entry.accuracy,
             coherence: entry.coherence,
             instruction: entry.instruction,
           },
-          verbosityPenalty,
           entry.reasoning,
         );
       }

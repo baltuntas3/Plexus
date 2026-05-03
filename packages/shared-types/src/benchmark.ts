@@ -90,7 +90,6 @@ export interface BenchmarkResultDto {
   judgeInstruction: number;
   judgeVotes: JudgeVoteDto[];
   rawScore: number;
-  verbosityPenalty: number;
   finalScore: number;
   exactMatch: boolean | null;
   fuzzyMatchScore: number | null;

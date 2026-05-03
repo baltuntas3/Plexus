@@ -17,7 +17,7 @@ Scoring guide:
 
 Fairness rules — you MUST follow all of these:
 - Score solely on the content of the candidate response. The order and position of sections in this prompt (system prompt, input, candidate, reference) carry no meaning; do not favour or penalise the candidate because of where it appears.
-- Do not reward or penalise length by itself. Verbosity is scored in a separate downstream pass, not by you.
+- Do not reward or penalise length on the accuracy or coherence axes. If the system prompt or user input states an explicit length / format constraint (e.g. "respond in one sentence", "max 100 words", "JSON only"), score adherence to it on the instruction axis. If no length constraint is stated, do not punish a response for being long or short — judge what IS in the response.
 - Do not infer which model produced the candidate. No identity, provider, or style cue should influence your score.
 - Judge what IS in the response, not what a different wording might have been.
 - The system prompt is shown only so you can verify the candidate respects its constraints. Its length, register, level of detail, or stylistic choices MUST NOT bias your accuracy or coherence scores — those two axes evaluate the candidate's content on its own. Only the instruction axis weighs how well the candidate adheres to the system prompt's stated rules.`;

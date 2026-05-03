@@ -4,7 +4,6 @@ describe("JudgeScore.fromRubric", () => {
   it("maps a perfect rubric to raw score 1.0", () => {
     const score = JudgeScore.fromRubric(
       { accuracy: 5, coherence: 5, instruction: 5 },
-      0,
       "flawless",
     );
     expect(score.rawScore).toBe(1);
@@ -14,7 +13,6 @@ describe("JudgeScore.fromRubric", () => {
   it("maps a minimum rubric to raw score 0", () => {
     const score = JudgeScore.fromRubric(
       { accuracy: 1, coherence: 1, instruction: 1 },
-      0,
       "unusable",
     );
     expect(score.rawScore).toBe(0);
@@ -25,37 +23,28 @@ describe("JudgeScore.fromRubric", () => {
     // mean = (4 + 3 + 2)/3 = 3 → raw = (3-1)/4 = 0.5
     const score = JudgeScore.fromRubric(
       { accuracy: 4, coherence: 3, instruction: 2 },
-      0,
       "mixed",
     );
     expect(score.rawScore).toBe(0.5);
   });
 
-  it("applies verbosity penalty multiplicatively to the final score", () => {
+  it("returns finalScore equal to rawScore — no length penalty applied", () => {
+    // Length expectations belong in the prompt; the judge's `instruction`
+    // axis already grades whether the candidate respected them. There is
+    // no separate verbosity penalty multiplier on top.
     const score = JudgeScore.fromRubric(
       { accuracy: 5, coherence: 5, instruction: 5 },
-      0.3,
-      "too long",
+      "perfect",
     );
-    expect(score.rawScore).toBe(1);
-    expect(score.finalScore).toBeCloseTo(0.7, 6);
+    expect(score.finalScore).toBe(score.rawScore);
   });
 
   it("rejects rubric values outside 1..5", () => {
     expect(() =>
-      JudgeScore.fromRubric({ accuracy: 6, coherence: 3, instruction: 3 }, 0, "r"),
+      JudgeScore.fromRubric({ accuracy: 6, coherence: 3, instruction: 3 }, "r"),
     ).toThrow(RangeError);
     expect(() =>
-      JudgeScore.fromRubric({ accuracy: 0, coherence: 3, instruction: 3 }, 0, "r"),
-    ).toThrow(RangeError);
-  });
-
-  it("rejects verbosity penalty outside [0,1]", () => {
-    expect(() =>
-      JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, 1.1, "r"),
-    ).toThrow(RangeError);
-    expect(() =>
-      JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, -0.1, "r"),
+      JudgeScore.fromRubric({ accuracy: 0, coherence: 3, instruction: 3 }, "r"),
     ).toThrow(RangeError);
   });
 });

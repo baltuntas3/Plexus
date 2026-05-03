@@ -54,7 +54,6 @@ export const toBenchmarkResultDto = (r: BenchmarkResult): BenchmarkResultDto => 
   judgeInstruction: r.judgeInstruction,
   judgeVotes: r.judgeVotes.map((v) => ({ ...v })),
   rawScore: r.rawScore,
-  verbosityPenalty: r.verbosityPenalty,
   finalScore: r.finalScore,
   exactMatch: r.exactMatch,
   fuzzyMatchScore: r.fuzzyMatchScore,

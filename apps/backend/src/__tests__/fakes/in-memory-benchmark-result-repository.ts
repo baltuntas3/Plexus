@@ -4,13 +4,11 @@ import {
 } from "../../domain/entities/benchmark-result.js";
 import type {
   IBenchmarkResultRepository,
-  UpdateScoresInput,
   UpsertBenchmarkResultInput,
 } from "../../domain/repositories/benchmark-result-repository.js";
 
 export class InMemoryBenchmarkResultRepository implements IBenchmarkResultRepository {
   private readonly store = new Map<string, BenchmarkResult>();
-  private readonly byId = new Map<string, string>();
   private nextId = 1;
 
   async upsert(input: UpsertBenchmarkResultInput): Promise<BenchmarkResult> {
@@ -23,7 +21,6 @@ export class InMemoryBenchmarkResultRepository implements IBenchmarkResultReposi
       createdAt: existing?.createdAt ?? new Date(),
     };
     this.store.set(key, row);
-    this.byId.set(id, key);
     return row;
   }
 
@@ -38,18 +35,6 @@ export class InMemoryBenchmarkResultRepository implements IBenchmarkResultReposi
       out.add(benchmarkResultKey(r.testCaseId, r.promptVersionId, r.solverModel, r.runIndex));
     }
     return out;
-  }
-
-  async updateScores(input: UpdateScoresInput): Promise<void> {
-    const key = this.byId.get(input.id);
-    if (!key) return;
-    const row = this.store.get(key);
-    if (!row) return;
-    this.store.set(key, {
-      ...row,
-      verbosityPenalty: input.verbosityPenalty,
-      finalScore: input.finalScore,
-    });
   }
 
   private compositeKey(

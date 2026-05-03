@@ -152,7 +152,7 @@ class StubJudge implements IJudge {
   async grade(): Promise<JudgeResult> {
     this.calls += 1;
     return {
-      score: JudgeScore.fromRubric(this.score, 0, "stub reasoning"),
+      score: JudgeScore.fromRubric(this.score, "stub reasoning"),
       usage: { inputTokens: 20, outputTokens: 10 },
       model: this.judgeModel,
     };
@@ -162,7 +162,7 @@ class StubJudge implements IJudge {
     this.batchSizes.push(input.candidates.length);
     return {
       scores: input.candidates.map(() =>
-        JudgeScore.fromRubric(this.score, 0, "stub reasoning"),
+        JudgeScore.fromRubric(this.score, "stub reasoning"),
       ),
       usage: {
         inputTokens: 20 * input.candidates.length,
@@ -391,7 +391,10 @@ describe("BenchmarkRunner.run", () => {
     expect(judgeProvider.calls.every((call) => call.seed !== undefined)).toBe(true);
   });
 
-  it("does not penalize long reference-free rows based on competitor outputs", async () => {
+  it("scores rows purely from rubric — candidate length never penalises finalScore", async () => {
+    // Length expectations belong in the prompt; the judge's `instruction`
+    // axis already grades whether the candidate respected them. The runner
+    // must NOT clip finalScore below rawScore for long or short outputs.
     const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider((req) => {
       const text =
@@ -431,43 +434,8 @@ describe("BenchmarkRunner.run", () => {
 
     await runner.run(bm.id, buildContext().ctx);
     const rows = await results.listByBenchmark(bm.id);
-    expect(rows.every((row) => row.verbosityPenalty === 0)).toBe(true);
-  });
-
-  it("does not penalize short reference-free rows based on competitor outputs", async () => {
-    const { benchmarks, results, queries } = await buildScaffold();
-    const provider = new RecordingProvider((req) => {
-      const prompt = String(req.messages[0]?.content ?? "");
-      const text = prompt.includes("more detail") ? "detailed answer with enough context" : "ok";
-      return { text, inputTokens: 1, outputTokens: text.length };
-    });
-    const judge = new StubJudge({ accuracy: 5, coherence: 5, instruction: 5 });
-    const runner = new BenchmarkRunner({
-      benchmarks,
-      results,
-      promptQueries: queries,
-      providers: new SingleProviderFactory(provider),
-      judgeFactory: () => judge,
-    });
-
-    const bm = await queueBenchmark(benchmarks, {
-      testCases: [
-        { id: "tc1", input: "q1?", expectedOutput: null, category: null, source: "generated" },
-      ],
-      promptVersionIds: [
-        "1",
-        (createVersion(queries, {
-          promptId: "p1",
-          version: "v2",
-          sourcePrompt: "Answer with more detail when useful.",
-        })).id,
-      ],
-      concurrency: 1,
-    });
-
-    await runner.run(bm.id, buildContext().ctx);
-    const rows = await results.listByBenchmark(bm.id);
-    expect(rows.every((row) => row.verbosityPenalty === 0)).toBe(true);
+    expect(rows.every((row) => row.finalScore === row.rawScore)).toBe(true);
+    expect(rows.every((row) => row.finalScore === 1)).toBe(true);
   });
 
   it("grades every row with every judge in the ensemble and averages their scores", async () => {
@@ -520,7 +488,7 @@ describe("BenchmarkRunner.run", () => {
     const judge: IJudge = judgeFromGrade(async (input) => {
       gradeCalls.push({ reference: input.reference });
       return {
-        score: JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, 0, "ok"),
+        score: JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, "ok"),
         usage: { inputTokens: 10, outputTokens: 5 },
         model: "openai/gpt-oss-20b",
       };
@@ -596,7 +564,6 @@ describe("BenchmarkRunner.run", () => {
           return {
             score: JudgeScore.fromRubric(
               { accuracy: 5, coherence: 4, instruction: 4 },
-              0,
               "ok",
             ),
             usage: { inputTokens: 10, outputTokens: 6 },
@@ -1027,7 +994,6 @@ describe("BenchmarkRunner.run", () => {
       judgeInstruction: 5,
       judgeVotes: [],
       rawScore: 1,
-      verbosityPenalty: 0,
       finalScore: 1,
       exactMatch: null,
       fuzzyMatchScore: null,

@@ -8,7 +8,6 @@ import {
 } from "../../../domain/entities/benchmark-result.js";
 import type {
   IBenchmarkResultRepository,
-  UpdateScoresInput,
   UpsertBenchmarkResultInput,
 } from "../../../domain/repositories/benchmark-result-repository.js";
 import { BenchmarkResultModel } from "./benchmark-result-model.js";
@@ -32,7 +31,6 @@ interface BenchmarkResultDoc {
   judgeInstruction: number;
   judgeVotes: JudgeVote[];
   rawScore: number;
-  verbosityPenalty: number;
   finalScore: number;
   exactMatch: boolean | null;
   fuzzyMatchScore: number | null;
@@ -65,7 +63,6 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   judgeInstruction: doc.judgeInstruction,
   judgeVotes: (doc.judgeVotes ?? []).map((v) => ({ ...v })),
   rawScore: doc.rawScore,
-  verbosityPenalty: doc.verbosityPenalty,
   finalScore: doc.finalScore,
   exactMatch: doc.exactMatch ?? null,
   fuzzyMatchScore: doc.fuzzyMatchScore ?? null,
@@ -133,12 +130,4 @@ export class MongoBenchmarkResultRepository implements IBenchmarkResultRepositor
     return out;
   }
 
-  async updateScores(input: UpdateScoresInput): Promise<void> {
-    await BenchmarkResultModel.findByIdAndUpdate(input.id, {
-      $set: {
-        verbosityPenalty: input.verbosityPenalty,
-        finalScore: input.finalScore,
-      },
-    });
-  }
 }

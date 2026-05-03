@@ -361,10 +361,6 @@ export class BenchmarkRunner {
       votes: Array<JudgeVote | null>;
       partial: { inputTokens: number; outputTokens: number; costUsd: number } | null;
       error: unknown | null;
-      // Aggregate raw verbosity penalty per candidate from the judge's
-      // computation, aligned with `successful` order.
-      verbosityPenalties: number[];
-      gradedScores: Array<JudgeScore | null>;
     }
 
     const judgeOutcomes: JudgeOutcome[] = await Promise.all(
@@ -400,8 +396,6 @@ export class BenchmarkRunner {
             votes,
             partial: null,
             error: null,
-            verbosityPenalties: graded.scores.map((s) => s.verbosityPenalty),
-            gradedScores: graded.scores,
           };
         } catch (err) {
           const partial =
@@ -418,8 +412,6 @@ export class BenchmarkRunner {
             votes: successful.map(() => null),
             partial: perCellPartial,
             error: err,
-            verbosityPenalties: successful.map(() => 0),
-            gradedScores: successful.map(() => null),
           };
         }
       }),
@@ -489,22 +481,12 @@ export class BenchmarkRunner {
         const meanAccuracy = mean(votesForCell.map((v) => v.accuracy));
         const meanCoherence = mean(votesForCell.map((v) => v.coherence));
         const meanInstruction = mean(votesForCell.map((v) => v.instruction));
-        const meanVerbosityPenalty = mean(
-          judgeOutcomes
-            .map((judge) =>
-              judge.gradedScores[candidateIndex] !== null
-                ? judge.verbosityPenalties[candidateIndex] ?? 0
-                : null,
-            )
-            .filter((v): v is number => v !== null),
-        );
         const score = JudgeScore.fromRubric(
           {
             accuracy: meanAccuracy,
             coherence: meanCoherence,
             instruction: meanInstruction,
           },
-          meanVerbosityPenalty,
           "",
         );
 
@@ -524,7 +506,6 @@ export class BenchmarkRunner {
           judgeInstruction: meanInstruction,
           judgeVotes: votesForCell,
           rawScore: score.rawScore,
-          verbosityPenalty: meanVerbosityPenalty,
           finalScore: score.finalScore,
           judgeInputTokens,
           judgeOutputTokens,

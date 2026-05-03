@@ -101,6 +101,15 @@ export const BenchmarkDetailPage = () => {
       ? location.state.returnTo
       : null;
 
+  const applyBenchmark = (bm: BenchmarkDetailDto) => {
+    setBenchmark(bm);
+    const edits = buildDraftBenchmarkEdits(bm.testCases);
+    setInputEdits(edits.inputEdits);
+    setExpectedOutputs(edits.expectedOutputs);
+    setCategoryEdits(edits.categoryEdits);
+    setNewCases([]);
+  };
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -108,12 +117,7 @@ export const BenchmarkDetailPage = () => {
     fetchDetail(id)
       .then((bm) => {
         if (!cancelled) {
-          setBenchmark(bm);
-          const edits = buildDraftBenchmarkEdits(bm.testCases);
-          setInputEdits(edits.inputEdits);
-          setExpectedOutputs(edits.expectedOutputs);
-          setCategoryEdits(edits.categoryEdits);
-          setNewCases([]);
+          applyBenchmark(bm);
         }
       })
       .catch((err) => {
@@ -212,7 +216,7 @@ export const BenchmarkDetailPage = () => {
       await updateTestCases({ benchmarkId: id, ...updatesPayload });
       await startBenchmark(id);
       const bm = await fetchDetail(id);
-      setBenchmark(bm);
+      applyBenchmark(bm);
       notifications.show({ color: "green", title: "Started", message: "Benchmark queued" });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to start";

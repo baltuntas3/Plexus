@@ -1,4 +1,4 @@
-import type { HydratedDocument, Types } from "mongoose";
+import type { Types } from "mongoose";
 import {
   benchmarkResultKey,
   type BenchmarkFailureKind,
@@ -13,7 +13,12 @@ import type {
 } from "../../../domain/repositories/benchmark-result-repository.js";
 import { BenchmarkResultModel } from "./benchmark-result-model.js";
 
-type BenchmarkResultDoc = HydratedDocument<{
+// Plain shape for `.lean()` reads. Hydrated docs were a footgun: spreading a
+// Mongoose subdoc only copies internal symbols (__parentArray, _doc, …), so
+// `{ ...vote }` returned an empty-looking object and every JudgeVote came
+// back with model/accuracy/… undefined. `.lean()` returns POJOs; spreads
+// behave normally.
+interface BenchmarkResultDoc {
   _id: Types.ObjectId;
   benchmarkId: Types.ObjectId;
   testCaseId: string;
@@ -44,7 +49,7 @@ type BenchmarkResultDoc = HydratedDocument<{
   failureKind: BenchmarkFailureKind | null;
   error: string | null;
   createdAt: Date;
-}>;
+}
 
 const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   id: String(doc._id),
@@ -92,13 +97,16 @@ export class MongoBenchmarkResultRepository implements IBenchmarkResultRepositor
       new: true,
       upsert: true,
       setDefaultsOnInsert: true,
-    });
-    return toDomain(doc as unknown as BenchmarkResultDoc);
+    }).lean<BenchmarkResultDoc>();
+    if (!doc) {
+      throw new Error("findOneAndUpdate with upsert returned null");
+    }
+    return toDomain(doc);
   }
 
   async listByBenchmark(benchmarkId: string): Promise<BenchmarkResult[]> {
-    const docs = await BenchmarkResultModel.find({ benchmarkId });
-    return docs.map((d) => toDomain(d as unknown as BenchmarkResultDoc));
+    const docs = await BenchmarkResultModel.find({ benchmarkId }).lean<BenchmarkResultDoc[]>();
+    return docs.map((d) => toDomain(d));
   }
 
   async findExistingKeys(benchmarkId: string): Promise<Set<string>> {

@@ -16,9 +16,26 @@ import { computeVerbosityPenalty } from "./verbosity-penalty.js";
 
 export interface LLMJudgeConfig {
   judgeModel: string;
-  temperature?: number;
   taskType?: TaskType;
 }
+
+// Judges always run at T=0. The explicit `0` is load-bearing — providers
+// fall back to their own defaults when temperature is omitted, and those
+// defaults are NOT zero (e.g. groq-provider.ts → 0.6, OpenAI → 1.0,
+// Anthropic → 1.0). Dropping the field would silently flip judging to
+// stochastic mode and break the rest of the analyzer.
+//
+// This is a fairness contract, not a knob:
+// - reproducibility (same benchmark twice → same scores)
+// - stable bias measurements (judgeBias rows actually mean something)
+// - honest pairwise CIs (pairwiseComparisons.isSignificant)
+// - cluster bootstrap CI assumes within-batch correlation comes only
+//   from the shared prompt; a stochastic judge would invalidate it.
+//
+// There is intentionally no caller surface to override this; if you
+// ever want a stochastic judge, build it as a separate class so the
+// policy stays explicit at the type level.
+const JUDGE_TEMPERATURE = 0;
 
 const rubricSchema = z.object({
   accuracy: z.number().int().min(1).max(5),
@@ -57,7 +74,7 @@ export class LLMJudge implements IJudge {
       response = await provider.generate({
         model: this.config.judgeModel,
         messages,
-        temperature: this.config.temperature ?? 0,
+        temperature: JUDGE_TEMPERATURE,
         seed: input.seed,
         responseFormat: "json",
       });
@@ -90,7 +107,7 @@ export class LLMJudge implements IJudge {
         const retry = await provider.generate({
           model: this.config.judgeModel,
           messages,
-          temperature: 0,
+          temperature: JUDGE_TEMPERATURE,
           seed: input.seed,
           responseFormat: "json",
         });
@@ -157,7 +174,7 @@ export class LLMJudge implements IJudge {
       response = await provider.generate({
         model: this.config.judgeModel,
         messages: built.messages,
-        temperature: this.config.temperature ?? 0,
+        temperature: JUDGE_TEMPERATURE,
         seed: input.seed,
         responseFormat: "json",
       });
@@ -187,7 +204,7 @@ export class LLMJudge implements IJudge {
         const retry = await provider.generate({
           model: this.config.judgeModel,
           messages: built.messages,
-          temperature: 0,
+          temperature: JUDGE_TEMPERATURE,
           seed: input.seed,
           responseFormat: "json",
         });

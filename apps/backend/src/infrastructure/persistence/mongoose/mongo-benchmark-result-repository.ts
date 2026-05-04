@@ -21,13 +21,8 @@ interface BenchmarkResultDoc {
   promptVersionId: Types.ObjectId;
   solverModel: string;
   runIndex: number;
-  input: string;
   candidateOutput: string;
-  judgeAccuracy: number;
-  judgeCoherence: number;
-  judgeInstruction: number;
   judgeVotes: JudgeVote[];
-  finalScore: number;
   candidateInputTokens: number;
   candidateOutputTokens: number;
   candidateCostUsd: number;
@@ -50,13 +45,8 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   promptVersionId: String(doc.promptVersionId),
   solverModel: doc.solverModel,
   runIndex: doc.runIndex,
-  input: doc.input,
   candidateOutput: doc.candidateOutput,
-  judgeAccuracy: doc.judgeAccuracy,
-  judgeCoherence: doc.judgeCoherence,
-  judgeInstruction: doc.judgeInstruction,
   judgeVotes: (doc.judgeVotes ?? []).map((v) => ({ ...v })),
-  finalScore: doc.finalScore,
   candidateInputTokens: doc.candidateInputTokens,
   candidateOutputTokens: doc.candidateOutputTokens,
   candidateCostUsd: doc.candidateCostUsd,

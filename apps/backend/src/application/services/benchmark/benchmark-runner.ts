@@ -15,11 +15,9 @@ import { buildBenchmarkMatrix, type MatrixCell } from "../../../domain/value-obj
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
-import { buildJudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { fnv1a } from "../../utils/fnv1a.js";
 import { mapConcurrent } from "../../utils/map-concurrent.js";
 import { seededShuffle } from "../../utils/seeded-shuffle.js";
-import { mean } from "../../utils/statistics.js";
 import type { IAIProviderFactory, GenerateResponse } from "../ai-provider.js";
 import type { JobContext } from "../job-queue.js";
 import { calculateCost } from "../model-registry.js";
@@ -195,7 +193,6 @@ export class BenchmarkRunner {
                   promptVersionId: cell.version.id,
                   solverModel: cell.solverModel,
                   runIndex: cell.runIndex,
-                  input: cell.testCase.input,
                   error: err instanceof Error ? err.message : String(err),
                   failureKind: classifyFailureKind(err),
                 }),
@@ -510,34 +507,17 @@ export class BenchmarkRunner {
           );
         }
 
-        const meanAccuracy = mean(votesForCell.map((v) => v.accuracy));
-        const meanCoherence = mean(votesForCell.map((v) => v.coherence));
-        const meanInstruction = mean(votesForCell.map((v) => v.instruction));
-        const score = buildJudgeScore(
-          {
-            accuracy: meanAccuracy,
-            coherence: meanCoherence,
-            instruction: meanInstruction,
-          },
-          "",
-        );
-
         const completed: CompletedResultInput = {
           benchmarkId: benchmark.id,
           testCaseId: cell.testCase.id,
           promptVersionId: cell.version.id,
           solverModel: cell.solverModel,
           runIndex: cell.runIndex,
-          input: cell.testCase.input,
           candidateOutput: outcome.candidate.text,
           candidateInputTokens: outcome.candidate.usage.inputTokens,
           candidateOutputTokens: outcome.candidate.usage.outputTokens,
           candidateCostUsd: outcome.candidateCostUsd,
-          judgeAccuracy: meanAccuracy,
-          judgeCoherence: meanCoherence,
-          judgeInstruction: meanInstruction,
           judgeVotes: votesForCell,
-          finalScore: score.finalScore,
           judgeInputTokens,
           judgeOutputTokens,
           judgeCostUsd,
@@ -629,7 +609,6 @@ const buildFailedInput = (
     promptVersionId: cell.version.id,
     solverModel: cell.solverModel,
     runIndex: cell.runIndex,
-    input: cell.testCase.input,
     error: message || `${failureKind} failure`,
     failureKind,
     candidateOutput: partial.candidate?.text ?? "",

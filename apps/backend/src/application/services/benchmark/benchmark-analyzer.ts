@@ -31,9 +31,10 @@
 // disagreement) so the UI can show real, attributed grader feedback
 // without an extra LLM narration call.
 
-import type {
-  BenchmarkResult,
-  JudgeVote,
+import {
+  judgeRubricAggregate,
+  type BenchmarkResult,
+  type JudgeVote,
 } from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
 import { computePPD } from "../../../domain/value-objects/ppd.js";
@@ -251,10 +252,11 @@ const accumulateMetricRow = (bucket: MetricBucket, r: BenchmarkResult): void => 
     bucket.failedCount += 1;
     return;
   }
-  bucket.finalScores.push(r.finalScore);
-  bucket.accuracies.push(r.judgeAccuracy);
-  bucket.coherences.push(r.judgeCoherence);
-  bucket.instructions.push(r.judgeInstruction);
+  const rubric = judgeRubricAggregate(r.judgeVotes);
+  bucket.finalScores.push(rubric.finalScore);
+  bucket.accuracies.push(rubric.accuracy);
+  bucket.coherences.push(rubric.coherence);
+  bucket.instructions.push(rubric.instruction);
   bucket.completedCount += 1;
 };
 
@@ -291,7 +293,7 @@ export const aggregateResults = (
     accumulateMetricRow(bucket, r);
     if (r.status !== "failed") {
       const cluster = bucket.scoresByTestCase.get(r.testCaseId) ?? [];
-      cluster.push(r.finalScore);
+      cluster.push(judgeRubricAggregate(r.judgeVotes).finalScore);
       bucket.scoresByTestCase.set(r.testCaseId, cluster);
     }
   }
@@ -793,7 +795,7 @@ const buildQuoteFromVote = (
 ): EnsembleJudgeQuote => ({
   testCaseId: row.testCaseId,
   runIndex: row.runIndex,
-  finalScore: row.finalScore,
+  finalScore: judgeRubricAggregate(row.judgeVotes).finalScore,
   rubric: {
     accuracy: vote.accuracy,
     coherence: vote.coherence,
@@ -945,7 +947,9 @@ const pairedDifferenceCI = (
     const r = right.get(key);
     if (!l || !r || l.status !== "completed" || r.status !== "completed") continue;
     const bucket = diffsByTestCase.get(l.testCaseId) ?? [];
-    bucket.push(l.finalScore - r.finalScore);
+    const lScore = judgeRubricAggregate(l.judgeVotes).finalScore;
+    const rScore = judgeRubricAggregate(r.judgeVotes).finalScore;
+    bucket.push(lScore - rScore);
     diffsByTestCase.set(l.testCaseId, bucket);
   }
   const totalDiffs = [...diffsByTestCase.values()].reduce(

@@ -1,4 +1,7 @@
-import type { BenchmarkResult } from "../../../../domain/entities/benchmark-result.js";
+import type {
+  BenchmarkResult,
+  JudgeVote,
+} from "../../../../domain/entities/benchmark-result.js";
 import {
   aggregateResults,
   candidateKey,
@@ -7,36 +10,90 @@ import {
   pickWithPairedSignificanceTieBreak,
 } from "../benchmark-analyzer.js";
 
+// Test rows used to drive the analyzer must produce a target `finalScore`
+// (in [0,1]) via judgeVotes, since the row no longer carries the aggregate
+// directly. The conversion mirrors `judgeRubricAggregate`'s contract:
+// `finalScore = ((rubricMean - 1) / 4)` ⇒ `rubricMean = finalScore * 4 + 1`.
+const voteForScore = (finalScore: number): JudgeVote => {
+  const rubric = finalScore * 4 + 1;
+  return {
+    model: "judge-1",
+    accuracy: rubric,
+    coherence: rubric,
+    instruction: rubric,
+    reasoning: "",
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+  };
+};
+
+interface RowOverrides extends Partial<Omit<BenchmarkResult, "judgeVotes">> {
+  finalScore?: number;
+  judgeAccuracy?: number;
+  judgeCoherence?: number;
+  judgeInstruction?: number;
+  judgeVotes?: JudgeVote[];
+}
+
 let nextId = 1;
-const row = (overrides: Partial<BenchmarkResult>): BenchmarkResult => ({
-  id: String(nextId++),
-  benchmarkId: "bm",
-  testCaseId: "tc1",
-  promptVersionId: "v1",
-  solverModel: "llama-3.3-70b-versatile",
-  runIndex: 0,
-  input: "",
-  candidateOutput: "",
-  judgeAccuracy: 5,
-  judgeCoherence: 5,
-  judgeInstruction: 5,
-  judgeVotes: [],
-  finalScore: 1,
-  candidateInputTokens: 0,
-  candidateOutputTokens: 0,
-  candidateCostUsd: 0,
-  judgeInputTokens: 0,
-  judgeOutputTokens: 0,
-  judgeCostUsd: 0,
-  totalCostUsd: 0,
-  judgeFailureCount: 0,
-  latencyMs: 0,
-  status: "completed",
-  failureKind: null,
-  error: null,
-  createdAt: new Date(),
-  ...overrides,
-});
+const row = (overrides: RowOverrides = {}): BenchmarkResult => {
+  const {
+    finalScore,
+    judgeAccuracy,
+    judgeCoherence,
+    judgeInstruction,
+    judgeVotes,
+    ...rest
+  } = overrides;
+  let votes: JudgeVote[];
+  if (judgeVotes !== undefined) {
+    votes = judgeVotes;
+  } else if (
+    judgeAccuracy !== undefined ||
+    judgeCoherence !== undefined ||
+    judgeInstruction !== undefined
+  ) {
+    votes = [
+      {
+        model: "judge-1",
+        accuracy: judgeAccuracy ?? 5,
+        coherence: judgeCoherence ?? 5,
+        instruction: judgeInstruction ?? 5,
+        reasoning: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+      },
+    ];
+  } else {
+    votes = [voteForScore(finalScore ?? 1)];
+  }
+  return {
+    id: String(nextId++),
+    benchmarkId: "bm",
+    testCaseId: "tc1",
+    promptVersionId: "v1",
+    solverModel: "llama-3.3-70b-versatile",
+    runIndex: 0,
+    candidateOutput: "",
+    judgeVotes: votes,
+    candidateInputTokens: 0,
+    candidateOutputTokens: 0,
+    candidateCostUsd: 0,
+    judgeInputTokens: 0,
+    judgeOutputTokens: 0,
+    judgeCostUsd: 0,
+    totalCostUsd: 0,
+    judgeFailureCount: 0,
+    latencyMs: 0,
+    status: "completed",
+    failureKind: null,
+    error: null,
+    createdAt: new Date(),
+    ...rest,
+  };
+};
 
 describe("aggregateResults", () => {
   it("groups rows by (versionId, solverModel) and averages score", () => {
@@ -74,7 +131,9 @@ describe("aggregateResults", () => {
     expect(c.completedCount).toBe(1);
     expect(c.failedCount).toBe(1);
     expect(c.meanFinalScore).toBeCloseTo(0.8, 6);
-    expect(c.meanAccuracy).toBeCloseTo(5, 6);
+    // Rubric is derived from `judgeVotes`; voteForScore(0.8) produces a
+    // uniform rubric of 4.2 across all axes ((4.2 - 1) / 4 = 0.8).
+    expect(c.meanAccuracy).toBeCloseTo(4.2, 6);
     expect(c.totalCostUsd).toBeCloseTo(0.03, 6);
     expect(c.meanLatencyMs).toBeCloseTo(75, 6);
   });
@@ -431,12 +490,13 @@ describe("computeAnalysis", () => {
     expect(mostlyClean?.operationalIssueRate).toBeCloseTo(1 / 30, 6);
   });
 
-  it("prefers the cheaper candidate when CIs overlap", () => {
-    // Both candidates produce the same noisy finalScore distribution, so their
-    // bootstrap CIs coincide — i.e. the composite gap is not statistically
-    // separable. vExpensive has a higher composite due to better rubric means,
-    // but the CI-overlap tie-break should still hand the recommendation to
-    // vCheap.
+  it("prefers the cheaper candidate when paired-diff CI contains zero", () => {
+    // Two candidates with byte-identical finalScores per cell — the paired
+    // bootstrap diff CI is [0, 0], trivially "not statistically separable".
+    // With identical quality, vCheap also wins composite outright on cost,
+    // so the recommendation falls to vCheap regardless of which path the
+    // tie-break takes. (Direct unit coverage for the tie-break helper lives
+    // in the `pickWithPairedSignificanceTieBreak` describe block below.)
     const finals = [0.5, 0.6, 0.7, 0.8, 0.9];
     const analysis = computeAnalysis([
       ...finals.map((f, i) =>
@@ -444,9 +504,6 @@ describe("computeAnalysis", () => {
           promptVersionId: "vExpensive",
           testCaseId: `tc${i}`,
           finalScore: f,
-          judgeAccuracy: 5,
-          judgeCoherence: 5,
-          judgeInstruction: 5,
           totalCostUsd: 1,
           latencyMs: 100,
         }),
@@ -456,18 +513,11 @@ describe("computeAnalysis", () => {
           promptVersionId: "vCheap",
           testCaseId: `tc${i}`,
           finalScore: f,
-          judgeAccuracy: 3,
-          judgeCoherence: 3,
-          judgeInstruction: 3,
           totalCostUsd: 0.1,
           latencyMs: 100,
         }),
       ),
     ]);
-    // Expensive has the higher raw composite...
-    expect(analysis.ranking[0]?.candidateKey).toContain("vExpensive");
-    // ...but the recommendation falls back to the cheaper candidate because
-    // the CIs overlap.
     expect(analysis.recommendedKey).toContain("vCheap");
   });
 
@@ -479,9 +529,6 @@ describe("computeAnalysis", () => {
           solverModel: "llama-3.3-70b-versatile",
           testCaseId: "tc-typical",
           finalScore: 0.9,
-          judgeAccuracy: 5,
-          judgeCoherence: 4,
-          judgeInstruction: 4,
           totalCostUsd: 0.02,
         }),
         row({
@@ -489,7 +536,6 @@ describe("computeAnalysis", () => {
           solverModel: "llama-3.3-70b-versatile",
           testCaseId: "tc-manual",
           status: "failed",
-          finalScore: 0,
           totalCostUsd: 0,
         }),
       ],
@@ -506,7 +552,10 @@ describe("computeAnalysis", () => {
         expect.objectContaining({
           category: "typical",
           candidateKey: candidateKey({ promptVersionId: "vA", solverModel: "llama-3.3-70b-versatile" }),
-          meanFinalScore: 0.9,
+          // `meanFinalScore` is derived from rubric: voteForScore(0.9)
+          // produces a uniform 4.6 across axes, ((4.6 - 1) / 4) ≈ 0.9 with
+          // floating-point noise, so use a tolerance match.
+          meanFinalScore: expect.closeTo(0.9, 6),
           completedCount: 1,
           failedCount: 0,
         }),

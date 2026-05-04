@@ -46,14 +46,14 @@ const benchmarkResultSchema = new Schema(
     solverModel: { type: String, required: true },
     runIndex: { type: Number, required: true, default: 0, min: 0 },
 
-    input: { type: String, required: true },
     candidateOutput: { type: String, required: true, default: "" },
 
-    judgeAccuracy: { type: Number, required: true },
-    judgeCoherence: { type: Number, required: true },
-    judgeInstruction: { type: Number, required: true },
+    // Per-row rubric means and `finalScore` are NOT persisted — they derive
+    // from `judgeVotes` via `judgeRubricAggregate`. The row-level `input`
+    // string is also not stored: `testCaseId` resolves to the canonical
+    // `Benchmark.testCases[i].input` (test cases are immutable once a
+    // benchmark leaves draft state, so the lookup is safe).
     judgeVotes: { type: [judgeVoteSchema], default: [] },
-    finalScore: { type: Number, required: true },
 
     candidateInputTokens: { type: Number, required: true, default: 0 },
     candidateOutputTokens: { type: Number, required: true, default: 0 },

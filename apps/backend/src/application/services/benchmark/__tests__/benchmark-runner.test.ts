@@ -12,6 +12,7 @@ import type {
 } from "../../judge/judge.js";
 import { JudgeExecutionError } from "../../judge/judge.js";
 import type { JobContext } from "../../job-queue.js";
+import { judgeRubricAggregate } from "../../../../domain/entities/benchmark-result.js";
 import { buildJudgeScore, type JudgeScore } from "../../../../domain/value-objects/judge-score.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
 import { InMemoryBenchmarkResultRepository } from "../../../../__tests__/fakes/in-memory-benchmark-result-repository.js";
@@ -297,7 +298,7 @@ describe("BenchmarkRunner.run", () => {
     const rows = await results.listByBenchmark(bm.id);
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.status === "completed")).toBe(true);
-    expect(rows.every((r) => r.finalScore > 0)).toBe(true);
+    expect(rows.every((r) => judgeRubricAggregate(r.judgeVotes).finalScore > 0)).toBe(true);
     expect(rows.every((r) => r.judgeFailureCount === 0)).toBe(true);
 
     const final = await benchmarks.findById(bm.id);
@@ -434,7 +435,7 @@ describe("BenchmarkRunner.run", () => {
 
     await runner.run(bm.id, buildContext().ctx);
     const rows = await results.listByBenchmark(bm.id);
-    expect(rows.every((row) => row.finalScore === 1)).toBe(true);
+    expect(rows.every((row) => judgeRubricAggregate(row.judgeVotes).finalScore === 1)).toBe(true);
   });
 
   it("grades every row with every judge in the ensemble and averages their scores", async () => {
@@ -476,9 +477,10 @@ describe("BenchmarkRunner.run", () => {
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect(row.judgeVotes).toHaveLength(2);
-    expect(row.judgeAccuracy).toBeCloseTo(4, 6);
-    expect(row.judgeCoherence).toBeCloseTo(4, 6);
-    expect(row.judgeInstruction).toBeCloseTo(4, 6);
+    const rubric = judgeRubricAggregate(row.judgeVotes);
+    expect(rubric.accuracy).toBeCloseTo(4, 6);
+    expect(rubric.coherence).toBeCloseTo(4, 6);
+    expect(rubric.instruction).toBeCloseTo(4, 6);
   });
 
   it("passes expected output as reference to the judge when present", async () => {
@@ -985,13 +987,19 @@ describe("BenchmarkRunner.run", () => {
       promptVersionId: "1",
       solverModel: "openai/gpt-oss-20b",
       runIndex: 0,
-      input: "q1?",
       candidateOutput: "answer",
-      judgeAccuracy: 5,
-      judgeCoherence: 5,
-      judgeInstruction: 5,
-      judgeVotes: [],
-      finalScore: 1,
+      judgeVotes: [
+        {
+          model: "judge-1",
+          accuracy: 5,
+          coherence: 5,
+          instruction: 5,
+          reasoning: "",
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+        },
+      ],
       candidateInputTokens: 10000,
       candidateOutputTokens: 5000,
       candidateCostUsd: 0.01,

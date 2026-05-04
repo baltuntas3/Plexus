@@ -8,9 +8,11 @@
 // if braidGraph is set, the BRAID graph is the system prompt; otherwise the
 // sourcePrompt is used. There is no separate mode field.
 //
-// Each row is graded by every judge in the benchmark's `judgeModels`; the
-// individual votes are stored on `judgeVotes` and the aggregated mean
-// (accuracy, coherence, instruction) is kept on the row for fast analysis.
+// Each row is graded by every judge in the benchmark's `judgeModels`. The
+// individual votes are persisted on `judgeVotes` — that's the canonical
+// store. Per-row rubric means and `finalScore` are NOT persisted; they are
+// derived from `judgeVotes` via `judgeRubricAggregate` so there is one
+// source of truth.
 
 import { ValidationError } from "../errors/domain-error.js";
 
@@ -40,23 +42,18 @@ export interface BenchmarkResult {
   solverModel: string;
   runIndex: number;
 
-  input: string;
   candidateOutput: string;
 
-  // Rubric values are means across the judge ensemble (1..5). finalScore is
-  // the normalised rubric mean in [0,1] (matching JudgeScore's contract).
-  // Length expectations belong in the prompt; the judge's `instruction`
-  // axis already grades whether the candidate respected them, so there is
-  // no separate length-penalty layer.
-  judgeAccuracy: number;
-  judgeCoherence: number;
-  judgeInstruction: number;
+  // Canonical store for grading. Per-row rubric means and finalScore are
+  // derived via `judgeRubricAggregate(judgeVotes)`.
   judgeVotes: JudgeVote[];
-  finalScore: number;
 
   candidateInputTokens: number;
   candidateOutputTokens: number;
   candidateCostUsd: number;
+  // Judge token/cost aggregates capture both successful votes AND partial
+  // failures (where votes are absent), so they are NOT derivable from
+  // `judgeVotes` alone — they stay on the row.
   judgeInputTokens: number;
   judgeOutputTokens: number;
   judgeCostUsd: number;
@@ -70,6 +67,40 @@ export interface BenchmarkResult {
   createdAt: Date;
 }
 
+// Derives the per-row rubric mean and `finalScore` (normalised to [0,1])
+// from the canonical judge votes. Empty votes (failed rows) collapse to
+// zero on every axis; downstream analysis only consumes these from
+// completed rows so the zero is never confused with a real grade.
+export interface JudgeRubricAggregate {
+  accuracy: number;
+  coherence: number;
+  instruction: number;
+  finalScore: number;
+}
+
+export const judgeRubricAggregate = (
+  votes: readonly JudgeVote[],
+): JudgeRubricAggregate => {
+  if (votes.length === 0) {
+    return { accuracy: 0, coherence: 0, instruction: 0, finalScore: 0 };
+  }
+  let accuracySum = 0;
+  let coherenceSum = 0;
+  let instructionSum = 0;
+  for (const v of votes) {
+    accuracySum += v.accuracy;
+    coherenceSum += v.coherence;
+    instructionSum += v.instruction;
+  }
+  const accuracy = accuracySum / votes.length;
+  const coherence = coherenceSum / votes.length;
+  const instruction = instructionSum / votes.length;
+  // `(rubricMean - 1) / 4` matches `buildJudgeScore`'s contract: maps the
+  // 1..5 rubric mean into [0,1] so analyzer math stays unitless.
+  const finalScore = ((accuracy + coherence + instruction) / 3 - 1) / 4;
+  return { accuracy, coherence, instruction, finalScore };
+};
+
 // Shape persisted by the repository — `id` and `createdAt` are assigned by
 // the store, everything else comes from the factory below.
 export type UpsertableBenchmarkResult = Omit<BenchmarkResult, "id" | "createdAt">;
@@ -81,17 +112,12 @@ export interface CompletedResultInput {
   solverModel: string;
   runIndex: number;
 
-  input: string;
   candidateOutput: string;
   candidateInputTokens: number;
   candidateOutputTokens: number;
   candidateCostUsd: number;
 
-  judgeAccuracy: number;
-  judgeCoherence: number;
-  judgeInstruction: number;
   judgeVotes: readonly JudgeVote[];
-  finalScore: number;
   judgeInputTokens: number;
   judgeOutputTokens: number;
   judgeCostUsd: number;
@@ -119,14 +145,9 @@ export const completedBenchmarkResult = (
     solverModel: input.solverModel,
     runIndex: input.runIndex,
 
-    input: input.input,
     candidateOutput: input.candidateOutput,
 
-    judgeAccuracy: input.judgeAccuracy,
-    judgeCoherence: input.judgeCoherence,
-    judgeInstruction: input.judgeInstruction,
     judgeVotes: [...input.judgeVotes],
-    finalScore: input.finalScore,
 
     candidateInputTokens: input.candidateInputTokens,
     candidateOutputTokens: input.candidateOutputTokens,
@@ -151,7 +172,6 @@ export interface FailedResultInput {
   solverModel: string;
   runIndex: number;
 
-  input: string;
   failureKind: BenchmarkFailureKind;
   error: string;
 
@@ -184,14 +204,9 @@ export const failedBenchmarkResult = (
     solverModel: input.solverModel,
     runIndex: input.runIndex,
 
-    input: input.input,
     candidateOutput: input.candidateOutput ?? "",
 
-    judgeAccuracy: 0,
-    judgeCoherence: 0,
-    judgeInstruction: 0,
     judgeVotes: [],
-    finalScore: 0,
 
     candidateInputTokens: input.candidateInputTokens ?? 0,
     candidateOutputTokens: input.candidateOutputTokens ?? 0,

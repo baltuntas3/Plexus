@@ -4,8 +4,14 @@ import type {
   BenchmarkDto,
   BenchmarkResultDto,
 } from "@plexus/shared-types";
-import type { Benchmark } from "../../../domain/entities/benchmark.js";
-import type { BenchmarkResult } from "../../../domain/entities/benchmark-result.js";
+import type {
+  Benchmark,
+  BenchmarkTestCase,
+} from "../../../domain/entities/benchmark.js";
+import {
+  judgeRubricAggregate,
+  type BenchmarkResult,
+} from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkAnalysis } from "../../../application/services/benchmark/benchmark-analyzer.js";
 import type { BenchmarkSummary } from "../../../application/queries/benchmark-query-service.js";
 
@@ -40,34 +46,44 @@ export const toBenchmarkDto = (bm: BenchmarkLike): BenchmarkDto => ({
   completedAt: bm.completedAt ? bm.completedAt.toISOString() : null,
 });
 
-export const toBenchmarkResultDto = (r: BenchmarkResult): BenchmarkResultDto => ({
-  id: r.id,
-  benchmarkId: r.benchmarkId,
-  testCaseId: r.testCaseId,
-  promptVersionId: r.promptVersionId,
-  solverModel: r.solverModel,
-  runIndex: r.runIndex,
-  input: r.input,
-  candidateOutput: r.candidateOutput,
-  judgeAccuracy: r.judgeAccuracy,
-  judgeCoherence: r.judgeCoherence,
-  judgeInstruction: r.judgeInstruction,
-  judgeVotes: r.judgeVotes.map((v) => ({ ...v })),
-  finalScore: r.finalScore,
-  candidateInputTokens: r.candidateInputTokens,
-  candidateOutputTokens: r.candidateOutputTokens,
-  candidateCostUsd: r.candidateCostUsd,
-  judgeInputTokens: r.judgeInputTokens,
-  judgeOutputTokens: r.judgeOutputTokens,
-  judgeCostUsd: r.judgeCostUsd,
-  totalCostUsd: r.totalCostUsd,
-  judgeFailureCount: r.judgeFailureCount,
-  latencyMs: r.latencyMs,
-  status: r.status,
-  failureKind: r.failureKind,
-  error: r.error,
-  createdAt: r.createdAt.toISOString(),
-});
+// `input` and the rubric aggregates (`judgeAccuracy/Coherence/Instruction`,
+// `finalScore`) are derived for the DTO rather than persisted on the row:
+// `input` resolves through `testCaseId` and the rubric means come from
+// `judgeVotes`. Frontend contract preserved; storage stays normalized.
+export const toBenchmarkResultDto = (
+  r: BenchmarkResult,
+  testCasesById: Record<string, Pick<BenchmarkTestCase, "input">>,
+): BenchmarkResultDto => {
+  const rubric = judgeRubricAggregate(r.judgeVotes);
+  return {
+    id: r.id,
+    benchmarkId: r.benchmarkId,
+    testCaseId: r.testCaseId,
+    promptVersionId: r.promptVersionId,
+    solverModel: r.solverModel,
+    runIndex: r.runIndex,
+    input: testCasesById[r.testCaseId]?.input ?? "",
+    candidateOutput: r.candidateOutput,
+    judgeAccuracy: rubric.accuracy,
+    judgeCoherence: rubric.coherence,
+    judgeInstruction: rubric.instruction,
+    judgeVotes: r.judgeVotes.map((v) => ({ ...v })),
+    finalScore: rubric.finalScore,
+    candidateInputTokens: r.candidateInputTokens,
+    candidateOutputTokens: r.candidateOutputTokens,
+    candidateCostUsd: r.candidateCostUsd,
+    judgeInputTokens: r.judgeInputTokens,
+    judgeOutputTokens: r.judgeOutputTokens,
+    judgeCostUsd: r.judgeCostUsd,
+    totalCostUsd: r.totalCostUsd,
+    judgeFailureCount: r.judgeFailureCount,
+    latencyMs: r.latencyMs,
+    status: r.status,
+    failureKind: r.failureKind,
+    error: r.error,
+    createdAt: r.createdAt.toISOString(),
+  };
+};
 
 export const toBenchmarkAnalysisDto = (
   analysis: BenchmarkAnalysis,
@@ -186,15 +202,21 @@ export const toBenchmarkDetailDto = (
   bm: Benchmark,
   results: BenchmarkResult[],
   versionLabels: Record<string, string>,
-): BenchmarkDetailDto => ({
-  ...toBenchmarkDto(bm),
-  results: results.map(toBenchmarkResultDto),
-  testCases: bm.testCases.map((tc) => ({
-    id: tc.id,
-    input: tc.input,
-    expectedOutput: tc.expectedOutput,
-    category: tc.category,
-    source: tc.source,
-  })),
-  versionLabels,
-});
+): BenchmarkDetailDto => {
+  const testCasesById: Record<string, BenchmarkTestCase> = {};
+  for (const tc of bm.testCases) {
+    testCasesById[tc.id] = tc;
+  }
+  return {
+    ...toBenchmarkDto(bm),
+    results: results.map((r) => toBenchmarkResultDto(r, testCasesById)),
+    testCases: bm.testCases.map((tc) => ({
+      id: tc.id,
+      input: tc.input,
+      expectedOutput: tc.expectedOutput,
+      category: tc.category,
+      source: tc.source,
+    })),
+    versionLabels,
+  };
+};

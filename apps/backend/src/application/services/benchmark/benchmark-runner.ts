@@ -22,6 +22,7 @@ import { mean } from "../../utils/statistics.js";
 import type { IAIProviderFactory, GenerateResponse } from "../ai-provider.js";
 import type { JobContext } from "../job-queue.js";
 import { calculateCost } from "../model-registry.js";
+import { DEFAULT_BUDGET_USD } from "./benchmark-cost-estimator.js";
 import { LLMJudge } from "../judge/llm-judge.js";
 import {
   JudgeExecutionError,
@@ -55,7 +56,6 @@ import { buildEvaluationPrompt } from "./evaluation-prompt.js";
 // rows so a partial matrix is still useful.
 
 const DEFAULT_CELL_TIMEOUT_MS = 120_000;
-const DEFAULT_BUDGET_USD = 50;
 // Solver temperature is server-fixed (not a user knob) so two benchmarks of
 // the same prompts/models stay directly comparable. The value is non-zero
 // on purpose: Plexus measures real production behaviour, where users sample
@@ -149,8 +149,19 @@ export class BenchmarkRunner {
         (sum, row) => sum + row.totalCostUsd,
         0,
       );
-      let observedCellCosts = spentUsd;
-      let observedCellCount = existingRows.length;
+      // Only completed rows feed the per-cell reserve estimate. Failed rows
+      // commonly carry zero or partial cost (early solver errors, judge
+      // failures before the second LLM round-trip), so including them
+      // systematically underestimates the cost of the *next* cell — which
+      // makes the runner overshoot `budgetUsd` when failure rates are high.
+      let observedCellCosts = existingRows.reduce(
+        (sum, row) => (row.status === "completed" ? sum + row.totalCostUsd : sum),
+        0,
+      );
+      let observedCellCount = existingRows.reduce(
+        (count, row) => (row.status === "completed" ? count + 1 : count),
+        0,
+      );
       let cappedByBudget = false;
 
       const reservePerCellUsd = (): number =>
@@ -193,8 +204,10 @@ export class BenchmarkRunner {
             );
             for (const row of rows) {
               spentUsd += row.totalCostUsd;
-              observedCellCosts += row.totalCostUsd;
-              observedCellCount += 1;
+              if (row.status === "completed") {
+                observedCellCosts += row.totalCostUsd;
+                observedCellCount += 1;
+              }
               await this.deps.results.upsert(row);
               processed += 1;
             }
@@ -223,7 +236,12 @@ export class BenchmarkRunner {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const latest = await this.deps.benchmarks.findById(benchmarkId);
-      if (latest) {
+      if (
+        latest &&
+        latest.status !== "completed" &&
+        latest.status !== "completed_with_budget_cap" &&
+        latest.status !== "failed"
+      ) {
         latest.failWith(message);
         await this.deps.benchmarks.save(latest);
       }

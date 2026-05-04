@@ -206,6 +206,12 @@ export const BenchmarkDetailPage = () => {
   const handleStart = async () => {
     if (!id || !benchmark) return;
     setStarting(true);
+    // Clear any analysis loaded from a previous run so the auto-load effect
+    // picks up the new completion. Without this, restarting a completed/
+    // failed/budget-capped benchmark leaves the old analysis on screen and
+    // the gate at `analysis ||` keeps re-fetch suppressed.
+    setAnalysis(null);
+    setAnalysisError(null);
     try {
       const updatesPayload = buildTestCaseUpdatePayload(
         benchmark,

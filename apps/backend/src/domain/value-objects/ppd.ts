@@ -17,11 +17,7 @@ export interface PPDInput {
 }
 
 export class PPD {
-  private constructor(
-    public readonly value: number,
-    public readonly candidate: PPDInput,
-    public readonly baseline: PPDInput,
-  ) {}
+  private constructor(public readonly value: number) {}
 
   static compute(candidate: PPDInput, baseline: PPDInput): PPD {
     assertAccuracy("candidate", candidate.accuracy);
@@ -39,12 +35,12 @@ export class PPD {
       // Free candidate with any positive accuracy is "infinitely" efficient.
       // Caller should treat this as a special case; we surface +Infinity rather
       // than a misleading finite number.
-      return new PPD(Number.POSITIVE_INFINITY, candidate, baseline);
+      return new PPD(Number.POSITIVE_INFINITY);
     }
 
     const candidateRatio = candidate.accuracy / candidate.costUsd;
     const baselineRatio = baseline.accuracy / baseline.costUsd;
-    return new PPD(candidateRatio / baselineRatio, candidate, baseline);
+    return new PPD(candidateRatio / baselineRatio);
   }
 
   get isMoreEfficient(): boolean {

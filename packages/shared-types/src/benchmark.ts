@@ -10,7 +10,6 @@ export type BenchmarkStatus =
   | "failed";
 export type BenchmarkResultStatus = "completed" | "failed";
 export type BenchmarkFailureKind =
-  | "budget_exceeded"
   | "timeout"
   | "solver_error"
   | "judge_error"
@@ -107,15 +106,22 @@ export interface BenchmarkResultDto {
 
 // Minimal public surface: the caller picks which versions to compare, which
 // models to benchmark as solvers, and how many cases to generate. Judge
-// ensemble, generator, generation mode, repetitions, seed, concurrency and
-// solver temperature are derived server-side for fairness and
-// reproducibility — solver temperature is fixed at 0 so two benchmarks of
-// the same prompts/models stay directly comparable.
+// ensemble, generator, generation mode, seed, concurrency and solver
+// temperature are derived server-side for fairness and reproducibility —
+// solver temperature is server-fixed at a non-zero default so repetitions
+// still capture real sampling variance, and two benchmarks of the same
+// prompts/models stay directly comparable.
+//
+// `repetitions` and `budgetUsd` have server-side defaults but stay
+// overridable so cost-control scenarios can dial a run up or down without
+// forking the use case.
 export interface CreateBenchmarkRequest {
   name: string;
   promptVersionIds: string[];
   solverModels: string[];
   testCount: number;
+  repetitions?: number;
+  budgetUsd?: number;
 }
 
 export type BenchmarkListResponse = Paginated<BenchmarkDto>;
@@ -300,11 +306,4 @@ export interface BenchmarkAnalysisDto {
   recommendationDecision: RecommendationDecisionDto;
   judgeAgreement: JudgeAgreementRowDto[];
   ensembleJudgeReport: EnsembleJudgeReportDto;
-}
-
-// SSE progress event payload.
-export interface BenchmarkProgressEvent {
-  benchmarkId: string;
-  status: BenchmarkStatus;
-  progress: BenchmarkProgressDto;
 }

@@ -8,6 +8,7 @@ import {
 } from "../../services/benchmark/benchmark-job.js";
 import {
   BenchmarkCostEstimator,
+  DEFAULT_BUDGET_USD,
   averageTokenCount,
 } from "../../services/benchmark/benchmark-cost-estimator.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
@@ -15,7 +16,6 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 export interface StartBenchmarkCommand {
   benchmarkId: string;
   organizationId: string;
-  userId: string;
 }
 
 export interface StartBenchmarkResult {
@@ -64,7 +64,7 @@ export class StartBenchmarkUseCase {
       repetitions: benchmark.repetitions,
     });
     benchmark.refreshCostForecast(costForecast);
-    const budget = benchmark.budgetUsd ?? 50;
+    const budget = benchmark.budgetUsd ?? DEFAULT_BUDGET_USD;
     if (costForecast.estimatedTotalCostUsd > budget) {
       throw ValidationError(
         `Estimated benchmark cost $${costForecast.estimatedTotalCostUsd.toFixed(4)} exceeds the $${budget.toFixed(2)} cap. Reduce test count, solver count, or repetitions.`,
@@ -76,11 +76,23 @@ export class StartBenchmarkUseCase {
     benchmark.queue();
     await this.benchmarks.save(benchmark);
 
+    // If enqueue fails after the queued state was persisted the benchmark
+    // would otherwise sit in "queued" forever — `queue()` rejects re-entry,
+    // so the user has no recovery path. Recording a failure releases the
+    // aggregate back to a re-runnable terminal state.
     const payload: BenchmarkJobPayload = { benchmarkId: benchmark.id };
-    const jobId = await this.queue.enqueue<BenchmarkJobPayload>(
-      BENCHMARK_JOB_NAME,
-      payload,
-    );
+    let jobId: string;
+    try {
+      jobId = await this.queue.enqueue<BenchmarkJobPayload>(
+        BENCHMARK_JOB_NAME,
+        payload,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      benchmark.failWith(`Failed to enqueue benchmark job: ${message}`);
+      await this.benchmarks.save(benchmark);
+      throw err;
+    }
     return { benchmarkId: benchmark.id, jobId };
   }
 }

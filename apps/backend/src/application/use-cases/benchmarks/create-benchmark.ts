@@ -19,6 +19,7 @@ import {
 } from "../../services/benchmark/test-case-generator.js";
 import {
   BenchmarkCostEstimator,
+  DEFAULT_BUDGET_USD,
   STUB_AVG_INPUT_TOKENS,
   averageTokenCount,
 } from "../../services/benchmark/benchmark-cost-estimator.js";
@@ -39,7 +40,6 @@ const DEFAULT_GENERATOR_MODEL = "openai/gpt-oss-120b";
 const DEFAULT_JUDGE_COUNT = 2;
 const DEFAULT_REPETITIONS = 3;
 const DEFAULT_CONCURRENCY = 4;
-const DEFAULT_BUDGET_USD = 50;
 
 export type CreateBenchmarkCommand = CreateBenchmarkDto & {
   organizationId: string;

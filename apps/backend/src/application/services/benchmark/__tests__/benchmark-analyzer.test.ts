@@ -331,35 +331,17 @@ describe("computeAnalysis", () => {
     expect(analysis.ppd.some((row) => row.candidateKey.includes("vFlaky"))).toBe(false);
   });
 
-  it("excludes budget-truncated candidates from ranking when coverage is unequal", () => {
-    const analysis = computeAnalysis([
-      row({ promptVersionId: "vBudgeted", testCaseId: "a", finalScore: 0.9, totalCostUsd: 0.05 }),
-      row({
-        promptVersionId: "vBudgeted",
-        testCaseId: "b",
-        status: "failed",
-        failureKind: "budget_exceeded",
-        totalCostUsd: 0,
-      }),
-      row({ promptVersionId: "vSteady", testCaseId: "a", finalScore: 0.85, totalCostUsd: 0.08 }),
-      row({ promptVersionId: "vSteady", testCaseId: "b", finalScore: 0.84, totalCostUsd: 0.08 }),
-    ]);
-
-    const budgeted = analysis.candidates.find((c) => c.promptVersionId === "vBudgeted");
-    expect(budgeted?.failureRate).toBeCloseTo(0.5, 6);
-    expect(budgeted?.operationalIssueRate).toBe(0);
-    expect(analysis.ranking.some((entry) => entry.candidateKey.includes("vBudgeted"))).toBe(false);
-    expect(analysis.recommendedKey).toBeNull();
-  });
-
-  it("suppresses recommendation when reliable candidates have unequal completed coverage", () => {
+  it("recommends from the largest comparable-coverage cohort and excludes off-cohort candidates from ranking", () => {
+    // vA covers (a, b); vB covers only (a). The largest cohort is vA's,
+    // so vB is excluded from ranking/PPD/Pareto. The recommendation is
+    // still produced from the cohort we *can* compare honestly.
     const analysis = computeAnalysis([
       row({ promptVersionId: "vA", testCaseId: "a", runIndex: 0, finalScore: 0.91 }),
       row({ promptVersionId: "vA", testCaseId: "b", runIndex: 0, finalScore: 0.9 }),
       row({ promptVersionId: "vB", testCaseId: "a", runIndex: 0, finalScore: 0.89 }),
     ]);
 
-    expect(analysis.recommendedKey).toBeNull();
+    expect(analysis.recommendedKey).toContain("vA");
     expect(
       analysis.ranking.some((entry) =>
         entry.candidateKey.includes("vB"),

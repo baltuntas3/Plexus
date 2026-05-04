@@ -88,7 +88,6 @@ describe("UpdateTestCasesUseCase", () => {
     await useCase.execute({
       benchmarkId: bm.id,
       organizationId: "org-1",
-      userId: "u1",
       updates: [
         { id: "tc1", expectedOutput: "answer one" },
         { id: "tc2", expectedOutput: null },
@@ -107,7 +106,6 @@ describe("UpdateTestCasesUseCase", () => {
     await useCase.execute({
       benchmarkId: bm.id,
       organizationId: "org-1",
-      userId: "u1",
       updates: [],
       additions: [{ input: "manual?", expectedOutput: null, category: "adversarial" }],
     });
@@ -123,7 +121,6 @@ describe("UpdateTestCasesUseCase", () => {
     await useCase.execute({
       benchmarkId: bm.id,
       organizationId: "org-1",
-      userId: "u1",
       updates: [{ id: "tc1", input: "q1? ".repeat(200), expectedOutput: null }],
       additions: [],
     });
@@ -145,7 +142,6 @@ describe("UpdateTestCasesUseCase", () => {
       useCase.execute({
         benchmarkId: bm.id,
         organizationId: "org-1",
-        userId: "u1",
         updates: [],
         additions: [],
       }),
@@ -159,7 +155,6 @@ describe("UpdateTestCasesUseCase", () => {
       useCase.execute({
         benchmarkId: bm.id,
         organizationId: "other-org",
-        userId: "other",
         updates: [],
         additions: [],
       }),

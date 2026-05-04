@@ -17,7 +17,6 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 export interface GetBenchmarkAnalysisCommand {
   benchmarkId: string;
   organizationId: string;
-  userId: string;
 }
 
 export class GetBenchmarkAnalysisUseCase {

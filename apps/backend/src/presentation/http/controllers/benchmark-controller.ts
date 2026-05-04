@@ -42,35 +42,32 @@ export class BenchmarkController {
   };
 
   get: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const { benchmark, results, versionLabels } = await this.benchmarks.getBenchmark.execute({
       benchmarkId: id,
       organizationId,
-      userId,
     });
     res.json({ benchmark: toBenchmarkDetailDto(benchmark, results, versionLabels) });
   };
 
   start: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const result = await this.benchmarks.startBenchmark.execute({
       benchmarkId: id,
       organizationId,
-      userId,
     });
     res.status(202).json(result);
   };
 
   updateTestCases: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const { updates, additions } = updateTestCasesSchema.parse(req.body);
     await this.benchmarks.updateTestCases.execute({
       benchmarkId: id,
       organizationId,
-      userId,
       updates,
       additions,
     });
@@ -78,12 +75,11 @@ export class BenchmarkController {
   };
 
   analysis: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const analysis = await this.benchmarks.getBenchmarkAnalysis.execute({
       benchmarkId: id,
       organizationId,
-      userId,
     });
     res.json({ analysis: toBenchmarkAnalysisDto(analysis) });
   };
@@ -92,13 +88,12 @@ export class BenchmarkController {
   // events until the benchmark reaches a terminal status, then closes the
   // connection. Auth is enforced at router level.
   stream: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
 
     const snapshot = await this.benchmarks.getBenchmark.execute({
       benchmarkId: id,
       organizationId,
-      userId,
     });
 
     res.status(200);
@@ -129,6 +124,12 @@ export class BenchmarkController {
       return;
     }
 
+    // The aggregate's jobId is set by the runner via `start(jobId)`, not by
+    // the start use case, so a client opening this stream right after enqueue
+    // can find `bm.jobId` still null. Subscribe when we can (low-latency fast
+    // path) but do not depend on it — the polling loop below also emits
+    // progress whenever the persisted benchmark advances, so the client
+    // always sees ticks even if the queue's pubsub never fires.
     let unsubscribe: (() => void) | null = null;
     if (bm.jobId) {
       unsubscribe = this.benchmarks.queue.subscribeProgress(bm.jobId, (update) => {
@@ -140,13 +141,43 @@ export class BenchmarkController {
       });
     }
 
+    let lastProgress = bm.progress;
     const interval = setInterval(async () => {
       try {
         const latest = await this.benchmarks.getBenchmark.execute({
           benchmarkId: id,
           organizationId,
-          userId,
         });
+        const next = latest.benchmark.progress;
+        if (
+          next.completed !== lastProgress.completed ||
+          next.total !== lastProgress.total
+        ) {
+          lastProgress = next;
+          send("progress", {
+            benchmarkId: latest.benchmark.id,
+            status: latest.benchmark.status,
+            progress: next,
+          });
+        }
+        if (
+          unsubscribe === null &&
+          latest.benchmark.jobId &&
+          latest.benchmark.status === "running"
+        ) {
+          // jobId showed up after the initial snapshot — attach the fast
+          // path now so the rest of the run streams in real time.
+          unsubscribe = this.benchmarks.queue.subscribeProgress(
+            latest.benchmark.jobId,
+            (update) => {
+              send("progress", {
+                benchmarkId: latest.benchmark.id,
+                status: "running",
+                progress: update,
+              });
+            },
+          );
+        }
         if (
           latest.benchmark.status === "completed" ||
           latest.benchmark.status === "completed_with_budget_cap" ||

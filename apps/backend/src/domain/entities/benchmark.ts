@@ -6,7 +6,7 @@ import {
   BenchmarkNoJudgesError,
   BenchmarkNotInDraftError,
 } from "../errors/domain-error.js";
-import { BudgetUsd } from "../value-objects/budget-usd.js";
+import { assertBudgetUsd } from "../value-objects/budget-usd.js";
 import { BenchmarkSeed } from "../value-objects/benchmark-seed.js";
 import type { BenchmarkCostForecast } from "../value-objects/benchmark-cost-forecast.js";
 
@@ -23,10 +23,10 @@ import type { BenchmarkCostForecast } from "../value-objects/benchmark-cost-fore
 // of being duplicated across use cases. Cost forecasts are reset whenever
 // the matrix changes, via `refreshCostForecast`.
 //
-// Persistence follows the same snapshot/commit protocol as the Prompt
-// aggregate: `toSnapshot()` takes a one-shot save token, the repository
-// performs an optimistic-concurrency write gated on `expectedRevision`, and
-// on success calls `commit(snapshot)` to advance the in-memory revision.
+// Persistence follows the same snapshot protocol as the Prompt aggregate:
+// `toSnapshot()` takes a one-shot save token, the repository performs an
+// optimistic-concurrency write gated on `expectedRevision`, and on success
+// calls `markPersisted()` to advance the in-memory revision.
 
 export type BenchmarkStatus =
   | "draft"
@@ -139,7 +139,7 @@ export class Benchmark {
     // the same check in every caller.
     BenchmarkSeed.of(params.seed);
     if (params.budgetUsd !== null) {
-      BudgetUsd.of(params.budgetUsd);
+      assertBudgetUsd(params.budgetUsd);
     }
     if (params.repetitions < 1) {
       throw BenchmarkInvalidRepetitionsError();
@@ -342,6 +342,9 @@ export class Benchmark {
       status: "running",
       jobId,
       startedAt: this.state.startedAt ?? startedAt,
+      // Clear any prior terminal-state timestamp on a resume so the UI does
+      // not display a stale completion time while the run is back to running.
+      completedAt: null,
       error: null,
     };
   }
@@ -385,7 +388,17 @@ export class Benchmark {
 
   // Failure is accepted from any non-terminal state — a crash can happen
   // mid-queue or mid-run, and the aggregate still needs a way to record it.
+  // Terminal states are rejected so an erroneous late `failWith` cannot
+  // overwrite a recorded completion (or downgrade `completed_with_budget_cap`
+  // to `failed`).
   failWith(message: string, completedAt: Date = new Date()): void {
+    if (
+      this.state.status === "completed" ||
+      this.state.status === "completed_with_budget_cap" ||
+      this.state.status === "failed"
+    ) {
+      throw BenchmarkIllegalTransitionError(this.state.status, "failed");
+    }
     this.state = {
       ...this.state,
       status: "failed",

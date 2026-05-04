@@ -9,7 +9,6 @@ import { buildVersionLabels } from "./get-benchmark-analysis.js";
 export interface GetBenchmarkCommand {
   benchmarkId: string;
   organizationId: string;
-  userId: string;
 }
 
 // Version labels travel alongside the benchmark so every UI surface —

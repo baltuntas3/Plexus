@@ -2,7 +2,6 @@ import { Schema, model } from "mongoose";
 
 const RESULT_STATUSES = ["completed", "failed"] as const;
 const FAILURE_KINDS = [
-  "budget_exceeded",
   "timeout",
   "solver_error",
   "judge_error",
@@ -32,11 +31,11 @@ const judgeVoteSchema = new Schema(
 
 const benchmarkResultSchema = new Schema(
   {
+    // The compound unique index below already covers `benchmarkId` as its prefix.
     benchmarkId: {
       type: Schema.Types.ObjectId,
       ref: "Benchmark",
       required: true,
-      index: true,
     },
     testCaseId: { type: String, required: true },
     promptVersionId: {

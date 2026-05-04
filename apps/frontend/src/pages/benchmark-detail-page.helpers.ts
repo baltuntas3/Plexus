@@ -36,9 +36,7 @@ export interface AggregateRow {
 }
 
 const operationalIssueWeight = (result: BenchmarkResultDto): number => {
-  if (result.status === "failed") {
-    return result.failureKind === "budget_exceeded" ? 0 : 1;
-  }
+  if (result.status === "failed") return 1;
   const totalJudges = result.judgeVotes.length + result.judgeFailureCount;
   if (totalJudges <= 0) return 0;
   return result.judgeFailureCount / totalJudges;

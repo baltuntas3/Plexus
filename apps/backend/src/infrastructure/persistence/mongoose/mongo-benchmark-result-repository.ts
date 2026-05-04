@@ -1,15 +1,12 @@
 import type { Types } from "mongoose";
-import {
-  benchmarkResultKey,
-  type BenchmarkFailureKind,
-  type BenchmarkResult,
-  type BenchmarkResultStatus,
-  type JudgeVote,
-} from "../../../domain/entities/benchmark-result.js";
 import type {
-  IBenchmarkResultRepository,
-  UpsertBenchmarkResultInput,
-} from "../../../domain/repositories/benchmark-result-repository.js";
+  BenchmarkFailureKind,
+  BenchmarkResult,
+  BenchmarkResultStatus,
+  JudgeVote,
+  UpsertableBenchmarkResult,
+} from "../../../domain/entities/benchmark-result.js";
+import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
 import { BenchmarkResultModel } from "./benchmark-result-model.js";
 
 // Plain shape for `.lean()` reads. Hydrated docs were a footgun: spreading a
@@ -76,7 +73,7 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
 });
 
 export class MongoBenchmarkResultRepository implements IBenchmarkResultRepository {
-  async upsert(input: UpsertBenchmarkResultInput): Promise<BenchmarkResult> {
+  async upsert(input: UpsertableBenchmarkResult): Promise<BenchmarkResult> {
     const filter = {
       benchmarkId: input.benchmarkId,
       testCaseId: input.testCaseId,
@@ -99,29 +96,4 @@ export class MongoBenchmarkResultRepository implements IBenchmarkResultRepositor
     const docs = await BenchmarkResultModel.find({ benchmarkId }).lean<BenchmarkResultDoc[]>();
     return docs.map((d) => toDomain(d));
   }
-
-  async findExistingKeys(benchmarkId: string): Promise<Set<string>> {
-    const docs = await BenchmarkResultModel.find(
-      { benchmarkId },
-      { testCaseId: 1, promptVersionId: 1, solverModel: 1, runIndex: 1 },
-    ).lean();
-    const out = new Set<string>();
-    for (const d of docs as Array<{
-      testCaseId: string;
-      promptVersionId: Types.ObjectId | string;
-      solverModel: string;
-      runIndex: number;
-    }>) {
-      out.add(
-        benchmarkResultKey(
-          d.testCaseId,
-          String(d.promptVersionId),
-          d.solverModel,
-          d.runIndex,
-        ),
-      );
-    }
-    return out;
-  }
-
 }

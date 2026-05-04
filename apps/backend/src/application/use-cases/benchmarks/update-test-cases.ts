@@ -12,7 +12,6 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 export interface UpdateTestCasesCommand {
   benchmarkId: string;
   organizationId: string;
-  userId: string;
   updates: Array<{
     id: string;
     input?: string;

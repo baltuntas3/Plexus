@@ -1,17 +1,15 @@
 import {
   benchmarkResultKey,
   type BenchmarkResult,
+  type UpsertableBenchmarkResult,
 } from "../../domain/entities/benchmark-result.js";
-import type {
-  IBenchmarkResultRepository,
-  UpsertBenchmarkResultInput,
-} from "../../domain/repositories/benchmark-result-repository.js";
+import type { IBenchmarkResultRepository } from "../../domain/repositories/benchmark-result-repository.js";
 
 export class InMemoryBenchmarkResultRepository implements IBenchmarkResultRepository {
   private readonly store = new Map<string, BenchmarkResult>();
   private nextId = 1;
 
-  async upsert(input: UpsertBenchmarkResultInput): Promise<BenchmarkResult> {
+  async upsert(input: UpsertableBenchmarkResult): Promise<BenchmarkResult> {
     const key = this.compositeKey(input);
     const existing = this.store.get(key);
     const id = existing?.id ?? String(this.nextId++);
@@ -28,18 +26,9 @@ export class InMemoryBenchmarkResultRepository implements IBenchmarkResultReposi
     return [...this.store.values()].filter((r) => r.benchmarkId === benchmarkId);
   }
 
-  async findExistingKeys(benchmarkId: string): Promise<Set<string>> {
-    const out = new Set<string>();
-    for (const r of this.store.values()) {
-      if (r.benchmarkId !== benchmarkId) continue;
-      out.add(benchmarkResultKey(r.testCaseId, r.promptVersionId, r.solverModel, r.runIndex));
-    }
-    return out;
-  }
-
   private compositeKey(
     input: Pick<
-      UpsertBenchmarkResultInput,
+      UpsertableBenchmarkResult,
       "benchmarkId" | "testCaseId" | "promptVersionId" | "solverModel" | "runIndex"
     >,
   ): string {

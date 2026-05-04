@@ -65,14 +65,11 @@ export const fetchBenchmarkAnalysisAtom = atom(
   },
 );
 
-export const benchmarkDetailRefreshAtom = atom(0);
-
 export const fetchBenchmarkDetailAtom = atom(
   null,
   async (get, _set, benchmarkId: string): Promise<BenchmarkDetailDto> => {
     const tokens = get(tokensAtom);
     if (!tokens) throw new Error("Not authenticated");
-    get(benchmarkDetailRefreshAtom);
     const result = await apiRequest<{ benchmark: BenchmarkDetailDto }>(
       `/benchmarks/${benchmarkId}`,
       { token: tokens.accessToken },

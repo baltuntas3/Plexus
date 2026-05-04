@@ -25,6 +25,11 @@ import { mean } from "../../utils/statistics.js";
 // stored estimate, so this number only affects the budget gate.
 export const STUB_AVG_INPUT_TOKENS = 150;
 
+// Default per-benchmark spend cap when the caller does not specify one.
+// Single source of truth for create-, start- and runner-side defaults so
+// the three sites stay in sync.
+export const DEFAULT_BUDGET_USD = 50;
+
 // Fixed overhead for the judge prompt itself (BASE_JUDGE_PROMPT plus the
 // task-type guidance, the BATCH_JUDGE_INSTRUCTIONS block, and the XML tag
 // scaffolding around <input>/<reference>/<attempt label="...">). Empirical

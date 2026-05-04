@@ -13,8 +13,10 @@
 //   2. PPD vs. a Pareto-eligible baseline (most expensive among candidates
 //      clearing an 80% score floor), matching the paper's framing.
 //   3. Composite ranking: quality (80%, geometric mean of normalised rubric
-//      dimensions + consistency) plus efficiency (20%, min-max normalised
-//      latency + cost). The composite is the recommended-selection rule,
+//      dimensions + consistency) plus efficiency (20%, harmonic-against-best
+//      normalised latency + cost — `bestValue / max(bestValue, value)`, so
+//      the cheapest/fastest in the cohort scores 1 and outliers do not
+//      collapse the rest of the field). The composite is the recommended-selection rule,
 //      because Pareto alone cannot break ties along the frontier and PPD
 //      alone ignores consistency.
 //
@@ -417,21 +419,15 @@ const computeCompositeRanking = (
 
 interface NumericRange {
   min: number;
-  max: number;
 }
 
 const rangeOf = <T>(items: readonly T[], pick: (item: T) => number): NumericRange => {
   let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
   for (const item of items) {
     const value = pick(item);
     if (value < min) min = value;
-    if (value > max) max = value;
   }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
-    return { min: 0, max: 0 };
-  }
-  return { min, max };
+  return { min: Number.isFinite(min) ? min : 0 };
 };
 
 // Maps `value` against `bestValue` robustly. The absolute lowest (best) value in range
@@ -537,6 +533,7 @@ const aggregateCategoryBreakdown = (
   testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>,
 ): CategoryBreakdownRow[] => {
   type Bucket = {
+    candidateKey: string;
     promptVersionId: string;
     solverModel: string;
     category: CategoryKey;
@@ -559,6 +556,7 @@ const aggregateCategoryBreakdown = (
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = {
+        candidateKey: candidate,
         promptVersionId: r.promptVersionId,
         solverModel: r.solverModel,
         category,
@@ -593,12 +591,12 @@ const aggregateCategoryBreakdown = (
     bucket.operationalIssueCount += operationalIssueWeight(r);
   }
 
-  return [...buckets.entries()]
-    .map(([key, bucket]) => {
+  return [...buckets.values()]
+    .map((bucket) => {
       const completedCount = bucket.completedCount;
       const totalRows = completedCount + bucket.failedCount;
       return {
-        candidateKey: key.slice(0, key.lastIndexOf("::")),
+        candidateKey: bucket.candidateKey,
         promptVersionId: bucket.promptVersionId,
         solverModel: bucket.solverModel,
         category: bucket.category,
@@ -760,16 +758,17 @@ export const computeAnalysis = (
       .map((c) => c.candidateKey),
   );
   const eligibleRanking = ranking.filter((r) => eligibleKeys.has(r.candidateKey));
-  const hasCoverageMismatch =
-    comparableCoverageKeys.size > 0 &&
-    comparableCoverageKeys.size !== reliableCompleted.length;
-  const recommended = hasCoverageMismatch
-    ? null
-    : pickWithPairedSignificanceTieBreak(
-        eligibleRanking,
-        reliableCompleted.filter((candidate) => comparableCoverageKeys.has(candidate.candidateKey)),
-        results,
-      );
+  // The recommendation is drawn from the largest comparable-coverage cohort
+  // only — `pickComparableCoverageKeys` already restricts ranking, PPD and
+  // Pareto to that cohort, so candidates with off-cohort coverage are absent
+  // from `eligibleRanking` and never compete here. Reliable candidates that
+  // sit outside the cohort surface in the candidate stats but do not block
+  // a tip from being given on the ones we *can* compare honestly.
+  const recommended = pickWithPairedSignificanceTieBreak(
+    eligibleRanking,
+    reliableCompleted.filter((candidate) => comparableCoverageKeys.has(candidate.candidateKey)),
+    results,
+  );
   const recommendedKey = recommended?.rank.candidateKey ?? null;
   const recommendedStats = recommendedKey
     ? reliableCompleted.find((c) => c.candidateKey === recommendedKey) ?? null
@@ -802,7 +801,7 @@ export const computeAnalysis = (
         }
       : {
           mode: "top_composite",
-          topCompositeKey: hasCoverageMismatch ? null : eligibleRanking[0]?.candidateKey ?? null,
+          topCompositeKey: eligibleRanking[0]?.candidateKey ?? null,
           selectedKey: null,
           comparedAgainstKey: null,
           pairedDiffCiLow: null,
@@ -1076,9 +1075,7 @@ const buildRecommendationReasoning = (s: CandidateStats, composite: number): str
   `Cost $${s.meanCostUsd.toFixed(4)}/test.`;
 
 const operationalIssueWeight = (row: BenchmarkResult): number => {
-  if (row.status === "failed") {
-    return row.failureKind === "budget_exceeded" ? 0 : 1;
-  }
+  if (row.status === "failed") return 1;
   const totalJudges = row.judgeVotes.length + row.judgeFailureCount;
   if (totalJudges <= 0) return 0;
   return row.judgeFailureCount / totalJudges;

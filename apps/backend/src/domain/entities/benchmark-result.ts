@@ -16,7 +16,6 @@ import { ValidationError } from "../errors/domain-error.js";
 
 export type BenchmarkResultStatus = "completed" | "failed";
 export type BenchmarkFailureKind =
-  | "budget_exceeded"
   | "timeout"
   | "solver_error"
   | "judge_error"

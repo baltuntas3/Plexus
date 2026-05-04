@@ -47,7 +47,6 @@ export const updateTestCasesSchema = z.object({
     .optional()
     .default([]),
 });
-export type UpdateTestCasesDto = z.infer<typeof updateTestCasesSchema>;
 
 export const listBenchmarksQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -58,4 +57,3 @@ export const listBenchmarksQuerySchema = z.object({
   // the org.
   promptVersionId: z.string().min(1).optional(),
 });
-export type ListBenchmarksQueryDto = z.infer<typeof listBenchmarksQuerySchema>;

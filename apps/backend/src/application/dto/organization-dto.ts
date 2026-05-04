@@ -41,4 +41,3 @@ export type TransferOwnershipInputDto = z.infer<typeof transferOwnershipInputSch
 export const setApprovalPolicyInputSchema = z.object({
   requiredApprovals: z.number().int().nullable(),
 });
-export type SetApprovalPolicyInputDto = z.infer<typeof setApprovalPolicyInputSchema>;

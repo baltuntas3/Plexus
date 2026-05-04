@@ -11,7 +11,6 @@ export type GenerateBraidInputDto = z.infer<typeof generateBraidInputSchema>;
 export const updateBraidInputSchema = z.object({
   mermaidCode: z.string().min(1),
 });
-export type UpdateBraidInputDto = z.infer<typeof updateBraidInputSchema>;
 
 // Frontend maintains the conversation in memory and sends the full
 // prior history with each turn. Hard limits are encoded as constants
@@ -36,13 +35,11 @@ export const braidChatInputSchema = z.object({
   userMessage: z.string().min(1).max(PER_MESSAGE_CHAR_LIMIT),
   generatorModel: z.string().min(1),
 });
-export type BraidChatInputDto = z.infer<typeof braidChatInputSchema>;
 
 export const saveBraidFromChatInputSchema = z.object({
   mermaidCode: z.string().min(1),
   generatorModel: z.string().min(1),
 });
-export type SaveBraidFromChatInputDto = z.infer<typeof saveBraidFromChatInputSchema>;
 
 // Visual-editor structural-edit primitives. Length bounds mirror the
 // domain `BraidGraph` mutation guards so a malformed payload fails at
@@ -68,14 +65,12 @@ export const renameBraidNodeInputSchema = z.object({
   newLabel: z.string().trim().min(1).max(BRAID_NODE_LABEL_MAX),
   addVariables: addVariablesField,
 });
-export type RenameBraidNodeInputDto = z.infer<typeof renameBraidNodeInputSchema>;
 
 export const addBraidNodeInputSchema = z.object({
   label: z.string().trim().min(1).max(BRAID_NODE_LABEL_MAX),
   kind: z.enum(BRAID_NODE_KINDS),
   addVariables: addVariablesField,
 });
-export type AddBraidNodeInputDto = z.infer<typeof addBraidNodeInputSchema>;
 
 // Add/Remove/Relabel edge share `from + to + label` shape; relabel
 // adds `newLabel`. Optional labels arrive as either omitted or
@@ -93,14 +88,12 @@ export const addBraidEdgeInputSchema = z.object({
   toNodeId: braidNodeIdSchema,
   label: edgeLabelSchema,
 });
-export type AddBraidEdgeInputDto = z.infer<typeof addBraidEdgeInputSchema>;
 
 export const removeBraidEdgeInputSchema = z.object({
   fromNodeId: braidNodeIdSchema,
   toNodeId: braidNodeIdSchema,
   label: edgeLabelSchema,
 });
-export type RemoveBraidEdgeInputDto = z.infer<typeof removeBraidEdgeInputSchema>;
 
 export const relabelBraidEdgeInputSchema = z.object({
   fromNodeId: braidNodeIdSchema,
@@ -108,7 +101,6 @@ export const relabelBraidEdgeInputSchema = z.object({
   oldLabel: edgeLabelSchema,
   newLabel: edgeLabelSchema,
 });
-export type RelabelBraidEdgeInputDto = z.infer<typeof relabelBraidEdgeInputSchema>;
 
 // Visual-editor layout persistence. Each entry is one node's saved
 // `(x, y)` coordinates. Empty `positions` array clears the saved
@@ -127,4 +119,3 @@ export const braidGraphLayoutInputSchema = z.object({
     )
     .max(500),
 });
-export type BraidGraphLayoutInputDto = z.infer<typeof braidGraphLayoutInputSchema>;

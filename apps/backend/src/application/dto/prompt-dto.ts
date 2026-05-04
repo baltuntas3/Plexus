@@ -23,7 +23,6 @@ export const promptVariableInputSchema = z.object({
   defaultValue: z.string().max(2000).nullish(),
   required: z.boolean().optional().default(false),
 });
-export type PromptVariableInputDto = z.infer<typeof promptVariableInputSchema>;
 
 export const createPromptInputSchema = z.object({
   name: z.string().min(1).max(120),
@@ -84,4 +83,3 @@ export const compareVersionsQuerySchema = z.object({
   base: versionLabelSchema,
   target: versionLabelSchema,
 });
-export type CompareVersionsQueryDto = z.infer<typeof compareVersionsQuerySchema>;

@@ -23,6 +23,7 @@ interface BraidGenerationResult {
   usage: TokenUsage;
   cost: TokenCost;
   cached: boolean;
+  qualityScore: GraphQualityScore;
 }
 
 interface CachedEntry {
@@ -52,22 +53,29 @@ export class BraidGenerator {
     if (!input.forceRegenerate) {
       const hit = await this.cache.get<CachedEntry>(key);
       if (hit) {
-        return this.buildResult(hit.mermaidCode, input.generatorModel, hit.usage, true);
+        const graph = BraidGraph.parse(hit.mermaidCode);
+        return this.buildResult(graph, input.generatorModel, hit.usage, true, this.linter.lint(graph));
       }
     }
 
     const generated = await this.generateAndRepair(input);
     const mermaidCode = generated.graph.mermaidCode;
-    const usage = generated.usage;
 
-    await this.cache.set<CachedEntry>(key, { mermaidCode, usage }, CACHE_TTL_SECONDS);
+    await this.cache.set<CachedEntry>(key, { mermaidCode, usage: generated.usage }, CACHE_TTL_SECONDS);
 
-    return this.buildResult(mermaidCode, input.generatorModel, usage, false);
+    return this.buildResult(
+      generated.graph,
+      input.generatorModel,
+      generated.usage,
+      false,
+      generated.qualityScore,
+    );
   }
 
   private async generateAndRepair(input: BraidGenerationInput): Promise<{
     graph: BraidGraph;
     usage: TokenUsage;
+    qualityScore: GraphQualityScore;
   }> {
     const provider = this.providers.forModel(input.generatorModel);
     const first = await provider.generate({
@@ -82,7 +90,7 @@ export class BraidGenerator {
     let usage = { ...first.usage };
     let validation = this.validateGraph(first.text);
     if (validation.ok) {
-      return { graph: validation.graph, usage };
+      return { graph: validation.graph, usage, qualityScore: validation.qualityScore };
     }
 
     let currentText = first.text;
@@ -106,7 +114,7 @@ export class BraidGenerator {
       currentText = repaired.text;
       validation = this.validateGraph(currentText);
       if (validation.ok) {
-        return { graph: validation.graph, usage };
+        return { graph: validation.graph, usage, qualityScore: validation.qualityScore };
       }
     }
 
@@ -116,7 +124,7 @@ export class BraidGenerator {
   }
 
   private validateGraph(text: string):
-    | { ok: true; graph: BraidGraph }
+    | { ok: true; graph: BraidGraph; qualityScore: GraphQualityScore }
     | { ok: false; diagnostics: string[] } {
     let graph: BraidGraph;
     try {
@@ -130,23 +138,23 @@ export class BraidGenerator {
       };
     }
 
-    const quality = this.linter.lint(graph);
-    const diagnostics = lintDiagnostics(quality);
+    const qualityScore = this.linter.lint(graph);
+    const diagnostics = lintDiagnostics(qualityScore);
     if (diagnostics.length > 0) {
       return { ok: false, diagnostics };
     }
-    return { ok: true, graph };
+    return { ok: true, graph, qualityScore };
   }
 
   private buildResult(
-    mermaidCode: string,
+    graph: BraidGraph,
     generatorModel: string,
     usage: TokenUsage,
     cached: boolean,
+    qualityScore: GraphQualityScore,
   ): BraidGenerationResult {
-    const graph = BraidGraph.parse(mermaidCode);
     const cost = calculateCost(generatorModel, usage.inputTokens, usage.outputTokens);
-    return { graph, generatorModel, usage, cost, cached };
+    return { graph, generatorModel, usage, cost, cached, qualityScore };
   }
 
   private cacheKey(input: BraidGenerationInput): string {

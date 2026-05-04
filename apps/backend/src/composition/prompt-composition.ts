@@ -94,7 +94,6 @@ export const createPromptComposition = (
       prompts,
       versions,
       generator,
-      linter,
       idGenerator,
       uow,
     ),

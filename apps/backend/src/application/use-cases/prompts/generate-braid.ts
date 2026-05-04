@@ -8,7 +8,6 @@ import type { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import type { TokenCost } from "../../../domain/value-objects/token-cost.js";
 import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import type { BraidGenerator } from "../../services/braid/braid-generator.js";
-import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
 import type { TokenUsage } from "../../services/ai-provider.js";
 import type { GenerateBraidInputDto } from "../../dto/braid-dto.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
@@ -36,7 +35,6 @@ export class GenerateBraidUseCase {
     private readonly prompts: IPromptRepository,
     private readonly versions: IPromptVersionRepository,
     private readonly generator: BraidGenerator,
-    private readonly linter: GraphLinter,
     private readonly idGenerator: IIdGenerator,
     private readonly uow: IUnitOfWork,
   ) {}
@@ -98,7 +96,6 @@ export class GenerateBraidUseCase {
       generatorModel: command.generatorModel,
       forceRegenerate: command.forceRegenerate,
     });
-    const qualityScore = this.linter.lint(result.graph);
-    return { prompt, source, result, qualityScore };
+    return { prompt, source, result, qualityScore: result.qualityScore };
   }
 }

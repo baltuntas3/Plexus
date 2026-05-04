@@ -245,15 +245,21 @@ const emptyMetricBucket = (): MetricBucket => ({
   operationalIssueCount: 0,
 });
 
-const accumulateMetricRow = (bucket: MetricBucket, r: BenchmarkResult): void => {
+// Caller computes the rubric once per row (it is also needed for the
+// per-test-case score cluster outside the bucket) and passes it in so
+// neither side recomputes the same per-vote sums.
+const accumulateMetricRow = (
+  bucket: MetricBucket,
+  r: BenchmarkResult,
+  rubric: ReturnType<typeof judgeRubricAggregate> | null,
+): void => {
   bucket.latencies.push(r.solverLatencyMs);
   bucket.costs.push(r.totalCostUsd);
   bucket.operationalIssueCount += operationalIssueWeight(r);
-  if (r.status === "failed") {
+  if (r.status === "failed" || !rubric) {
     bucket.failedCount += 1;
     return;
   }
-  const rubric = judgeRubricAggregate(r.judgeVotes);
   bucket.finalScores.push(rubric.finalScore);
   bucket.accuracies.push(rubric.accuracy);
   bucket.coherences.push(rubric.coherence);
@@ -291,10 +297,11 @@ export const aggregateResults = (
       buckets.set(key, bucket);
     }
     bucket.totalCost += r.totalCostUsd;
-    accumulateMetricRow(bucket, r);
-    if (r.status !== "failed") {
+    const rubric = r.status === "failed" ? null : judgeRubricAggregate(r.judgeVotes);
+    accumulateMetricRow(bucket, r, rubric);
+    if (rubric) {
       const cluster = bucket.scoresByTestCase.get(r.testCaseId) ?? [];
-      cluster.push(judgeRubricAggregate(r.judgeVotes).finalScore);
+      cluster.push(rubric.finalScore);
       bucket.scoresByTestCase.set(r.testCaseId, cluster);
     }
   }
@@ -567,7 +574,8 @@ const aggregateCategoryBreakdown = (
       };
       buckets.set(key, bucket);
     }
-    accumulateMetricRow(bucket, r);
+    const rubric = r.status === "failed" ? null : judgeRubricAggregate(r.judgeVotes);
+    accumulateMetricRow(bucket, r, rubric);
   }
 
   return [...buckets.values()]
@@ -794,10 +802,11 @@ const overallJudgeMean = (vote: JudgeVote): number =>
 const buildQuoteFromVote = (
   row: BenchmarkResult,
   vote: JudgeVote,
+  rowFinalScore: number,
 ): EnsembleJudgeQuote => ({
   testCaseId: row.testCaseId,
   runIndex: row.runIndex,
-  finalScore: judgeRubricAggregate(row.judgeVotes).finalScore,
+  finalScore: rowFinalScore,
   rubric: {
     accuracy: vote.accuracy,
     coherence: vote.coherence,
@@ -816,10 +825,14 @@ const buildEnsembleJudgeReport = (
   results: readonly BenchmarkResult[],
 ): EnsembleJudgeReport => {
   const rowsByCandidate = new Map<string, BenchmarkResult[]>();
+  // Cached per-row final score so the per-judge top/bottom quote builder
+  // does not recompute the same rubric for every vote on the same row.
+  const finalScoreByRowId = new Map<string, number>();
   for (const row of results) {
     if (row.status !== "completed" || row.judgeVotes.length === 0) continue;
     const key = candidateKey(row);
     rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
+    finalScoreByRowId.set(row.id, judgeRubricAggregate(row.judgeVotes).finalScore);
   }
 
   const perCandidate: EnsembleJudgeCandidateReport[] = [];
@@ -873,10 +886,16 @@ const buildEnsembleJudgeReport = (
           meanAccuracy: mean(bucket.accuracies),
           meanCoherence: mean(bucket.coherences),
           meanInstruction: mean(bucket.instructions),
-          topRated: top ? buildQuoteFromVote(top.row, top.vote) : null,
+          topRated: top
+            ? buildQuoteFromVote(top.row, top.vote, finalScoreByRowId.get(top.row.id) ?? 0)
+            : null,
           bottomRated:
             bottom && bottom !== top
-              ? buildQuoteFromVote(bottom.row, bottom.vote)
+              ? buildQuoteFromVote(
+                  bottom.row,
+                  bottom.vote,
+                  finalScoreByRowId.get(bottom.row.id) ?? 0,
+                )
               : null,
         };
       })
@@ -932,6 +951,7 @@ const resultSampleKey = (
 const pairedDifferenceCI = (
   leftRows: readonly BenchmarkResult[],
   rightRows: readonly BenchmarkResult[],
+  finalScoreByRowId: ReadonlyMap<string, number>,
 ): { low: number; high: number } | null => {
   const left = new Map(leftRows.map((r) => [resultSampleKey(r), r] as const));
   const right = new Map(rightRows.map((r) => [resultSampleKey(r), r] as const));
@@ -949,8 +969,8 @@ const pairedDifferenceCI = (
     const r = right.get(key);
     if (!l || !r || l.status !== "completed" || r.status !== "completed") continue;
     const bucket = diffsByTestCase.get(l.testCaseId) ?? [];
-    const lScore = judgeRubricAggregate(l.judgeVotes).finalScore;
-    const rScore = judgeRubricAggregate(r.judgeVotes).finalScore;
+    const lScore = finalScoreByRowId.get(l.id) ?? 0;
+    const rScore = finalScoreByRowId.get(r.id) ?? 0;
     bucket.push(lScore - rScore);
     diffsByTestCase.set(l.testCaseId, bucket);
   }
@@ -980,9 +1000,17 @@ export const pickWithPairedSignificanceTieBreak = (
   if (ranking.length === 0) return null;
   const byKey = new Map(completed.map((c) => [c.candidateKey, c] as const));
   const rowsByCandidate = new Map<string, BenchmarkResult[]>();
+  // Pre-compute completed rows' final scores once. The top candidate's rows
+  // are otherwise re-aggregated against every other ranked candidate inside
+  // the loop, multiplying rubric work by N. Caching by row id collapses it
+  // to one pass over results.
+  const finalScoreByRowId = new Map<string, number>();
   for (const row of results) {
     const key = candidateKey(row);
     rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
+    if (row.status === "completed") {
+      finalScoreByRowId.set(row.id, judgeRubricAggregate(row.judgeVotes).finalScore);
+    }
   }
   const top = ranking[0];
   if (!top) return null;
@@ -1016,6 +1044,7 @@ export const pickWithPairedSignificanceTieBreak = (
     const diffCi = pairedDifferenceCI(
       rowsByCandidate.get(top.candidateKey) ?? [],
       rowsByCandidate.get(other.candidateKey) ?? [],
+      finalScoreByRowId,
     );
     const notSeparable = diffCi
       ? diffCi.low <= 0 && diffCi.high >= 0

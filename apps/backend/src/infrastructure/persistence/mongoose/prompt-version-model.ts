@@ -15,8 +15,7 @@ const representationSchema = new Schema(
     kind: { type: String, required: true, enum: ["classical", "braid"] },
     graph: { type: String, default: null },
     // Discriminated provenance for braid representations. Classical versions
-    // persist `null` here. Older documents predating authorship (which used
-    // a flat `generatorModel` field) are hydrated defensively in the mapper.
+    // persist `null` here.
     authorship: { type: authorshipSchema, default: null },
   },
   { _id: false },

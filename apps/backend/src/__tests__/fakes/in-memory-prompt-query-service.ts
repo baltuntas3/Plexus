@@ -7,6 +7,7 @@ import type {
   PromptVersionSummary,
   VersionSummaryListResult,
 } from "../../application/queries/prompt-query-service.js";
+import { versionToSummary } from "../../application/queries/prompt-projections.js";
 import { PromptVersion } from "../../domain/entities/prompt-version.js";
 import type { Prompt } from "../../domain/entities/prompt.js";
 
@@ -40,7 +41,7 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
   }
 
   seedVersion(version: PromptVersion): void {
-    this.versions.set(version.id, toVersionSummary(version));
+    this.versions.set(version.id, versionToSummary(version));
   }
 
   seedPromptSummary(summary: PromptSummary): void {
@@ -157,24 +158,3 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     return result;
   }
 }
-
-const toVersionSummary = (version: PromptVersion): PromptVersionSummary => {
-  const braidGraph = version.braidGraph?.mermaidCode ?? null;
-  return {
-    id: version.id,
-    promptId: version.promptId,
-    version: version.version,
-    name: version.name,
-    parentVersionId: version.parentVersionId,
-    sourcePrompt: version.sourcePrompt,
-    braidGraph,
-    braidGraphLayout: version.braidGraphLayout?.toPrimitives() ?? null,
-    braidAuthorship: version.braidAuthorship?.toSnapshot() ?? null,
-    generatorModel: version.generatorModel,
-    variables: version.variables.map((v) => v.toSnapshot()),
-    executablePrompt: version.executablePrompt,
-    status: version.status,
-    createdAt: version.createdAt,
-    updatedAt: version.updatedAt,
-  };
-};

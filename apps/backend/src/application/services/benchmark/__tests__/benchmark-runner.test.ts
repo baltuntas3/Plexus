@@ -755,7 +755,7 @@ describe("BenchmarkRunner.run", () => {
     expect(failed?.candidateOutputTokens).toBe(8);
     expect(failed?.candidateCostUsd).toBeGreaterThan(0);
     expect(failed?.totalCostUsd).toBe(failed?.candidateCostUsd);
-    expect(failed?.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(failed?.solverLatencyMs).toBeGreaterThanOrEqual(0);
     expect(failed?.error).toContain("judge exploded");
   });
 
@@ -1069,10 +1069,9 @@ describe("BenchmarkRunner.run", () => {
       judgeInputTokens: 0,
       judgeOutputTokens: 0,
       judgeCostUsd: 0,
-	      totalCostUsd: 0.019,
-	      judgeFailureCount: 0,
-	      solverLatencyMs: 1,
-	      latencyMs: 1,
+      totalCostUsd: 0.019,
+      judgeFailureCount: 0,
+      solverLatencyMs: 1,
       status: "completed",
       failureKind: null,
       error: null,

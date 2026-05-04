@@ -8,11 +8,7 @@ import { AIProviderFactory } from "../infrastructure/ai-providers/ai-provider-fa
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 
-interface AIComposition {
-  factory: IAIProviderFactory;
-}
-
-export const createAIComposition = (): AIComposition => {
+export const createAIProviderFactory = (): IAIProviderFactory => {
   const providers = new Map<ProviderName, IAIProvider>();
 
   if (env.GROQ_API_KEY) {
@@ -28,7 +24,5 @@ export const createAIComposition = (): AIComposition => {
     logger.info({ providers: [...providers.keys()] }, "AI providers initialized");
   }
 
-  return {
-    factory: new AIProviderFactory(providers),
-  };
+  return new AIProviderFactory(providers);
 };

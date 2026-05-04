@@ -31,8 +31,7 @@ interface BenchmarkResultDoc {
   judgeCostUsd: number;
   totalCostUsd: number;
   judgeFailureCount: number;
-  solverLatencyMs?: number;
-  latencyMs: number;
+  solverLatencyMs: number;
   status: BenchmarkResultStatus;
   failureKind: BenchmarkFailureKind | null;
   error: string | null;
@@ -56,8 +55,7 @@ const toDomain = (doc: BenchmarkResultDoc): BenchmarkResult => ({
   judgeCostUsd: doc.judgeCostUsd,
   totalCostUsd: doc.totalCostUsd,
   judgeFailureCount: doc.judgeFailureCount ?? 0,
-  solverLatencyMs: doc.solverLatencyMs ?? doc.latencyMs,
-  latencyMs: doc.latencyMs ?? doc.solverLatencyMs ?? 0,
+  solverLatencyMs: doc.solverLatencyMs,
   status: doc.status,
   failureKind: doc.failureKind ?? null,
   error: doc.error,

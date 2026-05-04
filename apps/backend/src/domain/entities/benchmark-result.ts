@@ -63,8 +63,6 @@ export interface BenchmarkResult {
   // Canonical latency metric for benchmark comparison: only the solver model's
   // answer-generation call, not judge/evaluation overhead.
   solverLatencyMs: number;
-  // Backward-compatible alias for existing API/DB consumers.
-  latencyMs: number;
   status: BenchmarkResultStatus;
   failureKind: BenchmarkFailureKind | null;
   error: string | null;
@@ -128,7 +126,6 @@ export interface CompletedResultInput {
   judgeFailureCount: number;
 
   solverLatencyMs: number;
-  latencyMs?: number;
   partialJudgeFailureMessage: string | null;
 }
 
@@ -164,7 +161,6 @@ export const completedBenchmarkResult = (
     judgeFailureCount: input.judgeFailureCount,
 
     solverLatencyMs: input.solverLatencyMs,
-    latencyMs: input.latencyMs ?? input.solverLatencyMs,
     status: "completed",
     failureKind: null,
     error: input.partialJudgeFailureMessage,
@@ -190,7 +186,6 @@ export interface FailedResultInput {
   judgeCostUsd?: number;
   judgeFailureCount?: number;
   solverLatencyMs?: number;
-  latencyMs?: number;
 }
 
 // `failed` enforces the domain invariant that a failed row must carry a
@@ -224,8 +219,7 @@ export const failedBenchmarkResult = (
     totalCostUsd: candidateCostUsd + judgeCostUsd,
     judgeFailureCount: input.judgeFailureCount ?? 0,
 
-    solverLatencyMs: input.solverLatencyMs ?? input.latencyMs ?? 0,
-    latencyMs: input.latencyMs ?? input.solverLatencyMs ?? 0,
+    solverLatencyMs: input.solverLatencyMs ?? 0,
     status: "failed",
     failureKind: input.failureKind,
     error: input.error,

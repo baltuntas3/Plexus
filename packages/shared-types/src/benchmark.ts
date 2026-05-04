@@ -98,8 +98,6 @@ export interface BenchmarkResultDto {
   totalCostUsd: number;
   judgeFailureCount: number;
   solverLatencyMs: number;
-  // Backward-compatible alias; currently equal to solverLatencyMs.
-  latencyMs: number;
   status: BenchmarkResultStatus;
   failureKind: BenchmarkFailureKind | null;
   error: string | null;
@@ -189,8 +187,6 @@ export interface CandidateStatsDto {
   ci95High: number;
   consistencyScore: number;
   meanSolverLatencyMs: number;
-  // Backward-compatible alias; currently equal to meanSolverLatencyMs.
-  meanLatencyMs: number;
   meanCostUsd: number;
   totalCostUsd: number;
   completedCount: number;
@@ -212,8 +208,6 @@ export interface CategoryBreakdownRowDto {
   meanCoherence: number;
   meanInstruction: number;
   meanSolverLatencyMs: number;
-  // Backward-compatible alias; currently equal to meanSolverLatencyMs.
-  meanLatencyMs: number;
   meanCostUsd: number;
   completedCount: number;
   failedCount: number;

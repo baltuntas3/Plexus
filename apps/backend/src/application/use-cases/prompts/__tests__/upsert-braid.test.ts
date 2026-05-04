@@ -101,9 +101,9 @@ describe("PromptVersion.fork", () => {
         authorship: BraidAuthorship.byModel("model-b"),
       },
     });
-    expect(v2.braidAuthorship?.kind).toBe("model");
+    expect(v2.braidAuthorship?.toSnapshot().kind).toBe("model");
     expect(v2.generatorModel).toBe("model-a");
-    expect(v3.braidAuthorship?.kind).toBe("model");
+    expect(v3.braidAuthorship?.toSnapshot().kind).toBe("model");
     expect(v3.generatorModel).toBe("model-b");
     expect(v3.parentVersionId).toBe(v2.id);
   });
@@ -128,7 +128,7 @@ describe("PromptVersion.fork", () => {
         authorship: BraidAuthorship.manual(v2.generatorModel),
       },
     });
-    expect(v3.braidAuthorship?.kind).toBe("manual");
+    expect(v3.braidAuthorship?.toSnapshot().kind).toBe("manual");
     expect(v3.braidAuthorship?.toSnapshot()).toEqual({
       kind: "manual",
       derivedFromModel: "model-a",

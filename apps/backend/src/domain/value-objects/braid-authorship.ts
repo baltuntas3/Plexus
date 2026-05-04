@@ -54,10 +54,6 @@ export class BraidAuthorship {
     return BraidAuthorship.manual(snapshot.derivedFromModel);
   }
 
-  get kind(): BraidAuthorshipSnapshot["kind"] {
-    return this.value.kind;
-  }
-
   // Convenience accessor for display / token-cost lookup / legacy callers.
   // Returns the model that actually ran on a "model" authorship; for manual
   // edits, falls back to the derived-from model (null if no ancestor was
@@ -70,16 +66,5 @@ export class BraidAuthorship {
 
   toSnapshot(): BraidAuthorshipSnapshot {
     return { ...this.value };
-  }
-
-  equals(other: BraidAuthorship): boolean {
-    if (this.value.kind !== other.value.kind) return false;
-    if (this.value.kind === "model" && other.value.kind === "model") {
-      return this.value.model === other.value.model;
-    }
-    if (this.value.kind === "manual" && other.value.kind === "manual") {
-      return this.value.derivedFromModel === other.value.derivedFromModel;
-    }
-    return false;
   }
 }

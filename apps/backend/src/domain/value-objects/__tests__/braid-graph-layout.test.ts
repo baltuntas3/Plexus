@@ -6,8 +6,8 @@ describe("BraidGraphLayout", () => {
       { nodeId: "A", x: 100, y: 200 },
       { nodeId: "B", x: -50, y: 0 },
     ]);
-    expect(layout.size).toBe(2);
-    expect(layout.positionOf("A")).toEqual({ x: 100, y: 200 });
+    expect(layout.toPrimitives().positions).toHaveLength(2);
+    expect(layout.toPrimitives().positions).toContainEqual({ nodeId: "A", x: 100, y: 200 });
 
     const round = BraidGraphLayout.fromPrimitives(layout.toPrimitives());
     expect(round.equals(layout)).toBe(true);

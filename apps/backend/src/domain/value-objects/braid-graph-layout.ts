@@ -55,14 +55,6 @@ export class BraidGraphLayout {
     return BraidGraphLayout.fromPositions(p.positions);
   }
 
-  get size(): number {
-    return this.byNode.size;
-  }
-
-  positionOf(nodeId: string): { x: number; y: number } | null {
-    return this.byNode.get(nodeId) ?? null;
-  }
-
   toPrimitives(): BraidGraphLayoutDto {
     return {
       positions: Array.from(this.byNode.entries()).map(([nodeId, p]) => ({

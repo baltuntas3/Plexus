@@ -84,10 +84,9 @@ const row = (overrides: RowOverrides = {}): BenchmarkResult => {
     judgeInputTokens: 0,
     judgeOutputTokens: 0,
     judgeCostUsd: 0,
-	    totalCostUsd: 0,
-	    judgeFailureCount: 0,
-	    solverLatencyMs: rest.solverLatencyMs ?? rest.latencyMs ?? 0,
-	    latencyMs: 0,
+    totalCostUsd: 0,
+    judgeFailureCount: 0,
+    solverLatencyMs: rest.solverLatencyMs ?? 0,
     status: "completed",
     failureKind: null,
     error: null,
@@ -123,7 +122,7 @@ describe("aggregateResults", () => {
         failureKind: "solver_error",
         finalScore: 0,
         totalCostUsd: 0.02,
-        latencyMs: 150,
+        solverLatencyMs: 150,
       }),
     ]);
 
@@ -136,7 +135,7 @@ describe("aggregateResults", () => {
     // uniform rubric of 4.2 across all axes ((4.2 - 1) / 4 = 0.8).
     expect(c.meanAccuracy).toBeCloseTo(4.2, 6);
     expect(c.totalCostUsd).toBeCloseTo(0.03, 6);
-    expect(c.meanLatencyMs).toBeCloseTo(75, 6);
+    expect(c.meanSolverLatencyMs).toBeCloseTo(75, 6);
   });
 
   it("does not treat failed rows with preserved latency as completed", () => {
@@ -147,7 +146,7 @@ describe("aggregateResults", () => {
         failureKind: "timeout",
         finalScore: 0,
         totalCostUsd: 0.02,
-        latencyMs: 100,
+        solverLatencyMs: 100,
       }),
     ]);
 
@@ -544,7 +543,7 @@ describe("computeAnalysis", () => {
           testCaseId: `tc${i}`,
           finalScore: f,
           totalCostUsd: 1,
-          latencyMs: 100,
+          solverLatencyMs: 100,
         }),
       ),
       ...finals.map((f, i) =>
@@ -553,7 +552,7 @@ describe("computeAnalysis", () => {
           testCaseId: `tc${i}`,
           finalScore: f,
           totalCostUsd: 0.1,
-          latencyMs: 100,
+          solverLatencyMs: 100,
         }),
       ),
     ]);
@@ -761,9 +760,8 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.9,
           ci95Low: 0.85,
           ci95High: 0.9,
-	          consistencyScore: 1,
-	          meanSolverLatencyMs: 100,
-	          meanLatencyMs: 100,
+          consistencyScore: 1,
+          meanSolverLatencyMs: 100,
           meanCostUsd: 1.0,
           totalCostUsd: 5.0,
           completedCount: 5,
@@ -782,9 +780,8 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.4,
           ci95Low: 0.1,
           ci95High: 0.2,
-	          consistencyScore: 1,
-	          meanSolverLatencyMs: 100,
-	          meanLatencyMs: 100,
+          consistencyScore: 1,
+          meanSolverLatencyMs: 100,
           meanCostUsd: 0.7,
           totalCostUsd: 3.5,
           completedCount: 5,
@@ -803,9 +800,8 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.88,
           ci95Low: 0.87,
           ci95High: 0.89,
-	          consistencyScore: 1,
-	          meanSolverLatencyMs: 100,
-	          meanLatencyMs: 100,
+          consistencyScore: 1,
+          meanSolverLatencyMs: 100,
           meanCostUsd: 0.2,
           totalCostUsd: 1.0,
           completedCount: 5,

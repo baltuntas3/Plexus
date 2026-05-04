@@ -81,7 +81,6 @@ interface CandidateStats {
   ci95High: number;
   consistencyScore: number;
   meanSolverLatencyMs: number;
-  meanLatencyMs: number;
   meanCostUsd: number;
   totalCostUsd: number;
   completedCount: number;
@@ -114,7 +113,6 @@ interface CategoryBreakdownRow {
   meanCoherence: number;
   meanInstruction: number;
   meanSolverLatencyMs: number;
-  meanLatencyMs: number;
   meanCostUsd: number;
   completedCount: number;
   failedCount: number;
@@ -324,7 +322,6 @@ export const aggregateResults = (
       ci95High: ci.high,
       consistencyScore: consistencyFromStddev(withinCaseStddev),
       meanSolverLatencyMs: mean(bucket.latencies),
-      meanLatencyMs: mean(bucket.latencies),
       meanCostUsd: mean(bucket.costs),
       totalCostUsd: bucket.totalCost,
       completedCount,
@@ -587,7 +584,6 @@ const aggregateCategoryBreakdown = (
         meanCoherence: mean(bucket.coherences),
         meanInstruction: mean(bucket.instructions),
         meanSolverLatencyMs: mean(bucket.latencies),
-        meanLatencyMs: mean(bucket.latencies),
         meanCostUsd: mean(bucket.costs),
         completedCount,
         failedCount: bucket.failedCount,

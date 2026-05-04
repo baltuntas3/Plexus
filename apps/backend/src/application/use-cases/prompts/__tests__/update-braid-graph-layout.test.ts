@@ -94,8 +94,9 @@ describe("UpdateBraidGraphLayoutUseCase", () => {
     );
     // Same version label — no fork (layout is presentation metadata).
     expect(after?.version).toBe(braidVersion);
-    expect(after?.braidGraphLayout?.size).toBe(2);
-    expect(after?.braidGraphLayout?.positionOf("Plan")).toEqual({ x: 200, y: 100 });
+    const positions = after?.braidGraphLayout?.toPrimitives().positions ?? [];
+    expect(positions).toHaveLength(2);
+    expect(positions).toContainEqual({ nodeId: "Plan", x: 200, y: 100 });
   });
 
   it("clears the saved layout when positions is empty", async () => {

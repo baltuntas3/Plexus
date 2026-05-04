@@ -38,9 +38,6 @@ export interface PromptVersionDocShape {
     kind: "classical" | "braid";
     graph: string | null;
     authorship: AuthorshipDoc | null;
-    // Legacy field from pre-authorship schema. Only consulted when
-    // `authorship` is missing so old documents still hydrate correctly.
-    generatorModel?: string | null;
   };
   variables?: VariableDoc[];
   // Visual-editor positions persisted via `setBraidGraphLayout`.
@@ -57,38 +54,26 @@ export interface PromptVersionDocShape {
 const hydrateAuthorship = (
   doc: PromptVersionDocShape["representation"],
 ): PromptRepresentationPrimitives => {
-  if (doc.kind !== "braid" || !doc.graph) {
+  if (doc.kind !== "braid" || !doc.graph || !doc.authorship) {
     return { kind: "classical" };
   }
-  if (doc.authorship) {
-    if (doc.authorship.kind === "model" && doc.authorship.model) {
-      return {
-        kind: "braid",
-        graph: doc.graph,
-        authorship: { kind: "model", model: doc.authorship.model },
-      };
-    }
-    if (doc.authorship.kind === "manual") {
-      return {
-        kind: "braid",
-        graph: doc.graph,
-        authorship: {
-          kind: "manual",
-          derivedFromModel: doc.authorship.derivedFromModel ?? null,
-        },
-      };
-    }
-  }
-  // Pre-authorship schema: infer "model" from the legacy flat field. Older
-  // rows were all LLM-generated since manual provenance didn't exist yet.
-  if (doc.generatorModel) {
+  if (doc.authorship.kind === "model" && doc.authorship.model) {
     return {
       kind: "braid",
       graph: doc.graph,
-      authorship: { kind: "model", model: doc.generatorModel },
+      authorship: { kind: "model", model: doc.authorship.model },
     };
   }
-  // Malformed: treat as classical rather than fabricate a provenance.
+  if (doc.authorship.kind === "manual") {
+    return {
+      kind: "braid",
+      graph: doc.graph,
+      authorship: {
+        kind: "manual",
+        derivedFromModel: doc.authorship.derivedFromModel ?? null,
+      },
+    };
+  }
   return { kind: "classical" };
 };
 

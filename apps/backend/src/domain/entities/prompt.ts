@@ -39,12 +39,12 @@ export interface PromptPrimitives {
 // Snapshot the aggregate hands to the repository at save time.
 // `primitives.revision` is already the post-write value; `expectedRevision`
 // is the WHERE-clause guard used for optimistic concurrency.
-export interface PromptSnapshot {
+interface PromptSnapshot {
   readonly primitives: PromptPrimitives;
   readonly expectedRevision: number;
 }
 
-export interface CreatePromptParams {
+interface CreatePromptParams {
   promptId: string;
   organizationId: string;
   creatorId: string;

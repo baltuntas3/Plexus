@@ -8,7 +8,7 @@ import { UnauthorizedError } from "../../../domain/errors/domain-error.js";
 import { toPublicUser, type PublicUser } from "../../queries/user-projections.js";
 import type { LoginInput } from "../../dto/auth-dto.js";
 
-export interface LoginUserResult {
+interface LoginUserResult {
   user: PublicUser;
   organization: Organization;
   tokens: { accessToken: string; refreshToken: string };

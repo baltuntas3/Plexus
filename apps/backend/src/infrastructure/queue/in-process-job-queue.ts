@@ -14,7 +14,7 @@ interface InternalJob {
   payload: unknown;
 }
 
-export interface InProcessJobQueueConfig {
+interface InProcessJobQueueConfig {
   /** Maximum number of jobs that can run simultaneously. Default: 1. */
   concurrency?: number;
   /** Optional logger hook for failures. */

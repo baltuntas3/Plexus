@@ -1,7 +1,7 @@
 import type { BraidNodeKind } from "@plexus/shared-types";
 import { ValidationError } from "../errors/domain-error.js";
 
-export interface BraidNode {
+interface BraidNode {
   id: string;
   label: string;
   kind: BraidNodeKind;

@@ -9,14 +9,14 @@ import { generateInvitationToken } from "../../services/invitation-token.js";
 import type { InviteMemberInputDto } from "../../dto/organization-dto.js";
 import { toInvitationDto } from "../../queries/organization-projections.js";
 
-export interface InviteMemberCommand extends InviteMemberInputDto {
+interface InviteMemberCommand extends InviteMemberInputDto {
   organizationId: string;
   // The user issuing the invitation. Stored as `invitedBy` on the
   // aggregate and as `actorUserId` on the audit event.
   actorUserId: string;
 }
 
-export interface InviteMemberResult {
+interface InviteMemberResult {
   // Public DTO — caller never sees the raw aggregate or the persisted
   // `tokenHash`. Mapping happens here so every invitation projection
   // (issue, list, future audit views) uses one shape from one place.

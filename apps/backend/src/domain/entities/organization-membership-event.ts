@@ -25,7 +25,7 @@ export interface OrganizationMembershipEventPrimitives {
   occurredAt: Date;
 }
 
-export interface AppendOrganizationMembershipEventParams {
+interface AppendOrganizationMembershipEventParams {
   id: string;
   organizationId: string;
   eventType: OrganizationMembershipEventType;

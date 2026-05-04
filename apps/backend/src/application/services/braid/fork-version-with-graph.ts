@@ -10,7 +10,7 @@ import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { GraphLinter } from "./lint/graph-linter.js";
 import { assertVariableIntegrity } from "../prompts/variable-integrity.js";
 
-export interface ForkVersionWithGraphParams {
+interface ForkVersionWithGraphParams {
   prompt: Prompt;
   source: PromptVersion;
   newGraph: BraidGraph;

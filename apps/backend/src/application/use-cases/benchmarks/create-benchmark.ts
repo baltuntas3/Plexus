@@ -47,12 +47,12 @@ const DEFAULT_REPETITIONS = 3;
 // on `openai/gpt-oss-20b`); raising it requires a paid tier.
 const DEFAULT_CONCURRENCY = 2;
 
-export type CreateBenchmarkCommand = CreateBenchmarkDto & {
+type CreateBenchmarkCommand = CreateBenchmarkDto & {
   organizationId: string;
   userId: string;
 };
 
-export interface CreateBenchmarkResult {
+interface CreateBenchmarkResult {
   benchmark: Benchmark;
   versionLabels: Record<string, string>;
 }

@@ -24,7 +24,7 @@ import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 // Hard-limit constants are imported from the boundary DTO so the Zod
 // schema and this defense-in-depth check share the same numbers.
 
-export interface BraidChatCommand {
+interface BraidChatCommand {
   promptId: string;
   version: string;
   organizationId: string;
@@ -33,7 +33,7 @@ export interface BraidChatCommand {
   generatorModel: string;
 }
 
-export type BraidChatResult =
+type BraidChatResult =
   | { type: "question"; question: string; cost: TokenCost }
   | {
       type: "diagram";

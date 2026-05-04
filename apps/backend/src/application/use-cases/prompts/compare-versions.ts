@@ -10,7 +10,7 @@ import { versionToSummary } from "../../queries/prompt-projections.js";
 import { computeVariablesDiff } from "../../services/diff/variables-diff.js";
 import { loadPromptInOrganization } from "./load-owned-prompt.js";
 
-export interface CompareVersionsCommand {
+interface CompareVersionsCommand {
   promptId: string;
   organizationId: string;
   // Conventionally the "older" or "left-side" version label.
@@ -22,7 +22,7 @@ export interface CompareVersionsCommand {
 // Application-side projection: presentation maps the inner versions to
 // `PromptVersionDto` via the existing `toPromptVersionDto` mapper, and
 // forwards `variablesDiff` as-is.
-export interface VersionComparisonResult {
+interface VersionComparisonResult {
   base: PromptVersionSummary;
   target: PromptVersionSummary;
   variablesDiff: VersionVariablesDiffDto;

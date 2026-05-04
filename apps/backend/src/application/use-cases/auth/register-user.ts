@@ -14,7 +14,7 @@ import { ConflictError } from "../../../domain/errors/domain-error.js";
 import { toPublicUser, type PublicUser } from "../../queries/user-projections.js";
 import type { RegisterInput } from "../../dto/auth-dto.js";
 
-export interface RegisterUserResult {
+interface RegisterUserResult {
   user: PublicUser;
   organization: Organization;
   tokens: { accessToken: string; refreshToken: string };

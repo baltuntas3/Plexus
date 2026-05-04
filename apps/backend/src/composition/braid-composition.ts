@@ -4,7 +4,7 @@ import { createDefaultGraphLinter } from "../application/services/braid/lint/def
 import { InMemoryCacheStore } from "../infrastructure/cache/in-memory-cache-store.js";
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
 
-export interface BraidComposition {
+interface BraidComposition {
   generator: BraidGenerator;
   linter: GraphLinter;
 }

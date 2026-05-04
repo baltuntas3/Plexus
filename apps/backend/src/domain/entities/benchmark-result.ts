@@ -71,7 +71,7 @@ export interface BenchmarkResult {
 // from the canonical judge votes. Empty votes (failed rows) collapse to
 // zero on every axis; downstream analysis only consumes these from
 // completed rows so the zero is never confused with a real grade.
-export interface JudgeRubricAggregate {
+interface JudgeRubricAggregate {
   accuracy: number;
   coherence: number;
   instruction: number;

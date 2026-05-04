@@ -16,7 +16,7 @@ import type { PromptComposition } from "../../composition/prompt-composition.js"
 import type { BenchmarkComposition } from "../../composition/benchmark-composition.js";
 import type { OrganizationComposition } from "../../composition/organization-composition.js";
 
-export interface AppDependencies {
+interface AppDependencies {
   auth: AuthComposition;
   prompts: PromptComposition;
   benchmarks: BenchmarkComposition;

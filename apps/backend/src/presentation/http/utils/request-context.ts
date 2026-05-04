@@ -11,7 +11,7 @@ import { UnauthorizedError, ValidationError } from "../../../domain/errors/domai
 // is defense-in-depth for the "handler accidentally mounted without
 // requireAuth" case rather than a primary check.
 
-export interface AuthContext {
+interface AuthContext {
   userId: string;
   email: string;
   organizationId: string;
@@ -33,7 +33,7 @@ export const getAuthContext = (req: Request): AuthContext => {
 // cannot go through `requirePermission`. Email is required because the
 // access guard at the use-case level matches the invitation's email
 // against the authenticated user's email.
-export interface AuthOnlyContext {
+interface AuthOnlyContext {
   userId: string;
   email: string;
 }

@@ -33,7 +33,7 @@ import { buildVersionGenerationSection } from "./evaluation-prompt.js";
 // this module does not try to simulate determinism on top; in those cases,
 // higher repetition counts are the mechanism that captures variance.
 
-export interface GeneratedTestCase {
+interface GeneratedTestCase {
   input: string;
   category: TestCaseCategory;
 }

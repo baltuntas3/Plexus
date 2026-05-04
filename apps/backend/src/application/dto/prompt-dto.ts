@@ -60,7 +60,7 @@ export type UpdateVersionInputDto = z.infer<typeof updateVersionInputSchema>;
 // at the HTTP edge instead of letting the request reach the aggregate. The
 // domain still throws `PromptInvalidVersionTransitionError` if a malformed
 // internal call ever reaches the aggregate (defense-in-depth).
-export const PROMOTABLE_STATUSES = ["development", "staging", "production"] as const;
+const PROMOTABLE_STATUSES = ["development", "staging", "production"] as const;
 export const promoteVersionInputSchema = z.object({
   targetStatus: z.enum(PROMOTABLE_STATUSES),
 });

@@ -1,4 +1,4 @@
-export type LintSeverity = "info" | "warning" | "error";
+type LintSeverity = "info" | "warning" | "error";
 
 export interface LintIssue {
   ruleId: string;

@@ -68,7 +68,7 @@ const EFFICIENCY_LATENCY_WEIGHT = 0.1;
 const EFFICIENCY_COST_WEIGHT = 0.1;
 const SOFT_RELIABILITY_PENALTY_WEIGHT = 0.5;
 
-export interface CandidateStats {
+interface CandidateStats {
   candidateKey: string;
   promptVersionId: string;
   solverModel: string;
@@ -89,20 +89,20 @@ export interface CandidateStats {
   operationalIssueRate: number;
 }
 
-export interface PPDRow {
+interface PPDRow {
   candidateKey: string;
   ppd: number;
   isMoreEfficient: boolean;
 }
 
-export interface CompositeRanking {
+interface CompositeRanking {
   candidateKey: string;
   compositeScore: number;
 }
 
-export type CategoryKey = NonNullable<BenchmarkTestCase["category"]> | "manual" | "uncategorized";
+type CategoryKey = NonNullable<BenchmarkTestCase["category"]> | "manual" | "uncategorized";
 
-export interface CategoryBreakdownRow {
+interface CategoryBreakdownRow {
   candidateKey: string;
   promptVersionId: string;
   solverModel: string;
@@ -120,7 +120,7 @@ export interface CategoryBreakdownRow {
   operationalIssueRate: number;
 }
 
-export interface JudgeAgreementRow {
+interface JudgeAgreementRow {
   judgeModelA: string;
   judgeModelB: string;
   sharedVotes: number;
@@ -136,7 +136,7 @@ export interface JudgeAgreementRow {
 // already produced reasoning per row, so summarising their actual quotes is
 // honest and free, while a separate narration LLM call would have to invent
 // causality on top of the deterministic numbers.
-export interface EnsembleJudgeQuote {
+interface EnsembleJudgeQuote {
   testCaseId: string;
   runIndex: number;
   finalScore: number;
@@ -144,7 +144,7 @@ export interface EnsembleJudgeQuote {
   reasoning: string;
 }
 
-export interface EnsembleJudgePerJudge {
+interface EnsembleJudgePerJudge {
   model: string;
   voteCount: number;
   meanAccuracy: number;
@@ -157,7 +157,7 @@ export interface EnsembleJudgePerJudge {
   bottomRated: EnsembleJudgeQuote | null;
 }
 
-export interface EnsembleJudgeDisagreement {
+interface EnsembleJudgeDisagreement {
   testCaseId: string;
   runIndex: number;
   // Spread = max(judge mean rubric) − min(judge mean rubric) on the row.
@@ -173,7 +173,7 @@ export interface EnsembleJudgeDisagreement {
   }>;
 }
 
-export interface EnsembleJudgeCandidateReport {
+interface EnsembleJudgeCandidateReport {
   candidateKey: string;
   promptVersionId: string;
   solverModel: string;
@@ -183,7 +183,7 @@ export interface EnsembleJudgeCandidateReport {
   maxDisagreement: EnsembleJudgeDisagreement | null;
 }
 
-export interface EnsembleJudgeReport {
+interface EnsembleJudgeReport {
   perCandidate: EnsembleJudgeCandidateReport[];
 }
 
@@ -201,7 +201,7 @@ export interface BenchmarkAnalysis {
   ensembleJudgeReport: EnsembleJudgeReport;
 }
 
-export interface RecommendationDecision {
+interface RecommendationDecision {
   mode: "top_composite" | "paired_cost_tie_break";
   topCompositeKey: string | null;
   selectedKey: string | null;
@@ -522,7 +522,7 @@ const pickComparableCoverageKeys = (
   return new Set(best?.[1].candidateKeys ?? []);
 };
 
-export interface AnalyzerOptions {
+interface AnalyzerOptions {
   minScoreFraction?: number;
   testCasesById?: Record<
     string,

@@ -41,11 +41,11 @@ import { VersionLabel } from "../value-objects/version-label.js";
 // Persistence-shape discriminated union. The mongo mapper round-trips
 // through this contract; internally the aggregate stores a nullable braid
 // VO pair (`BraidContent | null`) instead.
-export interface ClassicalPromptRepresentationPrimitives {
+interface ClassicalPromptRepresentationPrimitives {
   kind: "classical";
 }
 
-export interface BraidPromptRepresentationPrimitives {
+interface BraidPromptRepresentationPrimitives {
   kind: "braid";
   graph: string;
   authorship: BraidAuthorshipSnapshot;
@@ -85,12 +85,12 @@ export interface PromptVersionPrimitives {
   updatedAt: Date;
 }
 
-export interface PromptVersionSnapshot {
+interface PromptVersionSnapshot {
   readonly primitives: PromptVersionPrimitives;
   readonly expectedRevision: number;
 }
 
-export interface CreatePromptVersionParams {
+interface CreatePromptVersionParams {
   id: string;
   promptId: string;
   organizationId: string;

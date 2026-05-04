@@ -84,7 +84,7 @@ interface Triple {
   cells: MatrixCell[];
 }
 
-export interface BenchmarkRunnerDeps {
+interface BenchmarkRunnerDeps {
   benchmarks: IBenchmarkRepository;
   results: IBenchmarkResultRepository;
   promptQueries: IPromptQueryService;

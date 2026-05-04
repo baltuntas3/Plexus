@@ -5,7 +5,7 @@ import type { GraphQualityScore } from "../../../domain/value-objects/graph-qual
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
 import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
-export interface LintVersionCommand {
+interface LintVersionCommand {
   promptId: string;
   version: string;
   organizationId: string;

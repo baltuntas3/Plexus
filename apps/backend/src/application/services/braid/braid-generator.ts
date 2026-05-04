@@ -7,14 +7,14 @@ import { calculateCost } from "../model-registry.js";
 import type { ICacheStore } from "../cache-store.js";
 import { BraidAgentExecutor } from "./braid-agent-executor.js";
 
-export interface BraidGenerationInput {
+interface BraidGenerationInput {
   sourcePrompt: string;
   taskType: TaskType;
   generatorModel: string;
   forceRegenerate?: boolean;
 }
 
-export interface BraidGenerationResult {
+interface BraidGenerationResult {
   graph: BraidGraph;
   generatorModel: string;
   usage: TokenUsage;

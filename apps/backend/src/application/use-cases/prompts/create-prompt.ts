@@ -16,12 +16,12 @@ import {
 } from "../../queries/prompt-projections.js";
 import { assertVariableIntegrity } from "../../services/prompts/variable-integrity.js";
 
-export interface CreatePromptCommand extends CreatePromptInputDto {
+interface CreatePromptCommand extends CreatePromptInputDto {
   organizationId: string;
   userId: string;
 }
 
-export interface CreatePromptResult {
+interface CreatePromptResult {
   prompt: PromptSummary;
   version: PromptVersionSummary;
 }

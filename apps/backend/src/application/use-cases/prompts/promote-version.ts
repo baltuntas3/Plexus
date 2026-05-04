@@ -12,7 +12,7 @@ import { versionToSummary } from "../../queries/prompt-projections.js";
 import { promoteVersionToProduction } from "../../services/promote-to-production.js";
 import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
-export interface PromoteVersionCommand extends PromoteVersionInputDto {
+interface PromoteVersionCommand extends PromoteVersionInputDto {
   promptId: string;
   version: string;
   organizationId: string;

@@ -8,7 +8,7 @@ import { AIProviderFactory } from "../infrastructure/ai-providers/ai-provider-fa
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 
-export interface AIComposition {
+interface AIComposition {
   factory: IAIProviderFactory;
 }
 

@@ -13,14 +13,14 @@ import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import { hashInvitationToken } from "../../services/invitation-token.js";
 import type { AcceptInvitationInputDto } from "../../dto/organization-dto.js";
 
-export interface AcceptInvitationCommand extends AcceptInvitationInputDto {
+interface AcceptInvitationCommand extends AcceptInvitationInputDto {
   // From the authenticated user's JWT claim — never trust a body-supplied
   // userId on a redemption flow; the link could be replayed by anyone.
   actorUserId: string;
   actorEmail: string;
 }
 
-export interface AcceptInvitationResult {
+interface AcceptInvitationResult {
   organizationId: string;
   // The newly-created membership row. The HTTP layer surfaces
   // `organizationId` so the frontend can switch the active org via a

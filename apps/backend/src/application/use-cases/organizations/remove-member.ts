@@ -9,7 +9,7 @@ import type { IOrganizationMembershipEventRepository } from "../../../domain/rep
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 
-export interface RemoveMemberCommand {
+interface RemoveMemberCommand {
   organizationId: string;
   actorUserId: string;
   targetMemberId: string;

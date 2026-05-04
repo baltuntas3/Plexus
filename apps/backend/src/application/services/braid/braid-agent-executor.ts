@@ -15,7 +15,7 @@ import type { TaskType } from "@plexus/shared-types";
 import { BRAID_AGENT_MERMAID } from "./braid-agent-graph.js";
 import { ENHANCED_SYSTEM_PROMPT } from "./enhanced-generation-prompt.js";
 
-export interface AgentExecutionResult {
+interface AgentExecutionResult {
   mermaidCode: string;
   totalInputTokens: number;
   totalOutputTokens: number;

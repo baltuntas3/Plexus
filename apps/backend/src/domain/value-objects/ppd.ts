@@ -11,12 +11,12 @@
 // Both `accuracy` arguments are expected in [0, 1] (the JudgeScore.finalScore
 // shape). Costs are USD totals across all test cases for that candidate.
 
-export interface PPDInput {
+interface PPDInput {
   accuracy: number;
   costUsd: number;
 }
 
-export interface PPDResult {
+interface PPDResult {
   value: number;
   isMoreEfficient: boolean;
 }

@@ -13,6 +13,6 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().optional().transform((v) => v || undefined),
 });
 
-export type Env = z.infer<typeof envSchema>;
+type Env = z.infer<typeof envSchema>;
 
 export const env: Env = envSchema.parse(process.env);

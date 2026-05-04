@@ -14,7 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 // even with a global secondary index; short enough to fit in a URL.
 const TOKEN_BYTES = 32;
 
-export interface InvitationToken {
+interface InvitationToken {
   plaintext: string;
   hash: string;
 }

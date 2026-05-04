@@ -51,12 +51,12 @@ export interface OrganizationInvitationPrimitives {
   revision: number;
 }
 
-export interface OrganizationInvitationSnapshot {
+interface OrganizationInvitationSnapshot {
   readonly primitives: OrganizationInvitationPrimitives;
   readonly expectedRevision: number;
 }
 
-export interface CreateOrganizationInvitationParams {
+interface CreateOrganizationInvitationParams {
   id: string;
   organizationId: string;
   email: string;

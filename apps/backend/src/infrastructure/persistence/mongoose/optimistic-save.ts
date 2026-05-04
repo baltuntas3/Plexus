@@ -27,7 +27,7 @@ interface OptimisticAggregate<P> {
 // inference flows from the `aggregate` argument alone.
 type PrimitivesOf<A> = A extends OptimisticAggregate<infer P> ? P : never;
 
-export interface OptimisticSaveSpec<A extends OptimisticAggregate<unknown>> {
+interface OptimisticSaveSpec<A extends OptimisticAggregate<unknown>> {
   aggregate: A;
   model: AnyModel;
   toCreateDoc: (primitives: PrimitivesOf<A>) => Record<string, unknown>;

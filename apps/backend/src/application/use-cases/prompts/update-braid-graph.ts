@@ -11,14 +11,14 @@ import {
 import type { GraphLinter } from "../../services/braid/lint/graph-linter.js";
 import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
-export interface UpdateBraidGraphCommand {
+interface UpdateBraidGraphCommand {
   promptId: string;
   version: string;
   organizationId: string;
   mermaidCode: string;
 }
 
-export type UpdateBraidGraphResult = ForkVersionWithGraphResult;
+type UpdateBraidGraphResult = ForkVersionWithGraphResult;
 
 // Manual mermaid edit (whole-graph replacement). The 5 structural
 // edit primitives (RenameBraidNode, AddBraidNode, …) live in their

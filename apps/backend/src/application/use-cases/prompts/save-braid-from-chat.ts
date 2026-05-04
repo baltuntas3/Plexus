@@ -18,7 +18,7 @@ import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 // untrusted by the time the user picks one to save (a stale buffer
 // could ship to this endpoint).
 
-export interface SaveBraidFromChatCommand {
+interface SaveBraidFromChatCommand {
   promptId: string;
   version: string;
   organizationId: string;
@@ -26,7 +26,7 @@ export interface SaveBraidFromChatCommand {
   generatorModel: string;
 }
 
-export interface SaveBraidFromChatResult {
+interface SaveBraidFromChatResult {
   newVersion: string;
   qualityScore: GraphQualityScore;
 }

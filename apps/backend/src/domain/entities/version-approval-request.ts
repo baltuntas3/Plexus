@@ -44,12 +44,12 @@ export interface VersionApprovalRequestPrimitives {
   revision: number;
 }
 
-export interface VersionApprovalRequestSnapshot {
+interface VersionApprovalRequestSnapshot {
   readonly primitives: VersionApprovalRequestPrimitives;
   readonly expectedRevision: number;
 }
 
-export interface CreateVersionApprovalRequestParams {
+interface CreateVersionApprovalRequestParams {
   id: string;
   organizationId: string;
   promptId: string;

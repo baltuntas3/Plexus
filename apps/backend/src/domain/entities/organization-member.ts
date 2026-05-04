@@ -29,12 +29,12 @@ export interface OrganizationMemberPrimitives {
   revision: number;
 }
 
-export interface OrganizationMemberSnapshot {
+interface OrganizationMemberSnapshot {
   readonly primitives: OrganizationMemberPrimitives;
   readonly expectedRevision: number;
 }
 
-export interface CreateOrganizationMemberParams {
+interface CreateOrganizationMemberParams {
   id: string;
   organizationId: string;
   userId: string;

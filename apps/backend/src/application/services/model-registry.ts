@@ -3,11 +3,11 @@ import { TokenCost } from "../../domain/value-objects/token-cost.js";
 
 export type ProviderName = "groq";
 
-export type ModelFamily =
+type ModelFamily =
   | "openai-oss"
   | "meta-llama";
 
-export interface ModelInfo {
+interface ModelInfo {
   id: string;
   provider: ProviderName;
   family: ModelFamily;

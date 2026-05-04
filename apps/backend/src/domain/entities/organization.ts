@@ -42,12 +42,12 @@ export interface OrganizationPrimitives {
   updatedAt: Date;
 }
 
-export interface OrganizationSnapshot {
+interface OrganizationSnapshot {
   readonly primitives: OrganizationPrimitives;
   readonly expectedRevision: number;
 }
 
-export interface CreateOrganizationParams {
+interface CreateOrganizationParams {
   organizationId: string;
   name: string;
   slug: string;

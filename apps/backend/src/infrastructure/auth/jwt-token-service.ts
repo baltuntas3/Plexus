@@ -6,7 +6,7 @@ import type {
   TokenPair,
 } from "../../application/services/token-service.js";
 
-export interface JwtConfig {
+interface JwtConfig {
   accessSecret: string;
   refreshSecret: string;
   accessTtl: string;

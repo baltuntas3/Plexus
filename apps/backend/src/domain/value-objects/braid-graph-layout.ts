@@ -9,7 +9,7 @@ import { isValidNodeId } from "./braid-graph.js";
 // without a layout falls back to deterministic auto-layout in the
 // frontend; saved positions take precedence node-by-node, so newly
 // added nodes don't disrupt the existing layout.
-export interface BraidNodePosition {
+interface BraidNodePosition {
   nodeId: string;
   x: number;
   y: number;

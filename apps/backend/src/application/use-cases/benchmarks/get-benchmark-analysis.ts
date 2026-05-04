@@ -14,7 +14,7 @@ import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 // computation is pure-TS, cheap, and never triggers an LLM, so the
 // analysis page can be re-rendered freely without spending tokens.
 
-export interface GetBenchmarkAnalysisCommand {
+interface GetBenchmarkAnalysisCommand {
   benchmarkId: string;
   organizationId: string;
 }

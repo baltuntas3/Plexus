@@ -104,12 +104,12 @@ export interface BenchmarkPrimitives {
 // shape used by Prompt/PromptVersion/Organization aggregates so all
 // repositories speak the same protocol — `primitives.revision` is the
 // post-write value; `expectedRevision` is the WHERE-clause guard.
-export interface BenchmarkSnapshot {
+interface BenchmarkSnapshot {
   readonly primitives: BenchmarkPrimitives;
   readonly expectedRevision: number;
 }
 
-export interface CreateBenchmarkParams {
+interface CreateBenchmarkParams {
   id: string;
   name: string;
   organizationId: string;
@@ -130,7 +130,7 @@ export interface CreateBenchmarkParams {
   createdAt?: Date;
 }
 
-export interface EditDraftTestCasesParams {
+interface EditDraftTestCasesParams {
   updates: ReadonlyArray<{
     id: string;
     input?: string;

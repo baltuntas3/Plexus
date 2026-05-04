@@ -16,11 +16,11 @@ import { ValidationError } from "../errors/domain-error.js";
 // consumers that need to distinguish (e.g. benchmark analysis filtering
 // "only LLM-generated graphs") branch on `kind`.
 
-export interface ModelAuthorshipSnapshot {
+interface ModelAuthorshipSnapshot {
   kind: "model";
   model: string;
 }
-export interface ManualAuthorshipSnapshot {
+interface ManualAuthorshipSnapshot {
   kind: "manual";
   derivedFromModel: string | null;
 }

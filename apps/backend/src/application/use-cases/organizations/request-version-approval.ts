@@ -13,7 +13,7 @@ import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import { loadPromptAndVersionInOrganization } from "../prompts/load-owned-prompt.js";
 import { toVersionApprovalRequestDto } from "../../queries/version-approval-projections.js";
 
-export interface RequestVersionApprovalCommand {
+interface RequestVersionApprovalCommand {
   organizationId: string;
   // The user issuing the request. Recorded as `requestedBy`; the
   // separation-of-duty rule on the aggregate prevents this user from

@@ -5,12 +5,12 @@ import type {
 } from "../../queries/prompt-query-service.js";
 import type { ListVersionsQueryDto } from "../../dto/prompt-dto.js";
 
-export interface ListVersionsCommand extends ListVersionsQueryDto {
+interface ListVersionsCommand extends ListVersionsQueryDto {
   promptId: string;
   organizationId: string;
 }
 
-export interface VersionListResult {
+interface VersionListResult {
   items: PromptVersionSummary[];
   total: number;
 }

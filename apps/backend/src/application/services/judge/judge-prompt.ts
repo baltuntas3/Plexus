@@ -65,13 +65,13 @@ Output ONLY a single JSON object matching this exact shape, no markdown fences, 
 
 Include one entry per labelled attempt below; reuse the labels exactly. All three rubric scores MUST be integers in [1, 5]. "reasoning" MUST be one sentence.`;
 
-export const buildBatchJudgeSystemPrompt = (taskType: TaskType = "general"): string => {
+const buildBatchJudgeSystemPrompt = (taskType: TaskType = "general"): string => {
   const guidance = TASK_TYPE_GUIDANCE[taskType];
   if (!guidance) return BASE_JUDGE_PROMPT + BATCH_JUDGE_INSTRUCTIONS;
   return BASE_JUDGE_PROMPT + "\n\n" + guidance + BATCH_JUDGE_INSTRUCTIONS;
 };
 
-export interface BuiltBatchJudgePrompt {
+interface BuiltBatchJudgePrompt {
   messages: ChatMessage[];
   // Maps the label string ("ATTEMPT_<n>") to the original candidate index in
   // BatchJudgeInput.candidates. The caller uses this to reorder parsed

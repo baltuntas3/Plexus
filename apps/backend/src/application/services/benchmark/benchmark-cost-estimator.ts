@@ -47,7 +47,7 @@ const ATTEMPT_WRAPPER_TOKENS = 12;
 // call.
 const JUDGE_OUTPUT_TOKENS_PER_CANDIDATE = 32;
 
-export interface BenchmarkCostEstimatorInput {
+interface BenchmarkCostEstimatorInput {
   versions: readonly PromptVersionSummary[];
   testCount: number;
   avgInputTokens: number;

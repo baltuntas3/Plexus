@@ -21,7 +21,7 @@ export interface MatrixCell {
   runIndex: number;
 }
 
-export interface BuildMatrixInput {
+interface BuildMatrixInput {
   testCases: readonly BenchmarkTestCase[];
   versions: readonly PromptVersionSummary[];
   solverModels: readonly string[];

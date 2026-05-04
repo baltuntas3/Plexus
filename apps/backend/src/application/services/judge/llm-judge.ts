@@ -11,7 +11,7 @@ import {
 } from "./judge.js";
 import { buildBatchJudgeMessages } from "./judge-prompt.js";
 
-export interface LLMJudgeConfig {
+interface LLMJudgeConfig {
   judgeModel: string;
   taskType?: TaskType;
 }

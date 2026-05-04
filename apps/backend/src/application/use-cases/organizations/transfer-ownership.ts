@@ -11,7 +11,7 @@ import { transferOrganizationOwnership } from "../../../domain/services/transfer
 import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import type { TransferOwnershipInputDto } from "../../dto/organization-dto.js";
 
-export interface TransferOwnershipCommand extends TransferOwnershipInputDto {
+interface TransferOwnershipCommand extends TransferOwnershipInputDto {
   organizationId: string;
   // Verified to be the current owner before the transfer is applied.
   // Authorization middleware (`requirePermission("ownership:transfer")`)

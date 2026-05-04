@@ -5,7 +5,7 @@ import type { PromptVersionSummary } from "../../queries/prompt-query-service.js
 import { versionToSummary } from "../../queries/prompt-projections.js";
 import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
-export interface UpdateVersionNameCommand extends UpdateVersionInputDto {
+interface UpdateVersionNameCommand extends UpdateVersionInputDto {
   promptId: string;
   version: string;
   organizationId: string;

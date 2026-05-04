@@ -9,7 +9,7 @@ import { toVersionApprovalRequestDto } from "../../queries/version-approval-proj
 import { loadPromptInOrganization } from "../prompts/load-owned-prompt.js";
 import { loadApprovalRequestInOrganization } from "./load-approval-request.js";
 
-export interface ApproveVersionRequestCommand {
+interface ApproveVersionRequestCommand {
   organizationId: string;
   actorUserId: string;
   requestId: string;

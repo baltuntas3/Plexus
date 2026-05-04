@@ -6,7 +6,7 @@ import type { IPromptQueryService } from "../../queries/prompt-query-service.js"
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 import { buildVersionLabels } from "./get-benchmark-analysis.js";
 
-export interface GetBenchmarkCommand {
+interface GetBenchmarkCommand {
   benchmarkId: string;
   organizationId: string;
 }
@@ -15,7 +15,7 @@ export interface GetBenchmarkCommand {
 // row tables, charts, ensemble judge report — renders the user's own
 // naming (falling back to "v1"/"v2" only when a version has no name set
 // yet).
-export interface GetBenchmarkResult {
+interface GetBenchmarkResult {
   benchmark: Benchmark;
   results: BenchmarkResult[];
   versionLabels: Record<string, string>;

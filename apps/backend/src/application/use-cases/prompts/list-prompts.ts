@@ -4,7 +4,7 @@ import type {
 } from "../../queries/prompt-query-service.js";
 import type { ListPromptsQueryDto } from "../../dto/prompt-dto.js";
 
-export interface ListPromptsCommand extends ListPromptsQueryDto {
+interface ListPromptsCommand extends ListPromptsQueryDto {
   organizationId: string;
 }
 

@@ -5,7 +5,7 @@ import type { IVersionApprovalRequestRepository } from "../../../domain/reposito
 import { resolveApprovalDisplayContextMap } from "../../queries/resolve-approval-display-context.js";
 import { toVersionApprovalRequestDto } from "../../queries/version-approval-projections.js";
 
-export interface ListPendingApprovalRequestsCommand {
+interface ListPendingApprovalRequestsCommand {
   organizationId: string;
 }
 

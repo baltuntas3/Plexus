@@ -25,7 +25,7 @@ export const MAX_BRAID_CHAT_HISTORY_MESSAGES = 50;
 export const MAX_BRAID_CHAT_TOTAL_CHARACTERS = 30_000 * 4;
 const PER_MESSAGE_CHAR_LIMIT = 20_000;
 
-export const braidChatTurnSchema = z.object({
+const braidChatTurnSchema = z.object({
   role: z.enum(["user", "agent"]),
   content: z.string().min(1).max(PER_MESSAGE_CHAR_LIMIT),
 });

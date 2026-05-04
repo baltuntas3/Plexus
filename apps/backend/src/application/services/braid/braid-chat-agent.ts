@@ -17,9 +17,9 @@
 import type { IAIProvider } from "../ai-provider.js";
 import type { BraidChatTurn, TaskType } from "@plexus/shared-types";
 
-export type ChatOutputType = "diagram" | "question";
+type ChatOutputType = "diagram" | "question";
 
-export interface ChatOutput {
+interface ChatOutput {
   type: ChatOutputType;
   mermaidCode: string;  // non-empty when type === "diagram"
   question: string;     // non-empty when type === "question"
@@ -27,7 +27,7 @@ export interface ChatOutput {
   totalOutputTokens: number;
 }
 
-export interface ChatInput {
+interface ChatInput {
   sourcePrompt: string;
   taskType: TaskType;
   userMessage: string;

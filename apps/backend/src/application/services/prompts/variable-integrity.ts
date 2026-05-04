@@ -11,7 +11,7 @@ import { extractVariableReferences } from "../../../domain/value-objects/variabl
 // be declared in `variables`. Definitions present without any reference are
 // allowed (the user may be staging a placeholder for a follow-up edit) — the
 // reverse direction is the hard error.
-export interface VariableIntegrityInput {
+interface VariableIntegrityInput {
   body: string;
   mermaid?: string | null;
   variables: readonly PromptVariable[];

@@ -9,7 +9,7 @@ import {
 } from "../../services/benchmark/benchmark-cost-estimator.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
-export interface UpdateTestCasesCommand {
+interface UpdateTestCasesCommand {
   benchmarkId: string;
   organizationId: string;
   updates: Array<{

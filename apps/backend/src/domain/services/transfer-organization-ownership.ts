@@ -23,7 +23,7 @@ import {
 // is enforced by code review and the comment on that method, plus a project-
 // wide grep guard would catch direct callers outside this file.
 
-export interface TransferOwnershipInput {
+interface TransferOwnershipInput {
   organization: Organization;
   outgoingMember: OrganizationMember;
   incomingMember: OrganizationMember;
@@ -31,7 +31,7 @@ export interface TransferOwnershipInput {
   newOwnerUserId: string;
 }
 
-export interface TransferOwnershipOutcome {
+interface TransferOwnershipOutcome {
   // Role the incoming member held just before the promotion. Use cases
   // record this in the audit event so the timeline reflects the actual
   // prior role (could be admin/editor/approver/viewer) rather than a

@@ -5,7 +5,7 @@
 // itself; the judge's `instruction` axis already grades whether the
 // candidate respected them, so there is no separate verbosity penalty layer.
 
-export interface JudgeRubric {
+interface JudgeRubric {
   accuracy: number;
   coherence: number;
   instruction: number;

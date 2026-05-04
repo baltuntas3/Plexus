@@ -11,7 +11,7 @@ import { versionToSummary } from "../../queries/prompt-projections.js";
 import { assertVariableIntegrity } from "../../services/prompts/variable-integrity.js";
 import { loadPromptInOrganization } from "./load-owned-prompt.js";
 
-export interface CreateVersionCommand extends CreateVersionInputDto {
+interface CreateVersionCommand extends CreateVersionInputDto {
   promptId: string;
   organizationId: string;
 }

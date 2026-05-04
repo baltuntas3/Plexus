@@ -16,13 +16,13 @@ import { versionToSummary } from "../../queries/prompt-projections.js";
 import { assertVariableIntegrity } from "../../services/prompts/variable-integrity.js";
 import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
-export interface GenerateBraidCommand extends GenerateBraidInputDto {
+interface GenerateBraidCommand extends GenerateBraidInputDto {
   promptId: string;
   version: string;
   organizationId: string;
 }
 
-export interface GenerateBraidResult {
+interface GenerateBraidResult {
   version: PromptVersionSummary;
   graph: BraidGraph;
   cost: TokenCost;

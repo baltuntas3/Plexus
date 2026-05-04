@@ -33,7 +33,7 @@ export interface PrimitiveDeps {
   uow: IUnitOfWork;
 }
 
-export type EditBraidNodeResult = ForkVersionWithGraphResult;
+type EditBraidNodeResult = ForkVersionWithGraphResult;
 
 // Shared lifecycle helper. The mutate callback receives the source's
 // braid graph and returns the new graph plus optional `extra` payload
@@ -46,7 +46,7 @@ export type EditBraidNodeResult = ForkVersionWithGraphResult;
 // forwarding to `forkVersionWithGraph`. `PromptVariable.create`
 // already accepts the `PromptVariableInput` shape verbatim, so the
 // lift is a thin map.
-export const runGraphEdit = async <Extra = undefined>(
+const runGraphEdit = async <Extra = undefined>(
   deps: PrimitiveDeps,
   command: CommandBase,
   mutate: (graph: BraidGraph) => { graph: BraidGraph; extra?: Extra },
@@ -77,7 +77,7 @@ export const runGraphEdit = async <Extra = undefined>(
   });
 };
 
-export interface RenameBraidNodeCommand extends CommandBase {
+interface RenameBraidNodeCommand extends CommandBase {
   nodeId: string;
   newLabel: string;
   // Variables to declare on the fork when the new label introduces
@@ -101,7 +101,7 @@ export class RenameBraidNodeUseCase {
   }
 }
 
-export interface AddBraidNodeCommand extends CommandBase {
+interface AddBraidNodeCommand extends CommandBase {
   label: string;
   kind: BraidNodeKind;
   // Variables to declare on the fork when the new label introduces
@@ -110,7 +110,7 @@ export interface AddBraidNodeCommand extends CommandBase {
   addVariables?: ReadonlyArray<PromptVariableInput>;
 }
 
-export interface AddBraidNodeResult extends EditBraidNodeResult {
+interface AddBraidNodeResult extends EditBraidNodeResult {
   // Auto-generated mermaid id of the new node so the client can
   // immediately address it in follow-up edits without re-fetching the
   // whole graph.
@@ -137,7 +137,7 @@ export class AddBraidNodeUseCase {
   }
 }
 
-export interface RemoveBraidNodeCommand extends CommandBase {
+interface RemoveBraidNodeCommand extends CommandBase {
   nodeId: string;
 }
 
@@ -150,7 +150,7 @@ export class RemoveBraidNodeUseCase {
   }
 }
 
-export interface AddBraidEdgeCommand extends CommandBase {
+interface AddBraidEdgeCommand extends CommandBase {
   fromNodeId: string;
   toNodeId: string;
   label: string | null;
@@ -165,7 +165,7 @@ export class AddBraidEdgeUseCase {
   }
 }
 
-export interface RemoveBraidEdgeCommand extends CommandBase {
+interface RemoveBraidEdgeCommand extends CommandBase {
   fromNodeId: string;
   toNodeId: string;
   label: string | null;
@@ -180,7 +180,7 @@ export class RemoveBraidEdgeUseCase {
   }
 }
 
-export interface RelabelBraidEdgeCommand extends CommandBase {
+interface RelabelBraidEdgeCommand extends CommandBase {
   fromNodeId: string;
   toNodeId: string;
   oldLabel: string | null;

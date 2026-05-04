@@ -2,7 +2,7 @@ import type { OrganizationInvitationDto } from "@plexus/shared-types";
 import type { IOrganizationInvitationRepository } from "../../../domain/repositories/organization-invitation-repository.js";
 import { toInvitationDto } from "../../queries/organization-projections.js";
 
-export interface ListInvitationsCommand {
+interface ListInvitationsCommand {
   organizationId: string;
 }
 

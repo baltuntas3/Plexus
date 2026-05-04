@@ -7,7 +7,7 @@ import { resolveApprovalDisplayContext } from "../../queries/resolve-approval-di
 import { toVersionApprovalRequestDto } from "../../queries/version-approval-projections.js";
 import { loadApprovalRequestInOrganization } from "./load-approval-request.js";
 
-export interface CancelVersionRequestCommand {
+interface CancelVersionRequestCommand {
   organizationId: string;
   actorUserId: string;
   requestId: string;

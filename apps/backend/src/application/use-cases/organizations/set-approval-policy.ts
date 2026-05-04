@@ -3,7 +3,7 @@ import { OrganizationNotFoundError } from "../../../domain/errors/domain-error.j
 import type { IOrganizationRepository } from "../../../domain/repositories/organization-repository.js";
 import { toOrganizationDto } from "../../queries/organization-projections.js";
 
-export interface SetApprovalPolicyCommand {
+interface SetApprovalPolicyCommand {
   organizationId: string;
   // `null` clears the policy. Concrete `requiredApprovals` is bounded
   // 1..10 by the `Organization` aggregate; the use case forwards the

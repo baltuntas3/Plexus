@@ -4,7 +4,7 @@ import type { IPromptVersionRepository } from "../../../domain/repositories/prom
 import { BraidGraphLayout } from "../../../domain/value-objects/braid-graph-layout.js";
 import { loadPromptAndVersionInOrganization } from "./load-owned-prompt.js";
 
-export interface UpdateBraidGraphLayoutCommand {
+interface UpdateBraidGraphLayoutCommand {
   promptId: string;
   version: string;
   organizationId: string;

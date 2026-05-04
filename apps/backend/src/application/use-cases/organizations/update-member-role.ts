@@ -9,7 +9,7 @@ import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import type { UpdateMemberRoleInputDto } from "../../dto/organization-dto.js";
 
-export interface UpdateMemberRoleCommand extends UpdateMemberRoleInputDto {
+interface UpdateMemberRoleCommand extends UpdateMemberRoleInputDto {
   organizationId: string;
   actorUserId: string;
   // The membership row id, not a userId. Matches the URL shape

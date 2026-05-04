@@ -392,6 +392,61 @@ describe("BenchmarkRunner.run", () => {
     expect(judgeProvider.calls.every((call) => call.seed !== undefined)).toBe(true);
   });
 
+  it("preserves batched judge token remainders across persisted rows", async () => {
+    const { benchmarks, results, queries } = await buildScaffold();
+    const provider = new RecordingProvider(() => ({
+      text: "answer",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    const judge: IJudge = {
+      async gradeBatch(input) {
+        return {
+          scores: input.candidates.map(() =>
+            buildJudgeScore(
+              { accuracy: 5, coherence: 5, instruction: 5 },
+              "stub reasoning",
+            ),
+          ),
+          usage: { inputTokens: 11, outputTokens: 7 },
+          model: "openai/gpt-oss-20b",
+        };
+      },
+    };
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      promptQueries: queries,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+      repetitions: 3,
+      concurrency: 1,
+    });
+
+    await runner.run(bm.id, buildContext().ctx);
+    const rows = (await results.listByBenchmark(bm.id)).sort(
+      (a, b) => a.runIndex - b.runIndex,
+    );
+
+    expect(rows.map((row) => row.judgeInputTokens)).toEqual([4, 4, 3]);
+    expect(rows.map((row) => row.judgeOutputTokens)).toEqual([3, 2, 2]);
+    expect(rows.reduce((sum, row) => sum + row.judgeInputTokens, 0)).toBe(11);
+    expect(rows.reduce((sum, row) => sum + row.judgeOutputTokens, 0)).toBe(7);
+    expect(rows.reduce((sum, row) => sum + row.judgeCostUsd, 0)).toBeGreaterThan(0);
+  });
+
   it("scores rows purely from rubric — candidate length never penalises finalScore", async () => {
     // Length expectations belong in the prompt; the judge's `instruction`
     // axis already grades whether the candidate respected them. The runner
@@ -713,7 +768,7 @@ describe("BenchmarkRunner.run", () => {
     }));
     const judge: IJudge = judgeFromPerCandidate(async () => {
       throw new JudgeExecutionError("judge returned malformed JSON", {
-        usage: { inputTokens: 30, outputTokens: 12 },
+        usage: { inputTokens: 31, outputTokens: 13 },
         model: "openai/gpt-oss-20b",
       });
     });
@@ -736,20 +791,28 @@ describe("BenchmarkRunner.run", () => {
           source: "generated" as const,
         },
       ],
+      repetitions: 3,
       concurrency: 1,
     });
 
     await runner.run(bm.id, buildContext().ctx);
-    const [failed] = await results.listByBenchmark(bm.id);
-    expect(failed?.status).toBe("failed");
-    expect(failed?.judgeInputTokens).toBe(30);
-    expect(failed?.judgeOutputTokens).toBe(12);
-    expect(failed?.judgeCostUsd).toBeGreaterThan(0);
-    expect(failed?.totalCostUsd).toBeCloseTo(
-      (failed?.candidateCostUsd ?? 0) + (failed?.judgeCostUsd ?? 0),
-      10,
+    const failedRows = (await results.listByBenchmark(bm.id)).sort(
+      (a, b) => a.runIndex - b.runIndex,
     );
-    expect(failed?.error).toContain("malformed JSON");
+    expect(failedRows).toHaveLength(3);
+    expect(failedRows.every((row) => row.status === "failed")).toBe(true);
+    expect(failedRows.map((row) => row.judgeInputTokens)).toEqual([11, 10, 10]);
+    expect(failedRows.map((row) => row.judgeOutputTokens)).toEqual([5, 4, 4]);
+    expect(failedRows.reduce((sum, row) => sum + row.judgeInputTokens, 0)).toBe(31);
+    expect(failedRows.reduce((sum, row) => sum + row.judgeOutputTokens, 0)).toBe(13);
+    expect(failedRows.every((row) => row.judgeCostUsd > 0)).toBe(true);
+    for (const failed of failedRows) {
+      expect(failed.totalCostUsd).toBeCloseTo(
+        failed.candidateCostUsd + failed.judgeCostUsd,
+        10,
+      );
+      expect(failed.error).toContain("malformed JSON");
+    }
   });
 
   it("uses braidGraph as system prompt when the version has one, sourcePrompt otherwise", async () => {
@@ -1006,9 +1069,10 @@ describe("BenchmarkRunner.run", () => {
       judgeInputTokens: 0,
       judgeOutputTokens: 0,
       judgeCostUsd: 0,
-      totalCostUsd: 0.019,
-      judgeFailureCount: 0,
-      latencyMs: 1,
+	      totalCostUsd: 0.019,
+	      judgeFailureCount: 0,
+	      solverLatencyMs: 1,
+	      latencyMs: 1,
       status: "completed",
       failureKind: null,
       error: null,

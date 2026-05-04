@@ -64,6 +64,7 @@ const benchmarkResultSchema = new Schema(
     totalCostUsd: { type: Number, required: true, default: 0 },
     judgeFailureCount: { type: Number, required: true, default: 0, min: 0 },
 
+    solverLatencyMs: { type: Number, required: true, default: 0 },
     latencyMs: { type: Number, required: true, default: 0 },
     status: { type: String, enum: RESULT_STATUSES, required: true },
     failureKind: { type: String, enum: FAILURE_KINDS, default: null },

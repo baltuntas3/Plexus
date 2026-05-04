@@ -84,9 +84,10 @@ const row = (overrides: RowOverrides = {}): BenchmarkResult => {
     judgeInputTokens: 0,
     judgeOutputTokens: 0,
     judgeCostUsd: 0,
-    totalCostUsd: 0,
-    judgeFailureCount: 0,
-    latencyMs: 0,
+	    totalCostUsd: 0,
+	    judgeFailureCount: 0,
+	    solverLatencyMs: rest.solverLatencyMs ?? rest.latencyMs ?? 0,
+	    latencyMs: 0,
     status: "completed",
     failureKind: null,
     error: null,
@@ -246,12 +247,22 @@ describe("aggregateResults", () => {
     expect(stats?.consistencyScore).toBeCloseTo(1, 10);
   });
 
-  it("clamps consistency to 0 for worst-case alternation", () => {
+  it("does not penalize consistency for stable score differences across testCases", () => {
     const [stats] = aggregateResults([
-      row({ testCaseId: "a", finalScore: 1.0 }),
-      row({ testCaseId: "b", finalScore: 0.0 }),
-      row({ testCaseId: "c", finalScore: 1.0 }),
-      row({ testCaseId: "d", finalScore: 0.0 }),
+      row({ testCaseId: "easy", runIndex: 0, finalScore: 0.95 }),
+      row({ testCaseId: "easy", runIndex: 1, finalScore: 0.95 }),
+      row({ testCaseId: "hard", runIndex: 0, finalScore: 0.35 }),
+      row({ testCaseId: "hard", runIndex: 1, finalScore: 0.35 }),
+    ]);
+    expect(stats?.consistencyScore).toBeCloseTo(1, 10);
+  });
+
+  it("clamps consistency to 0 for worst-case within-testCase alternation", () => {
+    const [stats] = aggregateResults([
+      row({ testCaseId: "a", runIndex: 0, finalScore: 1.0 }),
+      row({ testCaseId: "a", runIndex: 1, finalScore: 0.0 }),
+      row({ testCaseId: "b", runIndex: 0, finalScore: 1.0 }),
+      row({ testCaseId: "b", runIndex: 1, finalScore: 0.0 }),
     ]);
     expect(stats?.consistencyScore).toBe(0);
   });
@@ -621,10 +632,10 @@ describe("computeAnalysis", () => {
     expect(analysis.judgeAgreement[0]?.sharedVotes).toBe(2);
   });
 
-  it("uses a gentler consistency ceiling of 0.4", () => {
+  it("uses a gentler consistency ceiling of 0.4 for within-testCase variance", () => {
     const [stats] = aggregateResults([
-      row({ testCaseId: "a", finalScore: 0.8 }),
-      row({ testCaseId: "b", finalScore: 0.5 }),
+      row({ testCaseId: "a", runIndex: 0, finalScore: 0.8 }),
+      row({ testCaseId: "a", runIndex: 1, finalScore: 0.5 }),
     ]);
     expect(stats!.consistencyScore).toBeGreaterThan(0);
   });
@@ -750,8 +761,9 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.9,
           ci95Low: 0.85,
           ci95High: 0.9,
-          consistencyScore: 1,
-          meanLatencyMs: 100,
+	          consistencyScore: 1,
+	          meanSolverLatencyMs: 100,
+	          meanLatencyMs: 100,
           meanCostUsd: 1.0,
           totalCostUsd: 5.0,
           completedCount: 5,
@@ -770,8 +782,9 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.4,
           ci95Low: 0.1,
           ci95High: 0.2,
-          consistencyScore: 1,
-          meanLatencyMs: 100,
+	          consistencyScore: 1,
+	          meanSolverLatencyMs: 100,
+	          meanLatencyMs: 100,
           meanCostUsd: 0.7,
           totalCostUsd: 3.5,
           completedCount: 5,
@@ -790,8 +803,9 @@ describe("computeAnalysis", () => {
           meanFinalScore: 0.88,
           ci95Low: 0.87,
           ci95High: 0.89,
-          consistencyScore: 1,
-          meanLatencyMs: 100,
+	          consistencyScore: 1,
+	          meanSolverLatencyMs: 100,
+	          meanLatencyMs: 100,
           meanCostUsd: 0.2,
           totalCostUsd: 1.0,
           completedCount: 5,

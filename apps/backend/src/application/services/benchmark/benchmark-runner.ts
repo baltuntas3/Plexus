@@ -84,6 +84,12 @@ interface Triple {
   cells: MatrixCell[];
 }
 
+interface DistributedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
 interface BenchmarkRunnerDeps {
   benchmarks: IBenchmarkRepository;
   results: IBenchmarkResultRepository;
@@ -316,13 +322,13 @@ export class BenchmarkRunner {
     // Bounded by `INNER_SOLVER_CONCURRENCY` so a high-repetition triple
     // does not fan out its reps simultaneously and trip per-model TPM
     // caps when stacked with the outer triple-level concurrency.
-    interface SolverOutcome {
-      cell: MatrixCell;
-      candidate: GenerateResponse | null;
-      candidateCostUsd: number;
-      latencyMs: number;
-      error: unknown | null;
-    }
+	    interface SolverOutcome {
+	      cell: MatrixCell;
+	      candidate: GenerateResponse | null;
+	      candidateCostUsd: number;
+	      solverLatencyMs: number;
+	      error: unknown | null;
+	    }
     const solverOutcomes: SolverOutcome[] = await mapConcurrent(
       triple.cells,
       INNER_SOLVER_CONCURRENCY,
@@ -345,20 +351,20 @@ export class BenchmarkRunner {
             candidate.usage.outputTokens,
           );
           return {
-            cell,
-            candidate,
-            candidateCostUsd: cost.totalUsd,
-            latencyMs: Date.now() - start,
-            error: null,
-          };
-        } catch (err) {
+	            cell,
+	            candidate,
+	            candidateCostUsd: cost.totalUsd,
+	            solverLatencyMs: Date.now() - start,
+	            error: null,
+	          };
+	        } catch (err) {
           return {
-            cell,
-            candidate: null,
-            candidateCostUsd: 0,
-            latencyMs: Date.now() - start,
-            error: err,
-          };
+	            cell,
+	            candidate: null,
+	            candidateCostUsd: 0,
+	            solverLatencyMs: Date.now() - start,
+	            error: err,
+	          };
         }
       },
     );
@@ -371,10 +377,10 @@ export class BenchmarkRunner {
       .filter((o) => o.candidate === null)
       .map((o) =>
         failedBenchmarkResult(
-          buildFailedInput(benchmark.id, o.cell, o.error, {
-            latencyMs: o.latencyMs,
-            failureKind: "solver_error",
-          }),
+	          buildFailedInput(benchmark.id, o.cell, o.error, {
+	            solverLatencyMs: o.solverLatencyMs,
+	            failureKind: "solver_error",
+	          }),
         ),
       );
 
@@ -394,7 +400,7 @@ export class BenchmarkRunner {
       model: string;
       // Per-candidate vote, aligned with `successful` order.
       votes: Array<JudgeVote | null>;
-      partial: { inputTokens: number; outputTokens: number; costUsd: number } | null;
+      partials: Array<DistributedUsage | null>;
       error: unknown | null;
     }
 
@@ -408,53 +414,47 @@ export class BenchmarkRunner {
           reference: firstCell.testCase.expectedOutput ?? undefined,
           systemPrompt,
         });
-        // Equal usage attribution across the batched candidates — the
-        // judge prompt is shared, so per-candidate "true" cost is not
-        // recoverable. Equal split keeps PPD honest by giving each row
-        // an identical denominator contribution.
-        const n = successful.length;
-        const inputPer = Math.floor(graded.usage.inputTokens / n);
-        const outputPer = Math.floor(graded.usage.outputTokens / n);
-        const perCellCost = calculateCost(graded.model, inputPer, outputPer);
-        const votes: JudgeVote[] = graded.scores.map((score) => ({
+        // The judge prompt is shared, so exact per-candidate attribution is
+        // unknowable. Split tokens as evenly as possible while preserving the
+        // provider-reported batch total exactly.
+        const usageByCandidate = distributeUsage(
+          graded.usage,
+          successful.length,
+          graded.model,
+        );
+        const votes: JudgeVote[] = graded.scores.map((score, index) => {
+          const usage = usageByCandidate[index] ?? ZERO_DISTRIBUTED_USAGE;
+          return {
+            model,
+            accuracy: score.rubric.accuracy,
+            coherence: score.rubric.coherence,
+            instruction: score.rubric.instruction,
+            reasoning: score.reasoning,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            costUsd: usage.costUsd,
+          };
+        });
+        judgeOutcomes.push({
           model,
-          accuracy: score.rubric.accuracy,
-          coherence: score.rubric.coherence,
-          instruction: score.rubric.instruction,
-          reasoning: score.reasoning,
-          inputTokens: inputPer,
-          outputTokens: outputPer,
-          costUsd: perCellCost.totalUsd,
-        }));
-        judgeOutcomes.push({ model, votes, partial: null, error: null });
+          votes,
+          partials: successful.map(() => null),
+          error: null,
+        });
       } catch (err) {
         // Extract partial usage from a JudgeExecutionError (if any) and
-        // distribute it equally across attempted candidates so per-row
-        // token/cost reflects what was actually spent before the failure.
-        let perCellPartial:
-          | { inputTokens: number; outputTokens: number; costUsd: number }
-          | null = null;
+        // distribute it across attempted candidates so per-row token/cost
+        // reflects what was actually spent before the failure.
+        let partials: Array<DistributedUsage | null> = successful.map(() => null);
         if (err instanceof JudgeExecutionError && err.partial?.usage) {
           const usage = err.partial.usage;
           const judgeModel = err.partial.model ?? model;
-          const cost = calculateCost(
-            judgeModel,
-            usage.inputTokens,
-            usage.outputTokens,
-          );
-          const count = successful.length;
-          if (count > 0) {
-            perCellPartial = {
-              inputTokens: Math.floor(usage.inputTokens / count),
-              outputTokens: Math.floor(usage.outputTokens / count),
-              costUsd: cost.totalUsd / count,
-            };
-          }
+          partials = distributeUsage(usage, successful.length, judgeModel);
         }
         judgeOutcomes.push({
           model,
           votes: successful.map(() => null),
-          partial: perCellPartial,
+          partials,
           error: err,
         });
       }
@@ -484,15 +484,15 @@ export class BenchmarkRunner {
           0,
         );
         const partialJudgeInputTokens = judgeFailuresForCell.reduce(
-          (sum, judge) => sum + (judge.partial?.inputTokens ?? 0),
+          (sum, judge) => sum + (judge.partials[candidateIndex]?.inputTokens ?? 0),
           0,
         );
         const partialJudgeOutputTokens = judgeFailuresForCell.reduce(
-          (sum, judge) => sum + (judge.partial?.outputTokens ?? 0),
+          (sum, judge) => sum + (judge.partials[candidateIndex]?.outputTokens ?? 0),
           0,
         );
         const partialJudgeCostUsd = judgeFailuresForCell.reduce(
-          (sum, judge) => sum + (judge.partial?.costUsd ?? 0),
+          (sum, judge) => sum + (judge.partials[candidateIndex]?.costUsd ?? 0),
           0,
         );
         const judgeInputTokens =
@@ -509,7 +509,7 @@ export class BenchmarkRunner {
               cell,
               firstFailure?.error ?? new Error("Judge ensemble incomplete"),
               {
-                latencyMs: outcome.latencyMs,
+	                solverLatencyMs: outcome.solverLatencyMs,
                 candidate: outcome.candidate,
                 candidateCostUsd: outcome.candidateCostUsd,
                 judgeInputTokens,
@@ -536,7 +536,7 @@ export class BenchmarkRunner {
           judgeOutputTokens,
           judgeCostUsd,
           judgeFailureCount: judgeFailuresForCell.length,
-          latencyMs: outcome.latencyMs,
+	          solverLatencyMs: outcome.solverLatencyMs,
           partialJudgeFailureMessage:
             judgeFailuresForCell.length === 0
               ? null
@@ -604,8 +604,8 @@ const buildFailedInput = (
   benchmarkId: string,
   cell: MatrixCell,
   err: unknown,
-  partial: {
-    latencyMs?: number;
+	  partial: {
+	    solverLatencyMs?: number;
     candidate?: GenerateResponse;
     candidateCostUsd?: number;
     judgeInputTokens?: number;
@@ -633,7 +633,7 @@ const buildFailedInput = (
     judgeOutputTokens: partial.judgeOutputTokens ?? 0,
     judgeCostUsd: partial.judgeCostUsd ?? 0,
     judgeFailureCount: partial.judgeFailureCount ?? 0,
-    latencyMs: partial.latencyMs ?? 0,
+	    solverLatencyMs: partial.solverLatencyMs ?? 0,
   };
 };
 
@@ -642,6 +642,40 @@ const classifyFailureKind = (err: unknown): BenchmarkFailureKind => {
   if (err instanceof JudgeExecutionError) return "judge_error";
   if (err instanceof Error) return "unknown";
   return "unknown";
+};
+
+const ZERO_DISTRIBUTED_USAGE: DistributedUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  costUsd: 0,
+};
+
+const distributeUsage = (
+  usage: { inputTokens: number; outputTokens: number },
+  count: number,
+  model: string,
+): DistributedUsage[] => {
+  if (count <= 0) return [];
+  const inputTokens = distributeInteger(usage.inputTokens, count);
+  const outputTokens = distributeInteger(usage.outputTokens, count);
+  return inputTokens.map((input, index) => {
+    const output = outputTokens[index] ?? 0;
+    return {
+      inputTokens: input,
+      outputTokens: output,
+      costUsd: calculateCost(model, input, output).totalUsd,
+    };
+  });
+};
+
+const distributeInteger = (total: number, count: number): number[] => {
+  const integerTotal = Math.max(0, Math.trunc(total));
+  const base = Math.floor(integerTotal / count);
+  const remainder = integerTotal % count;
+  return Array.from(
+    { length: count },
+    (_, index) => base + (index < remainder ? 1 : 0),
+  );
 };
 
 const estimateCellCostUsd = (

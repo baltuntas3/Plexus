@@ -2,7 +2,7 @@
 //
 // Every candidate is (promptVersionId × solverModel). For each candidate the
 // analyzer computes: rubric means across all graded rows, a consistency score
-// from across-row variance, mean latency + cost, total cost, and a cluster
+// from across-row variance, mean solver latency + cost, total cost, and a cluster
 // bootstrap 95% confidence interval on `meanFinalScore` so two candidates
 // can be compared as "significantly different vs. within noise".
 //
@@ -14,7 +14,7 @@
 //      clearing an 80% score floor), matching the paper's framing.
 //   3. Composite ranking: quality (80%, geometric mean of normalised rubric
 //      dimensions + consistency) plus efficiency (20%, harmonic-against-best
-//      normalised latency + cost — `bestValue / max(bestValue, value)`, so
+//      normalised solver latency + cost — `bestValue / max(bestValue, value)`, so
 //      the cheapest/fastest in the cohort scores 1 and outliers do not
 //      collapse the rest of the field). The composite is the recommended-selection rule,
 //      because Pareto alone cannot break ties along the frontier and PPD
@@ -49,9 +49,10 @@ const SCORE_FLOOR_FRACTION = 0.8;
 // "best", not a knob to trade against a high mean score.
 const MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION = 0.1;
 
-// finalScore is in [0,1]; stddev 0.25 is the practical ceiling for real LLM
-// benchmark runs (scores alternating near 0 and 1), so anything above it
-// clamps to 0% consistency.
+// finalScore is in [0,1]. Consistency measures within-testCase repetition
+// variance, not the natural spread between easy and hard test cases. A
+// within-case stddev of 0.4 is already severe, so anything above it clamps
+// to 0% consistency.
 const CONSISTENCY_STDDEV_CEILING = 0.4;
 
 // Composite ranking weights. Quality (geometric mean across rubric + consistency)
@@ -79,6 +80,7 @@ interface CandidateStats {
   ci95Low: number;
   ci95High: number;
   consistencyScore: number;
+  meanSolverLatencyMs: number;
   meanLatencyMs: number;
   meanCostUsd: number;
   totalCostUsd: number;
@@ -111,6 +113,7 @@ interface CategoryBreakdownRow {
   meanAccuracy: number;
   meanCoherence: number;
   meanInstruction: number;
+  meanSolverLatencyMs: number;
   meanLatencyMs: number;
   meanCostUsd: number;
   completedCount: number;
@@ -245,7 +248,7 @@ const emptyMetricBucket = (): MetricBucket => ({
 });
 
 const accumulateMetricRow = (bucket: MetricBucket, r: BenchmarkResult): void => {
-  bucket.latencies.push(r.latencyMs);
+  bucket.latencies.push(r.solverLatencyMs);
   bucket.costs.push(r.totalCostUsd);
   bucket.operationalIssueCount += operationalIssueWeight(r);
   if (r.status === "failed") {
@@ -301,7 +304,9 @@ export const aggregateResults = (
   const out: CandidateStats[] = [];
   for (const [key, bucket] of buckets) {
     const completedCount = bucket.completedCount;
-    const sd = stddev(bucket.finalScores);
+    const withinCaseStddev = meanWithinClusterStddev(
+      [...bucket.scoresByTestCase.values()],
+    );
     const ci = clusterBootstrapCI(
       [...bucket.scoresByTestCase.values()],
       mulberry32(fnv1a(BOOTSTRAP_SEED, key)),
@@ -317,7 +322,8 @@ export const aggregateResults = (
       meanFinalScore: mean(bucket.finalScores),
       ci95Low: ci.low,
       ci95High: ci.high,
-      consistencyScore: consistencyFromStddev(sd),
+      consistencyScore: consistencyFromStddev(withinCaseStddev),
+      meanSolverLatencyMs: mean(bucket.latencies),
       meanLatencyMs: mean(bucket.latencies),
       meanCostUsd: mean(bucket.costs),
       totalCostUsd: bucket.totalCost,
@@ -385,7 +391,7 @@ const buildPPDRows = (
 
 // Composite score: weighted combination of quality (geometric mean — penalises
 // any dimension sitting at zero) and efficiency (additive — allows the worst
-// latency/cost candidate to still contribute to quality-driven ranking),
+// solver-latency/cost candidate to still contribute to quality-driven ranking),
 // followed by a soft reliability penalty. The hard gate still excludes
 // clearly unreliable candidates, but this soft penalty prevents a cliff where
 // a candidate with modest operational issues remains entirely unpenalised
@@ -399,7 +405,7 @@ const computeCompositeRanking = (
   if (eligible.length === 0) return [];
 
   // Compute min/max once per dimension (was O(n²) per candidate before).
-  const latencyRange = rangeOf(eligible, (c) => c.meanLatencyMs);
+  const latencyRange = rangeOf(eligible, (c) => c.meanSolverLatencyMs);
   const costRange = rangeOf(eligible, (c) => c.meanCostUsd);
 
   return eligible
@@ -415,7 +421,7 @@ const computeCompositeRanking = (
         Math.pow(con, QUALITY_CONSISTENCY_FRACTION);
       const efficiency =
         EFFICIENCY_LATENCY_WEIGHT *
-          normaliseDescending(c.meanLatencyMs, latencyRange) +
+          normaliseDescending(c.meanSolverLatencyMs, latencyRange) +
         EFFICIENCY_COST_WEIGHT *
           normaliseDescending(c.meanCostUsd, costRange);
       const rawComposite = COMPOSITE_QUALITY_WEIGHT * quality + efficiency;
@@ -580,6 +586,7 @@ const aggregateCategoryBreakdown = (
         meanAccuracy: mean(bucket.accuracies),
         meanCoherence: mean(bucket.coherences),
         meanInstruction: mean(bucket.instructions),
+        meanSolverLatencyMs: mean(bucket.latencies),
         meanLatencyMs: mean(bucket.latencies),
         meanCostUsd: mean(bucket.costs),
         completedCount,
@@ -1046,7 +1053,7 @@ const buildRecommendationReasoning = (s: CandidateStats, composite: number): str
   `CI95 [${s.ci95Low.toFixed(3)}, ${s.ci95High.toFixed(3)}], ` +
   `Failure rate ${(s.failureRate * 100).toFixed(1)}%, ` +
   `Operational issues ${(s.operationalIssueRate * 100).toFixed(1)}%, ` +
-  `Latency ${Math.round(s.meanLatencyMs)} ms, ` +
+  `Solver latency ${Math.round(s.meanSolverLatencyMs)} ms, ` +
   `Cost $${s.meanCostUsd.toFixed(4)}/test.`;
 
 const operationalIssueWeight = (row: BenchmarkResult): number => {
@@ -1063,6 +1070,14 @@ const stddev = (values: readonly number[]): number => {
   const m = mean(values);
   const v = values.reduce((s, x) => s + (x - m) ** 2, 0) / (values.length - 1);
   return Math.sqrt(v);
+};
+
+const meanWithinClusterStddev = (
+  groups: readonly (readonly number[])[],
+): number => {
+  const repeated = groups.filter((group) => group.length >= 2);
+  if (repeated.length === 0) return 0;
+  return mean(repeated.map(stddev));
 };
 
 const consistencyFromStddev = (sd: number): number => {

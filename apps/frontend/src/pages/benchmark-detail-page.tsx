@@ -979,7 +979,7 @@ const AnalysisPanel = ({
             Per-category quality and reliability across candidates. Categories come from generated labels or manual cases.
           </Text>
           <Alert color="blue" variant="light">
-            Failed rows keep observed latency and any known solver/judge token spend, so cost and failure columns remain failure-aware.
+            Failed rows keep observed solver latency and any known solver/judge token spend, so cost and failure columns remain failure-aware.
           </Alert>
           <Table striped highlightOnHover>
             <Table.Thead>
@@ -991,7 +991,7 @@ const AnalysisPanel = ({
                 <Table.Th>Accuracy</Table.Th>
                 <Table.Th>Coherence</Table.Th>
                 <Table.Th>Instruction</Table.Th>
-                <Table.Th>Latency</Table.Th>
+                <Table.Th>Solver latency</Table.Th>
                 <Table.Th>Cost/test</Table.Th>
                 <Table.Th>Runs</Table.Th>
                 <Table.Th>Failures</Table.Th>
@@ -1061,7 +1061,7 @@ const AnalysisPanel = ({
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Text size="sm" c="dimmed">{Math.round(s.meanLatencyMs)} ms</Text>
+                      <Text size="sm" c="dimmed">{Math.round(s.meanSolverLatencyMs)} ms</Text>
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">${s.meanCostUsd.toFixed(4)}</Text>

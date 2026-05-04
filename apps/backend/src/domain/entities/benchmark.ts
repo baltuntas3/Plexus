@@ -5,10 +5,25 @@ import {
   BenchmarkMatrixEmptyError,
   BenchmarkNoJudgesError,
   BenchmarkNotInDraftError,
+  ValidationError,
 } from "../errors/domain-error.js";
-import { assertBudgetUsd } from "../value-objects/budget-usd.js";
 import { BenchmarkSeed } from "../value-objects/benchmark-seed.js";
-import type { BenchmarkCostForecast } from "../value-objects/benchmark-cost-forecast.js";
+
+// Forecast of the total USD + token cost a benchmark run is expected to
+// incur, given its configuration (versions × solvers × judges × reps × test
+// inputs). Computed by `BenchmarkCostEstimator` in the application layer
+// and carried on the aggregate as part of its state, so it stays a domain
+// data shape rather than a transport DTO.
+export interface BenchmarkCostForecast {
+  estimatedMatrixCells: number;
+  estimatedCandidateInputTokens: number;
+  estimatedCandidateOutputTokens: number;
+  estimatedJudgeInputTokens: number;
+  estimatedJudgeOutputTokens: number;
+  estimatedCandidateCostUsd: number;
+  estimatedJudgeCostUsd: number;
+  estimatedTotalCostUsd: number;
+}
 
 // Benchmark aggregate.
 //
@@ -139,7 +154,14 @@ export class Benchmark {
     // the same check in every caller.
     BenchmarkSeed.of(params.seed);
     if (params.budgetUsd !== null) {
-      assertBudgetUsd(params.budgetUsd);
+      // Budget cap of `null` opts out; any explicit number must be a positive
+      // finite USD amount. Zero is rejected so "how much can we spend?" stays
+      // semantically honest — `null` is the only way to say "no cap".
+      if (!Number.isFinite(params.budgetUsd) || params.budgetUsd <= 0) {
+        throw ValidationError(
+          `Budget must be a positive finite number, got ${params.budgetUsd}`,
+        );
+      }
     }
     if (params.repetitions < 1) {
       throw BenchmarkInvalidRepetitionsError();

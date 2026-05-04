@@ -1,4 +1,4 @@
-import type { BenchmarkCostForecast } from "../../../domain/value-objects/benchmark-cost-forecast.js";
+import type { BenchmarkCostForecast } from "../../../domain/entities/benchmark.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import { calculateCost } from "../model-registry.js";
 import { mean } from "../../utils/statistics.js";

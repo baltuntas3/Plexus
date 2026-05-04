@@ -29,11 +29,12 @@ export interface UpdateTestCasesCommand {
 // add new cases while the benchmark is still in draft. The "draft only"
 // invariant lives on the aggregate now; this use case only orchestrates.
 export class UpdateTestCasesUseCase {
+  private readonly costEstimator = new BenchmarkCostEstimator();
+
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly promptQueries: IPromptQueryService,
     private readonly idGenerator: IIdGenerator,
-    private readonly costEstimator: BenchmarkCostEstimator = new BenchmarkCostEstimator(),
   ) {}
 
   async execute(command: UpdateTestCasesCommand): Promise<void> {

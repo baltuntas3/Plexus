@@ -49,9 +49,8 @@ const MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION = 0.1;
 
 // finalScore is in [0,1]; stddev 0.25 is the practical ceiling for real LLM
 // benchmark runs (scores alternating near 0 and 1), so anything above it
-// clamps to 0% consistency. Exposed as a default so stricter task families
-// (e.g. deterministic math) can dial it down via AnalyzerOptions.
-const DEFAULT_CONSISTENCY_STDDEV_CEILING = 0.4;
+// clamps to 0% consistency.
+const CONSISTENCY_STDDEV_CEILING = 0.4;
 
 // Composite ranking weights. Quality (geometric mean across rubric + consistency)
 // counts 80%, efficiency (latency + cost) 20% — split 10/10. The geometric-mean
@@ -214,29 +213,63 @@ export const candidateKey = (c: Pick<
   "promptVersionId" | "solverModel"
 >): string => `${c.promptVersionId}::${c.solverModel}`;
 
+// Per-row metric accumulator shared by both aggregation passes (per-candidate
+// and per-(candidate, category)). Latency/cost/operational-issue counters
+// always advance — failed rows still pay wall time and provider cost. Only
+// completed rows contribute rubric and finalScore samples; failed rows
+// increment failedCount and stop there.
+type MetricBucket = {
+  finalScores: number[];
+  accuracies: number[];
+  coherences: number[];
+  instructions: number[];
+  latencies: number[];
+  costs: number[];
+  completedCount: number;
+  failedCount: number;
+  operationalIssueCount: number;
+};
+
+const emptyMetricBucket = (): MetricBucket => ({
+  finalScores: [],
+  accuracies: [],
+  coherences: [],
+  instructions: [],
+  latencies: [],
+  costs: [],
+  completedCount: 0,
+  failedCount: 0,
+  operationalIssueCount: 0,
+});
+
+const accumulateMetricRow = (bucket: MetricBucket, r: BenchmarkResult): void => {
+  bucket.latencies.push(r.latencyMs);
+  bucket.costs.push(r.totalCostUsd);
+  bucket.operationalIssueCount += operationalIssueWeight(r);
+  if (r.status === "failed") {
+    bucket.failedCount += 1;
+    return;
+  }
+  bucket.finalScores.push(r.finalScore);
+  bucket.accuracies.push(r.judgeAccuracy);
+  bucket.coherences.push(r.judgeCoherence);
+  bucket.instructions.push(r.judgeInstruction);
+  bucket.completedCount += 1;
+};
+
 export const aggregateResults = (
   results: readonly BenchmarkResult[],
-  consistencyStddevCeiling: number = DEFAULT_CONSISTENCY_STDDEV_CEILING,
 ): CandidateStats[] => {
-  type Bucket = {
+  // Reps grouped by testCaseId. The runner judges all reps of the same
+  // (candidate, testCase) in a single batched LLM call, so per-rep noise
+  // is correlated within these groups. The CI is computed via cluster
+  // bootstrap over these groups so the resampling distribution preserves
+  // that correlation; treating reps as i.i.d. would understate spread.
+  type Bucket = MetricBucket & {
     promptVersionId: string;
     solverModel: string;
-    finalScores: number[];
-    // Reps grouped by testCaseId. The runner judges all reps of the same
-    // (candidate, testCase) in a single batched LLM call, so per-rep noise
-    // is correlated within these groups. The CI is computed via cluster
-    // bootstrap over these groups so the resampling distribution preserves
-    // that correlation; treating reps as i.i.d. would understate spread.
     scoresByTestCase: Map<string, number[]>;
-    accuracies: number[];
-    coherences: number[];
-    instructions: number[];
-    latencies: number[];
-    costs: number[];
     totalCost: number;
-    completedCount: number;
-    failedCount: number;
-    operationalIssueCount: number;
   };
   const buckets = new Map<string, Bucket>();
 
@@ -245,44 +278,21 @@ export const aggregateResults = (
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = {
+        ...emptyMetricBucket(),
         promptVersionId: r.promptVersionId,
         solverModel: r.solverModel,
-        finalScores: [],
         scoresByTestCase: new Map(),
-        accuracies: [],
-        coherences: [],
-        instructions: [],
-        latencies: [],
-        costs: [],
         totalCost: 0,
-        completedCount: 0,
-        failedCount: 0,
-        operationalIssueCount: 0,
       };
       buckets.set(key, bucket);
     }
-
-    if (r.status === "failed") {
-      bucket.latencies.push(r.latencyMs);
-      bucket.costs.push(r.totalCostUsd);
-      bucket.totalCost += r.totalCostUsd;
-      bucket.failedCount += 1;
-      bucket.operationalIssueCount += operationalIssueWeight(r);
-      continue;
-    }
-
-    bucket.finalScores.push(r.finalScore);
-    const cluster = bucket.scoresByTestCase.get(r.testCaseId) ?? [];
-    cluster.push(r.finalScore);
-    bucket.scoresByTestCase.set(r.testCaseId, cluster);
-    bucket.accuracies.push(r.judgeAccuracy);
-    bucket.coherences.push(r.judgeCoherence);
-    bucket.instructions.push(r.judgeInstruction);
-    bucket.latencies.push(r.latencyMs);
-    bucket.costs.push(r.totalCostUsd);
     bucket.totalCost += r.totalCostUsd;
-    bucket.completedCount += 1;
-    bucket.operationalIssueCount += operationalIssueWeight(r);
+    accumulateMetricRow(bucket, r);
+    if (r.status !== "failed") {
+      const cluster = bucket.scoresByTestCase.get(r.testCaseId) ?? [];
+      cluster.push(r.finalScore);
+      bucket.scoresByTestCase.set(r.testCaseId, cluster);
+    }
   }
 
   const rng = mulberry32(BOOTSTRAP_SEED);
@@ -305,7 +315,7 @@ export const aggregateResults = (
       meanFinalScore: mean(bucket.finalScores),
       ci95Low: ci.low,
       ci95High: ci.high,
-      consistencyScore: consistencyFromStddev(sd, consistencyStddevCeiling),
+      consistencyScore: consistencyFromStddev(sd),
       meanLatencyMs: mean(bucket.latencies),
       meanCostUsd: mean(bucket.costs),
       totalCostUsd: bucket.totalCost,
@@ -511,9 +521,6 @@ const pickComparableCoverageKeys = (
 
 export interface AnalyzerOptions {
   minScoreFraction?: number;
-  // Override the stddev→consistency ceiling; lower values make the
-  // consistency axis stricter. Omit to use DEFAULT_CONSISTENCY_STDDEV_CEILING.
-  consistencyStddevCeiling?: number;
   testCasesById?: Record<
     string,
     Pick<BenchmarkTestCase, "category" | "source">
@@ -532,20 +539,11 @@ const aggregateCategoryBreakdown = (
   results: readonly BenchmarkResult[],
   testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>,
 ): CategoryBreakdownRow[] => {
-  type Bucket = {
+  type Bucket = MetricBucket & {
     candidateKey: string;
     promptVersionId: string;
     solverModel: string;
     category: CategoryKey;
-    finalScores: number[];
-    accuracies: number[];
-    coherences: number[];
-    instructions: number[];
-    latencies: number[];
-    costs: number[];
-    completedCount: number;
-    failedCount: number;
-    operationalIssueCount: number;
   };
   const buckets = new Map<string, Bucket>();
 
@@ -556,39 +554,15 @@ const aggregateCategoryBreakdown = (
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = {
+        ...emptyMetricBucket(),
         candidateKey: candidate,
         promptVersionId: r.promptVersionId,
         solverModel: r.solverModel,
         category,
-        finalScores: [],
-        accuracies: [],
-        coherences: [],
-        instructions: [],
-        latencies: [],
-        costs: [],
-        completedCount: 0,
-        failedCount: 0,
-        operationalIssueCount: 0,
       };
       buckets.set(key, bucket);
     }
-
-    if (r.status === "failed") {
-      bucket.latencies.push(r.latencyMs);
-      bucket.costs.push(r.totalCostUsd);
-      bucket.failedCount += 1;
-      bucket.operationalIssueCount += operationalIssueWeight(r);
-      continue;
-    }
-
-    bucket.finalScores.push(r.finalScore);
-    bucket.accuracies.push(r.judgeAccuracy);
-    bucket.coherences.push(r.judgeCoherence);
-    bucket.instructions.push(r.judgeInstruction);
-    bucket.latencies.push(r.latencyMs);
-    bucket.costs.push(r.totalCostUsd);
-    bucket.completedCount += 1;
-    bucket.operationalIssueCount += operationalIssueWeight(r);
+    accumulateMetricRow(bucket, r);
   }
 
   return [...buckets.values()]
@@ -695,10 +669,7 @@ export const computeAnalysis = (
   results: readonly BenchmarkResult[],
   options: AnalyzerOptions = {},
 ): BenchmarkAnalysis => {
-  const candidates = aggregateResults(
-    results,
-    options.consistencyStddevCeiling ?? DEFAULT_CONSISTENCY_STDDEV_CEILING,
-  );
+  const candidates = aggregateResults(results);
   const categoryBreakdown = aggregateCategoryBreakdown(
     results,
     options.testCasesById ?? {},
@@ -1090,12 +1061,8 @@ const stddev = (values: readonly number[]): number => {
   return Math.sqrt(v);
 };
 
-const consistencyFromStddev = (
-  sd: number,
-  ceiling: number = DEFAULT_CONSISTENCY_STDDEV_CEILING,
-): number => {
-  if (ceiling <= 0) return sd === 0 ? 1 : 0;
-  return Math.max(0, Math.min(1, 1 - sd / ceiling));
+const consistencyFromStddev = (sd: number): number => {
+  return Math.max(0, Math.min(1, 1 - sd / CONSISTENCY_STDDEV_CEILING));
 };
 
 // Cluster (block) bootstrap on the mean. `groups` are clusters of

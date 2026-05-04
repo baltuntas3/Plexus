@@ -20,16 +20,6 @@ describe("TokenCost", () => {
     expect(cost.totalCents).toBeCloseTo(600);
   });
 
-  it("add() sums tokens but keeps left-side prices", () => {
-    const a = new TokenCost(100, 200, 1, 2);
-    const b = new TokenCost(50, 75, 999, 999);
-    const sum = a.add(b);
-    expect(sum.inputTokens).toBe(150);
-    expect(sum.outputTokens).toBe(275);
-    expect(sum.inputPricePerMillion).toBe(1);
-    expect(sum.outputPricePerMillion).toBe(2);
-  });
-
   it("scales sub-million token counts proportionally", () => {
     const cost = new TokenCost(1_000, 1_000, 10, 20);
     expect(cost.inputCostUsd).toBeCloseTo(0.01);

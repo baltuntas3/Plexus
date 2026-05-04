@@ -1,10 +1,10 @@
 import type { TaskType } from "@plexus/shared-types";
 import type {
+  BenchmarkCostForecast,
   BenchmarkProgress,
   BenchmarkStatus,
   TestGenerationMode,
 } from "../../domain/entities/benchmark.js";
-import type { BenchmarkCostForecast } from "../../domain/value-objects/benchmark-cost-forecast.js";
 
 // Read-side contract for the Benchmark aggregate. Write paths go through
 // `IBenchmarkRepository.save(aggregate)`; read paths go through here so list

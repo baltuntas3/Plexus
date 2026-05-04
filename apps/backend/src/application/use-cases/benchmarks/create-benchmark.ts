@@ -52,12 +52,13 @@ export interface CreateBenchmarkResult {
 }
 
 export class CreateBenchmarkUseCase {
+  private readonly costEstimator = new BenchmarkCostEstimator();
+
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly promptQueries: IPromptQueryService,
     private readonly providers: IAIProviderFactory,
     private readonly idGenerator: IIdGenerator,
-    private readonly costEstimator: BenchmarkCostEstimator = new BenchmarkCostEstimator(),
   ) {}
 
   async execute(command: CreateBenchmarkCommand): Promise<CreateBenchmarkResult> {

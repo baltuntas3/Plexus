@@ -7,11 +7,11 @@ import type {
   ListBenchmarkSummariesQuery,
 } from "../../../application/queries/benchmark-query-service.js";
 import type {
+  BenchmarkCostForecast,
   BenchmarkProgress,
   BenchmarkStatus,
   TestGenerationMode,
 } from "../../../domain/entities/benchmark.js";
-import type { BenchmarkCostForecast } from "../../../domain/value-objects/benchmark-cost-forecast.js";
 import { BenchmarkModel } from "./benchmark-model.js";
 
 interface BenchmarkSummaryDoc {

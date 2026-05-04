@@ -30,11 +30,12 @@ export interface StartBenchmarkResult {
 // running" transitions. The runner is idempotent on already-completed cells.
 
 export class StartBenchmarkUseCase {
+  private readonly costEstimator = new BenchmarkCostEstimator();
+
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly promptQueries: IPromptQueryService,
     private readonly queue: IJobQueue,
-    private readonly costEstimator: BenchmarkCostEstimator = new BenchmarkCostEstimator(),
   ) {}
 
   async execute(command: StartBenchmarkCommand): Promise<StartBenchmarkResult> {

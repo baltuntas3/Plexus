@@ -2,13 +2,13 @@ import type { Types } from "mongoose";
 import type { TaskType, TestCaseCategory } from "@plexus/shared-types";
 import {
   Benchmark,
+  type BenchmarkCostForecast,
   type BenchmarkPrimitives,
   type BenchmarkProgress,
   type BenchmarkStatus,
   type TestGenerationMode,
   type TestCaseSource,
 } from "../../../domain/entities/benchmark.js";
-import type { BenchmarkCostForecast } from "../../../domain/value-objects/benchmark-cost-forecast.js";
 import { BenchmarkAggregateStaleError } from "../../../domain/errors/domain-error.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import { BenchmarkModel } from "./benchmark-model.js";

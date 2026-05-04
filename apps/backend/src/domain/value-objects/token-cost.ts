@@ -25,13 +25,4 @@ export class TokenCost {
   get totalCents(): number {
     return this.totalUsd * 100;
   }
-
-  add(other: TokenCost): TokenCost {
-    return new TokenCost(
-      this.inputTokens + other.inputTokens,
-      this.outputTokens + other.outputTokens,
-      this.inputPricePerMillion,
-      this.outputPricePerMillion,
-    );
-  }
 }

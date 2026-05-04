@@ -195,6 +195,34 @@ describe("aggregateResults", () => {
     expect(again[0]!.ci95High).toBeCloseTo(tight[0]!.ci95High, 10);
   });
 
+  it("keeps each candidate CI independent from result insertion order", () => {
+    const candidateA = Array.from({ length: 6 }, (_, i) =>
+      row({
+        promptVersionId: "version-a",
+        solverModel: "model-a",
+        testCaseId: `tc${i}`,
+        finalScore: i % 2 === 0 ? 0.7 : 0.9,
+      }),
+    );
+    const candidateB = Array.from({ length: 6 }, (_, i) =>
+      row({
+        promptVersionId: "version-b",
+        solverModel: "model-b",
+        testCaseId: `tc${i}`,
+        finalScore: i % 2 === 0 ? 0.2 : 0.6,
+      }),
+    );
+
+    const first = aggregateResults([...candidateA, ...candidateB]);
+    const reversed = aggregateResults([...candidateB, ...candidateA]);
+
+    for (const candidate of first) {
+      const same = reversed.find((c) => c.candidateKey === candidate.candidateKey);
+      expect(same?.ci95Low).toBeCloseTo(candidate.ci95Low, 10);
+      expect(same?.ci95High).toBeCloseTo(candidate.ci95High, 10);
+    }
+  });
+
   it("collapses CI to a point when only one testCase cluster exists", () => {
     // With a single testCase cluster, the cluster bootstrap can never draw
     // anything but that cluster — the CI is a point estimate. This is the

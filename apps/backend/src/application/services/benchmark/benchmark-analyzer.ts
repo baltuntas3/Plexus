@@ -298,14 +298,13 @@ export const aggregateResults = (
     }
   }
 
-  const rng = mulberry32(BOOTSTRAP_SEED);
   const out: CandidateStats[] = [];
   for (const [key, bucket] of buckets) {
     const completedCount = bucket.completedCount;
     const sd = stddev(bucket.finalScores);
     const ci = clusterBootstrapCI(
       [...bucket.scoresByTestCase.values()],
-      rng,
+      mulberry32(fnv1a(BOOTSTRAP_SEED, key)),
     );
     const totalRows = completedCount + bucket.failedCount;
     out.push({
@@ -1128,4 +1127,3 @@ const mulberry32 = (seed: number): (() => number) => {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 };
-

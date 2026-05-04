@@ -49,7 +49,6 @@ describe("SaveBraidFromChatUseCase", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId,
       mermaidCode: validMermaid,
       generatorModel,
     });
@@ -63,7 +62,7 @@ describe("SaveBraidFromChatUseCase", () => {
       model: generatorModel,
     });
     // Production pointer untouched — saving from chat creates a draft.
-    const prompt = await prompts.findById(promptId);
+    const prompt = await prompts.findInOrganization(promptId, organizationId);
     expect(prompt?.productionVersionId).toBeNull();
   });
 
@@ -74,7 +73,6 @@ describe("SaveBraidFromChatUseCase", () => {
         promptId,
         version: "v1",
         organizationId: "other-org",
-        userId,
         mermaidCode: validMermaid,
         generatorModel,
       }),
@@ -97,7 +95,6 @@ describe("SaveBraidFromChatUseCase", () => {
         promptId,
         version: "v1",
         organizationId,
-        userId,
         mermaidCode: mermaidWithUndeclared,
         generatorModel,
       }),

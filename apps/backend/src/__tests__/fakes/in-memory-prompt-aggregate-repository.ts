@@ -14,10 +14,6 @@ export class InMemoryPromptAggregateRepository implements IPromptRepository {
 
   constructor(private readonly queryService?: InMemoryPromptQueryService) {}
 
-  async findById(id: string): Promise<Prompt | null> {
-    return this.prompts.get(id) ?? null;
-  }
-
   async findInOrganization(
     id: string,
     organizationId: string,

@@ -9,7 +9,6 @@ export interface LintVersionCommand {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
 }
 
 export class LintVersionUseCase {

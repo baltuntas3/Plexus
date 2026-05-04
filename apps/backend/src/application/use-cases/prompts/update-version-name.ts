@@ -9,7 +9,6 @@ export interface UpdateVersionNameCommand extends UpdateVersionInputDto {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
 }
 
 // Pure metadata mutation: the version aggregate renames itself, the Prompt

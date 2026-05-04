@@ -28,7 +28,6 @@ export interface BraidChatCommand {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
   userMessage: string;
   history: BraidChatTurn[];
   generatorModel: string;

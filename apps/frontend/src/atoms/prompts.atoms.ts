@@ -16,7 +16,6 @@ import { tokensAtom } from "./auth.atoms.js";
 // ── List ────────────────────────────────────────────────────────────────────
 
 export const promptsListRefreshAtom = atom(0);
-export const promptsListPageAtom = atom(1);
 export const promptsListSearchAtom = atom("");
 
 const PAGE_SIZE = 20;
@@ -27,9 +26,8 @@ export const promptsListAtom = atom(async (get) => {
   if (!tokens) {
     return { items: [], total: 0, page: 1, pageSize: PAGE_SIZE } satisfies Paginated<PromptDto>;
   }
-  const page = get(promptsListPageAtom);
   const search = get(promptsListSearchAtom).trim();
-  const query = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+  const query = new URLSearchParams({ page: "1", pageSize: String(PAGE_SIZE) });
   if (search) query.set("search", search);
   return apiRequest<Paginated<PromptDto>>(`/prompts?${query.toString()}`, {
     token: tokens.accessToken,

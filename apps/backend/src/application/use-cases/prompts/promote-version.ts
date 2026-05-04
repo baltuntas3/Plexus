@@ -16,7 +16,6 @@ export interface PromoteVersionCommand extends PromoteVersionInputDto {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
 }
 
 // Cross-aggregate orchestration for the "one production per prompt"

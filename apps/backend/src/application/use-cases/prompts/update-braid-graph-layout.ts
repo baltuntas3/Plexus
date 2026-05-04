@@ -8,7 +8,6 @@ export interface UpdateBraidGraphLayoutCommand {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
   // Positions for nodes the user has dragged. Empty array clears the
   // saved layout (frontend reverts to deterministic auto-layout).
   positions: ReadonlyArray<{ nodeId: string; x: number; y: number }>;

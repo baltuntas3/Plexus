@@ -54,7 +54,6 @@ describe("PromoteVersionUseCase", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId,
       targetStatus: "staging",
     });
     expect(updated.status).toBe("staging");
@@ -65,10 +64,9 @@ describe("PromoteVersionUseCase", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId,
       targetStatus: "production",
     });
-    const prompt = await prompts.findById(promptId);
+    const prompt = await prompts.findInOrganization(promptId, organizationId);
     const v1 = await versions.findByPromptAndLabelInOrganization(promptId, "v1", organizationId);
     expect(prompt?.productionVersionId).toBe(v1?.id);
   });
@@ -78,25 +76,22 @@ describe("PromoteVersionUseCase", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId,
       targetStatus: "production",
     });
 
     await createVersion.execute({
       promptId,
       organizationId,
-      userId,
       sourcePrompt: "Updated prompt",
     });
     await promoteVersion.execute({
       promptId,
       version: "v2",
       organizationId,
-      userId,
       targetStatus: "production",
     });
 
-    const prompt = await prompts.findById(promptId);
+    const prompt = await prompts.findInOrganization(promptId, organizationId);
     const v1 = await versions.findByPromptAndLabelInOrganization(promptId, "v1", organizationId);
     const v2 = await versions.findByPromptAndLabelInOrganization(promptId, "v2", organizationId);
 
@@ -111,7 +106,6 @@ describe("PromoteVersionUseCase", () => {
         promptId,
         version: "v1",
         organizationId: "other-org",
-        userId: "other-user",
         targetStatus: "staging",
       }),
     ).rejects.toMatchObject({ code: "PROMPT_NOT_FOUND" });
@@ -123,7 +117,6 @@ describe("PromoteVersionUseCase", () => {
         promptId,
         version: "v99",
         organizationId,
-      userId,
         targetStatus: "staging",
       }),
     ).rejects.toMatchObject({ code: "PROMPT_VERSION_NOT_FOUND" });
@@ -139,7 +132,6 @@ describe("PromoteVersionUseCase", () => {
         promptId,
         version: "v1",
         organizationId,
-        userId,
         targetStatus: "production",
       }),
     ).rejects.toMatchObject({ code: "VERSION_APPROVAL_REQUIRED" });
@@ -154,7 +146,6 @@ describe("PromoteVersionUseCase", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId,
       targetStatus: "staging",
     });
     expect(updated.status).toBe("staging");
@@ -170,7 +161,6 @@ describe("PromoteVersionUseCase", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId,
       targetStatus: "staging",
     });
     await expect(
@@ -178,7 +168,6 @@ describe("PromoteVersionUseCase", () => {
         promptId,
         version: "v1",
         organizationId,
-        userId,
         targetStatus: "draft" as never,
       }),
     ).rejects.toMatchObject({

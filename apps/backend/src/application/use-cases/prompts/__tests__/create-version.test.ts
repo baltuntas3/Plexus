@@ -43,7 +43,6 @@ describe("CreateVersionUseCase", () => {
     const v2 = await createVersion.execute({
       promptId,
       organizationId,
-      userId,
       sourcePrompt: "Answer in one sentence.",
     });
     expect(v2.version).toBe("v2");
@@ -55,7 +54,6 @@ describe("CreateVersionUseCase", () => {
     const v2 = await createVersion.execute({
       promptId,
       organizationId,
-      userId,
       sourcePrompt: "Answer in one sentence.",
       fromVersion: "v1",
     });
@@ -69,7 +67,6 @@ describe("CreateVersionUseCase", () => {
       createVersion.execute({
         promptId,
         organizationId,
-      userId,
         sourcePrompt: "x",
         fromVersion: "v99",
       }),

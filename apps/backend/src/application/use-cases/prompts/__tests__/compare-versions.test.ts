@@ -34,7 +34,6 @@ const setup = async () => {
   await createVersion.execute({
     promptId: prompt.id,
     organizationId,
-    userId,
     sourcePrompt: "Summarize the input concisely.",
     variables: [
       // topic kept as-is (unchanged)

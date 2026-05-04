@@ -168,17 +168,6 @@ export class MongoPromptQueryService implements IPromptQueryService {
     return doc ? toVersionSummary(doc) : null;
   }
 
-  async findVersionSummaryInOrganization(
-    id: string,
-    organizationId: string,
-  ): Promise<PromptVersionSummary | null> {
-    const doc = await PromptVersionModel.findOne({
-      _id: id,
-      organizationId,
-    }).lean<PromptVersionDocShape>();
-    return doc ? toVersionSummary(doc) : null;
-  }
-
   async findVersionSummariesByIdsInOrganization(
     ids: readonly string[],
     organizationId: string,

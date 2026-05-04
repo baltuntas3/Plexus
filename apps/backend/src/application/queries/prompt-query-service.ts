@@ -119,10 +119,6 @@ export interface IPromptQueryService {
     label: string,
     organizationId: string,
   ): Promise<PromptVersionSummary | null>;
-  findVersionSummaryInOrganization(
-    id: string,
-    organizationId: string,
-  ): Promise<PromptVersionSummary | null>;
   findVersionSummariesByIdsInOrganization(
     ids: readonly string[],
     organizationId: string,

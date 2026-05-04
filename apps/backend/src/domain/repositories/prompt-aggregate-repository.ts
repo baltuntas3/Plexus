@@ -5,10 +5,6 @@ import type { Prompt } from "../entities/prompt.js";
 // version collection — rename/promote/generate pay a constant-size read
 // regardless of version history depth.
 export interface IPromptRepository {
-  // Unscoped lookup. Reserved for internal/system paths that legitimately
-  // operate across organization boundaries. User-facing write use cases
-  // must use `findInOrganization`.
-  findById(id: string): Promise<Prompt | null>;
   // Organization-scoped lookup. Collapses "missing" and "belongs to a
   // different org" into a single `null` so callers cannot accidentally
   // leak prompt existence via id enumeration across tenants.

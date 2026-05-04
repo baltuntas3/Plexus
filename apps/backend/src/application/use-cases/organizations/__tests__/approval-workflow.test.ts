@@ -114,7 +114,6 @@ describe("SetApprovalPolicy", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId: requesterId,
       targetStatus: "production",
     });
     expect(updated.status).toBe("production");
@@ -232,7 +231,7 @@ describe("ApproveVersionRequest", () => {
     expect(afterSecond.resolvedAt).not.toBeNull();
 
     const v1 = await versions.findByPromptAndLabelInOrganization(promptId, "v1", organizationId);
-    const prompt = await prompts.findById(promptId);
+    const prompt = await prompts.findInOrganization(promptId, organizationId);
     expect(v1?.status).toBe("production");
     expect(prompt?.productionVersionId).toBe(v1?.id);
   });
@@ -255,7 +254,6 @@ describe("ApproveVersionRequest", () => {
       promptId,
       version: "v1",
       organizationId,
-      userId: requesterId,
       targetStatus: "production",
     });
     await enablePolicy(organizations, 1);
@@ -263,7 +261,6 @@ describe("ApproveVersionRequest", () => {
     await createVersion.execute({
       promptId,
       organizationId,
-      userId: requesterId,
       sourcePrompt: "v2 body",
     });
     const requested = await requestApproval.execute({
@@ -280,7 +277,7 @@ describe("ApproveVersionRequest", () => {
 
     const v1 = await versions.findByPromptAndLabelInOrganization(promptId, "v1", organizationId);
     const v2 = await versions.findByPromptAndLabelInOrganization(promptId, "v2", organizationId);
-    const prompt = await prompts.findById(promptId);
+    const prompt = await prompts.findInOrganization(promptId, organizationId);
     expect(v1?.status).toBe("staging");
     expect(v2?.status).toBe("production");
     expect(prompt?.productionVersionId).toBe(v2?.id);
@@ -464,7 +461,6 @@ describe("ListPendingApprovalRequests", () => {
     await createVersion.execute({
       promptId,
       organizationId,
-      userId: requesterId,
       sourcePrompt: "v2 body",
     });
     const r2 = await requestApproval.execute({

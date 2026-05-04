@@ -81,7 +81,6 @@ describe("UpdateBraidGraphLayoutUseCase", () => {
       promptId,
       version: braidVersion,
       organizationId,
-      userId,
       positions: [
         { nodeId: "Start", x: 0, y: 0 },
         { nodeId: "Plan", x: 200, y: 100 },
@@ -105,14 +104,12 @@ describe("UpdateBraidGraphLayoutUseCase", () => {
       promptId,
       version: braidVersion,
       organizationId,
-      userId,
       positions: [{ nodeId: "Start", x: 10, y: 10 }],
     });
     await update.execute({
       promptId,
       version: braidVersion,
       organizationId,
-      userId,
       positions: [],
     });
     const v = await versions.findByPromptAndLabelInOrganization(
@@ -130,7 +127,6 @@ describe("UpdateBraidGraphLayoutUseCase", () => {
         promptId,
         version: classicalVersion,
         organizationId,
-        userId,
         positions: [{ nodeId: "A", x: 0, y: 0 }],
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -143,7 +139,6 @@ describe("UpdateBraidGraphLayoutUseCase", () => {
         promptId,
         version: braidVersion,
         organizationId: "other-org",
-        userId,
         positions: [],
       }),
     ).rejects.toMatchObject({ code: "PROMPT_NOT_FOUND" });
@@ -156,7 +151,6 @@ describe("UpdateBraidGraphLayoutUseCase", () => {
         promptId,
         version: braidVersion,
         organizationId,
-        userId,
         positions: [{ nodeId: "1bad", x: 0, y: 0 }],
       }),
     ).rejects.toThrow(/Invalid layout nodeId/);
@@ -173,7 +167,6 @@ describe("UpdateBraidGraphLayoutUseCase", () => {
         promptId,
         version: braidVersion,
         organizationId,
-        userId,
         positions: [
           { nodeId: "Start", x: 0, y: 0 },
           { nodeId: "GhostNode", x: 100, y: 100 },

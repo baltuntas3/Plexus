@@ -22,7 +22,6 @@ export interface SaveBraidFromChatCommand {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
   mermaidCode: string;
   generatorModel: string;
 }

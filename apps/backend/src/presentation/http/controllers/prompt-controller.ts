@@ -69,14 +69,13 @@ export class PromptController {
   };
 
   createVersion: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const input = createVersionInputSchema.parse(req.body);
     const version = await this.prompts.createVersion.execute({
       ...input,
       promptId: id,
       organizationId,
-      userId,
     });
     res.status(201).json({ version: toPromptVersionDto(version) });
   };
@@ -111,7 +110,7 @@ export class PromptController {
   };
 
   promoteVersion: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const version = getRequiredParam(req,"version");
     const input = promoteVersionInputSchema.parse(req.body);
@@ -120,13 +119,12 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
     });
     res.json({ version: toPromptVersionDto(updated) });
   };
 
   updateVersionName: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const version = getRequiredParam(req,"version");
     const input = updateVersionInputSchema.parse(req.body);
@@ -135,13 +133,12 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
     });
     res.json({ version: toPromptVersionDto(updated) });
   };
 
   generateBraid: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const version = getRequiredParam(req,"version");
     const input = generateBraidInputSchema.parse(req.body);
@@ -150,7 +147,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
     });
     res.json({
       version: toPromptVersionDto(result.version),
@@ -166,20 +162,19 @@ export class PromptController {
   };
 
   lintVersion: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const version = getRequiredParam(req,"version");
     const score = await this.prompts.lintVersion.execute({
       promptId: id,
       version,
       organizationId,
-      userId,
     });
     res.json({ qualityScore: toGraphQualityScoreDto(score) });
   };
 
   updateBraid: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req,"id");
     const version = getRequiredParam(req,"version");
     const input = updateBraidInputSchema.parse(req.body);
@@ -188,7 +183,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
     });
     res.json({
       newVersion: result.newVersion,
@@ -201,7 +195,7 @@ export class PromptController {
   // Persistence happens via `saveBraidFromChat` when the user clicks
   // "Save this version" on a suggestion.
   braidChat: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const input = braidChatInputSchema.parse(req.body);
@@ -210,7 +204,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
     });
     if (result.type === "question") {
       res.json({
@@ -229,7 +222,7 @@ export class PromptController {
   };
 
   saveBraidFromChat: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const input = saveBraidFromChatInputSchema.parse(req.body);
@@ -238,7 +231,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
     });
     res.status(201).json({
       newVersion: result.newVersion,
@@ -253,7 +245,7 @@ export class PromptController {
   // replacement the text-mode editor still goes through `updateBraid`.
 
   renameBraidNode: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const nodeId = getRequiredParam(req, "nodeId");
@@ -262,7 +254,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
       nodeId,
       newLabel: input.newLabel,
       addVariables: input.addVariables,
@@ -274,7 +265,7 @@ export class PromptController {
   };
 
   addBraidNode: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const input = addBraidNodeInputSchema.parse(req.body);
@@ -282,7 +273,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
       label: input.label,
       kind: input.kind,
       addVariables: input.addVariables,
@@ -295,7 +285,7 @@ export class PromptController {
   };
 
   removeBraidNode: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const nodeId = getRequiredParam(req, "nodeId");
@@ -303,7 +293,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
       nodeId,
     });
     res.status(201).json({
@@ -313,7 +302,7 @@ export class PromptController {
   };
 
   addBraidEdge: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const input = addBraidEdgeInputSchema.parse(req.body);
@@ -321,7 +310,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
       fromNodeId: input.fromNodeId,
       toNodeId: input.toNodeId,
       label: input.label ?? null,
@@ -333,7 +321,7 @@ export class PromptController {
   };
 
   removeBraidEdge: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const input = removeBraidEdgeInputSchema.parse(req.body);
@@ -341,7 +329,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
       fromNodeId: input.fromNodeId,
       toNodeId: input.toNodeId,
       label: input.label ?? null,
@@ -353,7 +340,7 @@ export class PromptController {
   };
 
   relabelBraidEdge: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const input = relabelBraidEdgeInputSchema.parse(req.body);
@@ -361,7 +348,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
       fromNodeId: input.fromNodeId,
       toNodeId: input.toNodeId,
       oldLabel: input.oldLabel ?? null,
@@ -400,7 +386,7 @@ export class PromptController {
   // there's no payload worth returning: the request already carries
   // the positions, and the client controls the in-memory layout state.
   updateBraidGraphLayout: RequestHandler = async (req: Request, res: Response) => {
-    const { userId, organizationId } = getAuthContext(req);
+    const { organizationId } = getAuthContext(req);
     const id = getRequiredParam(req, "id");
     const version = getRequiredParam(req, "version");
     const input = braidGraphLayoutInputSchema.parse(req.body);
@@ -408,7 +394,6 @@ export class PromptController {
       promptId: id,
       version,
       organizationId,
-      userId,
       positions: input.positions,
     });
     res.status(204).end();

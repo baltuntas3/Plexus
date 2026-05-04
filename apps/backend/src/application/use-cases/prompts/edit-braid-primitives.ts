@@ -23,7 +23,6 @@ interface CommandBase {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
 }
 
 export interface PrimitiveDeps {

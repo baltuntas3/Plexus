@@ -43,12 +43,6 @@ const toPromptPrimitives = (doc: PromptDocShape): PromptPrimitives => ({
 // separate repository — a save here is a single-document write and does
 // not touch the version collection.
 export class MongoPromptAggregateRepository implements IPromptRepository {
-  async findById(id: string): Promise<Prompt | null> {
-    const session = getCurrentSession();
-    const doc = await PromptModel.findById(id, null, { session }).lean<PromptDocShape>();
-    return doc ? Prompt.hydrate(toPromptPrimitives(doc)) : null;
-  }
-
   async findInOrganization(
     id: string,
     organizationId: string,

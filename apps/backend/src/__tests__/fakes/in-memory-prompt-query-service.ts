@@ -142,17 +142,6 @@ export class InMemoryPromptQueryService implements IPromptQueryService {
     return match ?? null;
   }
 
-  async findVersionSummaryInOrganization(
-    id: string,
-    organizationId: string,
-  ): Promise<PromptVersionSummary | null> {
-    const version = this.versions.get(id);
-    if (!version) return null;
-    const entry = this.summaries.get(version.promptId);
-    if (!entry || entry.summary.organizationId !== organizationId) return null;
-    return version;
-  }
-
   async findVersionSummariesByIdsInOrganization(
     ids: readonly string[],
     organizationId: string,

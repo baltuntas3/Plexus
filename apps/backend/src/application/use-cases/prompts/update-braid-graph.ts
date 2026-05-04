@@ -3,7 +3,6 @@ import type { IPromptVersionRepository } from "../../../domain/repositories/prom
 import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { IUnitOfWork } from "../../../domain/services/unit-of-work.js";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
-import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import {
   forkVersionWithGraph,
@@ -16,7 +15,6 @@ export interface UpdateBraidGraphCommand {
   promptId: string;
   version: string;
   organizationId: string;
-  userId: string;
   mermaidCode: string;
 }
 
@@ -62,5 +60,3 @@ export class UpdateBraidGraphUseCase {
     });
   }
 }
-
-export type { GraphQualityScore };

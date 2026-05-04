@@ -14,7 +14,6 @@ import { loadPromptInOrganization } from "./load-owned-prompt.js";
 export interface CreateVersionCommand extends CreateVersionInputDto {
   promptId: string;
   organizationId: string;
-  userId: string;
 }
 
 export class CreateVersionUseCase {

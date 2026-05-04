@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { TaskType } from "@plexus/shared-types";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
-import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
+import { buildJudgeScore, type JudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { AIProviderError, type IAIProviderFactory } from "../ai-provider.js";
 import {
   JudgeExecutionError,
@@ -133,7 +133,7 @@ export class LLMJudge implements IJudge {
             `Batch judge returned an unknown label "${entry.label}"`,
           );
         }
-        orderedScores[originalIndex] = JudgeScore.fromRubric(
+        orderedScores[originalIndex] = buildJudgeScore(
           {
             accuracy: entry.accuracy,
             coherence: entry.coherence,

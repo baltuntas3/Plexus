@@ -11,25 +11,23 @@ export interface JudgeRubric {
   instruction: number;
 }
 
-export class JudgeScore {
-  constructor(
-    public readonly rubric: JudgeRubric,
-    public readonly finalScore: number,
-    public readonly reasoning: string,
-  ) {}
-
-  static fromRubric(
-    rubric: JudgeRubric,
-    reasoning: string,
-  ): JudgeScore {
-    assertInRange("accuracy", rubric.accuracy);
-    assertInRange("coherence", rubric.coherence);
-    assertInRange("instruction", rubric.instruction);
-
-    const mean = (rubric.accuracy + rubric.coherence + rubric.instruction) / 3;
-    return new JudgeScore(rubric, (mean - 1) / 4, reasoning);
-  }
+export interface JudgeScore {
+  rubric: JudgeRubric;
+  finalScore: number;
+  reasoning: string;
 }
+
+export const buildJudgeScore = (
+  rubric: JudgeRubric,
+  reasoning: string,
+): JudgeScore => {
+  assertInRange("accuracy", rubric.accuracy);
+  assertInRange("coherence", rubric.coherence);
+  assertInRange("instruction", rubric.instruction);
+
+  const mean = (rubric.accuracy + rubric.coherence + rubric.instruction) / 3;
+  return { rubric, finalScore: (mean - 1) / 4, reasoning };
+};
 
 const assertInRange = (field: string, value: number): void => {
   if (!Number.isFinite(value) || value < 1 || value > 5) {

@@ -10,12 +10,6 @@ describe("ModelRegistry", () => {
     expect(() => ModelRegistry.require("nonexistent-model")).toThrow(DomainError);
   });
 
-  it("byProvider filters groq models", () => {
-    const groq = ModelRegistry.byProvider("groq");
-    expect(groq.length).toBe(3);
-    expect(groq.every((m) => m.provider === "groq")).toBe(true);
-  });
-
   it("list returns all 3 groq models", () => {
     const all = ModelRegistry.list();
     expect(all.length).toBe(3);

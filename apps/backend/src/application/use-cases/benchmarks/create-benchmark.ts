@@ -14,8 +14,8 @@ import {
   pickJudgeModels,
 } from "../../services/model-registry.js";
 import {
-  TestCaseGenerator,
   buildEvaluationSpecFromVersions,
+  generateTestCases,
 } from "../../services/benchmark/test-case-generator.js";
 import {
   DEFAULT_BUDGET_USD,
@@ -109,8 +109,8 @@ export class CreateBenchmarkUseCase {
       seed,
       taskType,
     );
-    const generator = new TestCaseGenerator(this.providers);
-    const generated = await generator.generate(
+    const generated = await generateTestCases(
+      this.providers,
       spec,
       command.testCount,
       generatorModel,

@@ -3,7 +3,7 @@ import type {
   IAIProvider,
   IAIProviderFactory,
 } from "../../ai-provider.js";
-import { TestCaseGenerator } from "../test-case-generator.js";
+import { generateTestCases } from "../test-case-generator.js";
 
 class StubProvider implements IAIProvider {
   constructor(private readonly text: string) {}
@@ -21,71 +21,63 @@ const makeFactory = (text: string): IAIProviderFactory => ({
   forModel: () => new StubProvider(text),
 });
 
-describe("TestCaseGenerator", () => {
+describe("generateTestCases", () => {
   it("does not force full category coverage when realism calls for repetition", async () => {
-    const generator = new TestCaseGenerator(
-      makeFactory(
-        JSON.stringify({
-          testCases: Array.from({ length: 7 }, (_, i) => ({
-            input: `question ${i + 1}`,
-            category: "typical",
-          })),
-        }),
-      ),
+    const factory = makeFactory(
+      JSON.stringify({
+        testCases: Array.from({ length: 7 }, (_, i) => ({
+          input: `question ${i + 1}`,
+          category: "typical",
+        })),
+      }),
     );
 
     await expect(
-      generator.generate("system", 7, "openai/gpt-oss-20b", 123),
+      generateTestCases(factory, "system", 7, "openai/gpt-oss-20b", 123),
     ).resolves.toHaveLength(7);
   });
 
   it("does not enforce full category coverage when test count is smaller than the category set", async () => {
-    const generator = new TestCaseGenerator(
-      makeFactory(
-        JSON.stringify({
-          testCases: [
-            { input: "question 1", category: "typical" },
-            { input: "question 2", category: "typical" },
-            { input: "question 3", category: "complex" },
-          ],
-        }),
-      ),
+    const factory = makeFactory(
+      JSON.stringify({
+        testCases: [
+          { input: "question 1", category: "typical" },
+          { input: "question 2", category: "typical" },
+          { input: "question 3", category: "complex" },
+        ],
+      }),
     );
 
     await expect(
-      generator.generate("system", 3, "openai/gpt-oss-20b", 123),
+      generateTestCases(factory, "system", 3, "openai/gpt-oss-20b", 123),
     ).resolves.toHaveLength(3);
   });
 
   it("deduplicates test cases with identical normalised inputs", async () => {
-    const generator = new TestCaseGenerator(
-      makeFactory(
-        JSON.stringify({
-          testCases: [
-            { input: "What is AI?", category: "typical" },
-            { input: "  what is ai?  ", category: "complex" },
-            { input: "How does ML work?", category: "typical" },
-          ],
-        }),
-      ),
+    const factory = makeFactory(
+      JSON.stringify({
+        testCases: [
+          { input: "What is AI?", category: "typical" },
+          { input: "  what is ai?  ", category: "complex" },
+          { input: "How does ML work?", category: "typical" },
+        ],
+      }),
     );
 
     await expect(
-      generator.generate("system", 3, "openai/gpt-oss-20b", 123),
+      generateTestCases(factory, "system", 3, "openai/gpt-oss-20b", 123),
     ).rejects.toThrow(/2 unique cases, expected 3/);
   });
 
   it("still rejects runs where the generator returned the wrong number of cases", async () => {
-    const generator = new TestCaseGenerator(
-      makeFactory(
-        JSON.stringify({
-          testCases: [{ input: "only one", category: "typical" }],
-        }),
-      ),
+    const factory = makeFactory(
+      JSON.stringify({
+        testCases: [{ input: "only one", category: "typical" }],
+      }),
     );
 
     await expect(
-      generator.generate("system", 5, "openai/gpt-oss-20b", 123),
+      generateTestCases(factory, "system", 5, "openai/gpt-oss-20b", 123),
     ).rejects.toThrow(/expected 5/);
   });
 });

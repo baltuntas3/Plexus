@@ -29,7 +29,7 @@ export class BenchmarkController {
   list: RequestHandler = async (req: Request, res: Response) => {
     const { organizationId } = getAuthContext(req);
     const query = listBenchmarksQuerySchema.parse(req.query);
-    const result = await this.benchmarks.listBenchmarks.execute({
+    const result = await this.benchmarks.queries.listBenchmarkSummaries({
       ...query,
       organizationId,
     });

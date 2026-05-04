@@ -6,10 +6,6 @@ export class TokenCost {
     public readonly outputPricePerMillion: number,
   ) {}
 
-  static zero(): TokenCost {
-    return new TokenCost(0, 0, 0, 0);
-  }
-
   get inputCostUsd(): number {
     return (this.inputTokens / 1_000_000) * this.inputPricePerMillion;
   }
@@ -20,9 +16,5 @@ export class TokenCost {
 
   get totalUsd(): number {
     return this.inputCostUsd + this.outputCostUsd;
-  }
-
-  get totalCents(): number {
-    return this.totalUsd * 100;
   }
 }

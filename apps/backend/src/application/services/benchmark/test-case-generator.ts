@@ -238,54 +238,51 @@ const formatCategoryPlan = (count: number): string => {
   }).join("\n");
 };
 
-export class TestCaseGenerator {
-  constructor(private readonly providers: IAIProviderFactory) {}
+export const generateTestCases = async (
+  providers: IAIProviderFactory,
+  systemPrompt: string,
+  count: number,
+  model: string,
+  seed?: number,
+): Promise<GeneratedTestCase[]> => {
+  const provider = providers.forModel(model);
+  const basePrompt = buildGenerationPrompt(systemPrompt, count);
+  const baseMessages = [{ role: "user" as const, content: basePrompt }];
 
-  async generate(
-    systemPrompt: string,
-    count: number,
-    model: string,
-    seed?: number,
-  ): Promise<GeneratedTestCase[]> {
-    const provider = this.providers.forModel(model);
-    const basePrompt = buildGenerationPrompt(systemPrompt, count);
-    const baseMessages = [{ role: "user" as const, content: basePrompt }];
+  const firstResponse = await provider.generate({
+    model,
+    messages: baseMessages,
+    temperature: 0.8,
+    responseFormat: "json",
+    ...(seed !== undefined ? { seed } : {}),
+  });
 
-    const firstResponse = await provider.generate({
-      model,
-      messages: baseMessages,
-      temperature: 0.8,
-      responseFormat: "json",
-      ...(seed !== undefined ? { seed } : {}),
-    });
-
-    const firstParsed = tryParseTestCases(firstResponse.text);
-    if (firstParsed.ok) {
-      return finaliseTestCases(firstParsed.value, count);
-    }
-
-    // Retry once at temperature 0 with the same base prompt. Echoing the
-    // bad assistant turn back would roughly double input tokens (the
-    // base prompt is long: spec + category plan + examples), and JSON
-    // parse failures with `responseFormat: "json"` are almost always
-    // format-compliance noise rather than the model needing to "see"
-    // what it got wrong. T=0 collapses sampling variance, which is the
-    // cheap fix this case actually needs.
-    const retryResponse = await provider.generate({
-      model,
-      messages: baseMessages,
-      temperature: 0,
-      responseFormat: "json",
-      ...(seed !== undefined ? { seed } : {}),
-    });
-
-    const retryParsed = tryParseTestCases(retryResponse.text);
-    if (!retryParsed.ok) {
-      throw retryParsed.error;
-    }
-    return finaliseTestCases(retryParsed.value, count);
+  const firstParsed = tryParseTestCases(firstResponse.text);
+  if (firstParsed.ok) {
+    return finaliseTestCases(firstParsed.value, count);
   }
-}
+
+  // Retry once at temperature 0 with the same base prompt. Echoing the
+  // bad assistant turn back would roughly double input tokens (the
+  // base prompt is long: spec + category plan + examples), and JSON
+  // parse failures with `responseFormat: "json"` are almost always
+  // format-compliance noise rather than the model needing to "see"
+  // what it got wrong. T=0 collapses sampling variance, which is the
+  // cheap fix this case actually needs.
+  const retryResponse = await provider.generate({
+    model,
+    messages: baseMessages,
+    temperature: 0,
+    responseFormat: "json",
+    ...(seed !== undefined ? { seed } : {}),
+  });
+
+  const retryParsed = tryParseTestCases(retryResponse.text);
+  if (!retryParsed.ok) {
+    throw retryParsed.error;
+  }
+  return finaliseTestCases(retryParsed.value, count);
+};
 
 type RawTestCase = z.infer<typeof responseSchema>["testCases"][number];
 

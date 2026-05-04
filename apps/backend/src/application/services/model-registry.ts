@@ -59,12 +59,6 @@ export const ModelRegistry = {
     }
     return info;
   },
-  byProvider(provider: ProviderName): ModelInfo[] {
-    return MODELS.filter((m) => m.provider === provider);
-  },
-  byFamily(family: ModelFamily): ModelInfo[] {
-    return MODELS.filter((m) => m.family === family);
-  },
 };
 
 export const calculateCost = (

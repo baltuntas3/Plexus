@@ -8,18 +8,6 @@ describe("TokenCost", () => {
     expect(cost.totalUsd).toBeCloseTo(7.5);
   });
 
-  it("returns zero for empty cost", () => {
-    const zero = TokenCost.zero();
-    expect(zero.totalUsd).toBe(0);
-    expect(zero.inputTokens).toBe(0);
-    expect(zero.outputTokens).toBe(0);
-  });
-
-  it("totalCents is totalUsd * 100", () => {
-    const cost = new TokenCost(2_000_000, 0, 3, 0);
-    expect(cost.totalCents).toBeCloseTo(600);
-  });
-
   it("scales sub-million token counts proportionally", () => {
     const cost = new TokenCost(1_000, 1_000, 10, 20);
     expect(cost.inputCostUsd).toBeCloseTo(0.01);

@@ -1,8 +1,8 @@
-import { JudgeScore } from "../judge-score.js";
+import { buildJudgeScore } from "../judge-score.js";
 
-describe("JudgeScore.fromRubric", () => {
+describe("buildJudgeScore", () => {
   it("maps a perfect rubric to final score 1.0", () => {
-    const score = JudgeScore.fromRubric(
+    const score = buildJudgeScore(
       { accuracy: 5, coherence: 5, instruction: 5 },
       "flawless",
     );
@@ -10,7 +10,7 @@ describe("JudgeScore.fromRubric", () => {
   });
 
   it("maps a minimum rubric to final score 0", () => {
-    const score = JudgeScore.fromRubric(
+    const score = buildJudgeScore(
       { accuracy: 1, coherence: 1, instruction: 1 },
       "unusable",
     );
@@ -19,7 +19,7 @@ describe("JudgeScore.fromRubric", () => {
 
   it("computes final score as the normalised mean of the three axes", () => {
     // mean = (4 + 3 + 2)/3 = 3 → final = (3-1)/4 = 0.5
-    const score = JudgeScore.fromRubric(
+    const score = buildJudgeScore(
       { accuracy: 4, coherence: 3, instruction: 2 },
       "mixed",
     );
@@ -28,10 +28,10 @@ describe("JudgeScore.fromRubric", () => {
 
   it("rejects rubric values outside 1..5", () => {
     expect(() =>
-      JudgeScore.fromRubric({ accuracy: 6, coherence: 3, instruction: 3 }, "r"),
+      buildJudgeScore({ accuracy: 6, coherence: 3, instruction: 3 }, "r"),
     ).toThrow(RangeError);
     expect(() =>
-      JudgeScore.fromRubric({ accuracy: 0, coherence: 3, instruction: 3 }, "r"),
+      buildJudgeScore({ accuracy: 0, coherence: 3, instruction: 3 }, "r"),
     ).toThrow(RangeError);
   });
 });

@@ -2,12 +2,12 @@ import { BenchmarkRunner } from "../application/services/benchmark/benchmark-run
 import { registerBenchmarkJob } from "../application/services/benchmark/benchmark-job.js";
 import type { IAIProviderFactory } from "../application/services/ai-provider.js";
 import type { IJobQueue } from "../application/services/job-queue.js";
+import type { IBenchmarkQueryService } from "../application/queries/benchmark-query-service.js";
 import type { IPromptQueryService } from "../application/queries/prompt-query-service.js";
 import type { IIdGenerator } from "../domain/services/id-generator.js";
 import { CreateBenchmarkUseCase } from "../application/use-cases/benchmarks/create-benchmark.js";
 import { GetBenchmarkUseCase } from "../application/use-cases/benchmarks/get-benchmark.js";
 import { GetBenchmarkAnalysisUseCase } from "../application/use-cases/benchmarks/get-benchmark-analysis.js";
-import { ListBenchmarksUseCase } from "../application/use-cases/benchmarks/list-benchmarks.js";
 import { StartBenchmarkUseCase } from "../application/use-cases/benchmarks/start-benchmark.js";
 import { UpdateTestCasesUseCase } from "../application/use-cases/benchmarks/update-test-cases.js";
 import { MongoBenchmarkRepository } from "../infrastructure/persistence/mongoose/mongo-benchmark-repository.js";
@@ -18,7 +18,9 @@ import { MongoObjectIdGenerator } from "../infrastructure/persistence/mongoose/o
 export interface BenchmarkComposition {
   createBenchmark: CreateBenchmarkUseCase;
   startBenchmark: StartBenchmarkUseCase;
-  listBenchmarks: ListBenchmarksUseCase;
+  // List is read-only and adds no domain logic, so the controller goes
+  // straight to the query service rather than through a pass-through use case.
+  queries: IBenchmarkQueryService;
   getBenchmark: GetBenchmarkUseCase;
   getBenchmarkAnalysis: GetBenchmarkAnalysisUseCase;
   updateTestCases: UpdateTestCasesUseCase;
@@ -51,7 +53,7 @@ export const createBenchmarkComposition = (
       idGenerator,
     ),
     startBenchmark: new StartBenchmarkUseCase(benchmarks, promptQueries, queue),
-    listBenchmarks: new ListBenchmarksUseCase(queries),
+    queries,
     getBenchmark: new GetBenchmarkUseCase(benchmarks, results, promptQueries),
     getBenchmarkAnalysis: new GetBenchmarkAnalysisUseCase(benchmarks, results),
     updateTestCases: new UpdateTestCasesUseCase(

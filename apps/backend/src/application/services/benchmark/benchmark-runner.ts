@@ -15,7 +15,7 @@ import { buildBenchmarkMatrix, type MatrixCell } from "../../../domain/value-obj
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
-import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
+import { buildJudgeScore } from "../../../domain/value-objects/judge-score.js";
 import { fnv1a } from "../../utils/fnv1a.js";
 import { mapConcurrent } from "../../utils/map-concurrent.js";
 import { seededShuffle } from "../../utils/seeded-shuffle.js";
@@ -416,15 +416,29 @@ export class BenchmarkRunner {
             error: null,
           };
         } catch (err) {
-          const partial =
-            err instanceof JudgeExecutionError
-              ? buildPartialJudgeUsage(model, err)
-              : null;
-          // Distribute the partial usage equally across attempted
-          // candidates so per-row token/cost reflects what was spent.
-          const perCellPartial = partial
-            ? splitPartialEqually(partial, successful.length)
-            : null;
+          // Extract partial usage from a JudgeExecutionError (if any) and
+          // distribute it equally across attempted candidates so per-row
+          // token/cost reflects what was actually spent before the failure.
+          let perCellPartial:
+            | { inputTokens: number; outputTokens: number; costUsd: number }
+            | null = null;
+          if (err instanceof JudgeExecutionError && err.partial?.usage) {
+            const usage = err.partial.usage;
+            const judgeModel = err.partial.model ?? model;
+            const cost = calculateCost(
+              judgeModel,
+              usage.inputTokens,
+              usage.outputTokens,
+            );
+            const count = successful.length;
+            if (count > 0) {
+              perCellPartial = {
+                inputTokens: Math.floor(usage.inputTokens / count),
+                outputTokens: Math.floor(usage.outputTokens / count),
+                costUsd: cost.totalUsd / count,
+              };
+            }
+          }
           return {
             model,
             votes: successful.map(() => null),
@@ -499,7 +513,7 @@ export class BenchmarkRunner {
         const meanAccuracy = mean(votesForCell.map((v) => v.accuracy));
         const meanCoherence = mean(votesForCell.map((v) => v.coherence));
         const meanInstruction = mean(votesForCell.map((v) => v.instruction));
-        const score = JudgeScore.fromRubric(
+        const score = buildJudgeScore(
           {
             accuracy: meanAccuracy,
             coherence: meanCoherence,
@@ -635,33 +649,6 @@ const classifyFailureKind = (err: unknown): BenchmarkFailureKind => {
   if (err instanceof JudgeExecutionError) return "judge_error";
   if (err instanceof Error) return "unknown";
   return "unknown";
-};
-
-const buildPartialJudgeUsage = (
-  configuredModel: string,
-  err: JudgeExecutionError,
-): { inputTokens: number; outputTokens: number; costUsd: number } | null => {
-  const usage = err.partial?.usage;
-  const model = err.partial?.model ?? configuredModel;
-  if (!usage) return null;
-  const cost = calculateCost(model, usage.inputTokens, usage.outputTokens);
-  return {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    costUsd: cost.totalUsd,
-  };
-};
-
-const splitPartialEqually = (
-  partial: { inputTokens: number; outputTokens: number; costUsd: number },
-  count: number,
-): { inputTokens: number; outputTokens: number; costUsd: number } => {
-  if (count <= 0) return { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-  return {
-    inputTokens: Math.floor(partial.inputTokens / count),
-    outputTokens: Math.floor(partial.outputTokens / count),
-    costUsd: partial.costUsd / count,
-  };
 };
 
 const estimateCellCostUsd = (

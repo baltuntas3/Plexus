@@ -12,7 +12,7 @@ import type {
 } from "../../judge/judge.js";
 import { JudgeExecutionError } from "../../judge/judge.js";
 import type { JobContext } from "../../job-queue.js";
-import { JudgeScore } from "../../../../domain/value-objects/judge-score.js";
+import { buildJudgeScore, type JudgeScore } from "../../../../domain/value-objects/judge-score.js";
 import { InMemoryBenchmarkRepository } from "../../../../__tests__/fakes/in-memory-benchmark-repository.js";
 import { InMemoryBenchmarkResultRepository } from "../../../../__tests__/fakes/in-memory-benchmark-result-repository.js";
 import { InMemoryPromptQueryService } from "../../../../__tests__/fakes/in-memory-prompt-query-service.js";
@@ -164,7 +164,7 @@ class StubJudge implements IJudge {
     this.batchSizes.push(input.candidates.length);
     return {
       scores: input.candidates.map(() =>
-        JudgeScore.fromRubric(this.score, "stub reasoning"),
+        buildJudgeScore(this.score, "stub reasoning"),
       ),
       usage: {
         inputTokens: 20 * input.candidates.length,
@@ -487,7 +487,7 @@ describe("BenchmarkRunner.run", () => {
     const judge: IJudge = judgeFromPerCandidate(async (input) => {
       gradeCalls.push({ reference: input.reference });
       return {
-        score: JudgeScore.fromRubric({ accuracy: 5, coherence: 5, instruction: 5 }, "ok"),
+        score: buildJudgeScore({ accuracy: 5, coherence: 5, instruction: 5 }, "ok"),
         usage: { inputTokens: 10, outputTokens: 5 },
         model: "openai/gpt-oss-20b",
       };
@@ -561,7 +561,7 @@ describe("BenchmarkRunner.run", () => {
             });
           }
           return {
-            score: JudgeScore.fromRubric(
+            score: buildJudgeScore(
               { accuracy: 5, coherence: 4, instruction: 4 },
               "ok",
             ),

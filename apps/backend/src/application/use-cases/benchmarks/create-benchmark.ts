@@ -18,13 +18,13 @@ import {
   buildEvaluationSpecFromVersions,
 } from "../../services/benchmark/test-case-generator.js";
 import {
-  BenchmarkCostEstimator,
   DEFAULT_BUDGET_USD,
   STUB_AVG_INPUT_TOKENS,
   averageTokenCount,
+  estimateBenchmarkCost,
 } from "../../services/benchmark/benchmark-cost-estimator.js";
 import type { IAIProviderFactory } from "../../services/ai-provider.js";
-import { BenchmarkSeed } from "../../../domain/value-objects/benchmark-seed.js";
+import { randomBenchmarkSeed } from "../../../domain/value-objects/benchmark-seed.js";
 
 // Creates a benchmark in "draft" status. Test cases are generated up-front
 // so the user can review and optionally annotate them with expected outputs
@@ -52,8 +52,6 @@ export interface CreateBenchmarkResult {
 }
 
 export class CreateBenchmarkUseCase {
-  private readonly costEstimator = new BenchmarkCostEstimator();
-
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly promptQueries: IPromptQueryService,
@@ -78,7 +76,7 @@ export class CreateBenchmarkUseCase {
     );
     const testGenerationMode =
       resolvedVersions.length > 1 ? "hybrid" : "shared-core";
-    const seed = BenchmarkSeed.random().toNumber();
+    const seed = randomBenchmarkSeed();
     const taskType = await this.resolveTaskType(
       resolvedVersions,
       command.organizationId,
@@ -91,7 +89,7 @@ export class CreateBenchmarkUseCase {
     // not-yet-generated user inputs, BEFORE we spend an LLM call on test
     // generation. Configs whose model/test-count/repetitions combination
     // alone blows the budget never reach the generator.
-    const preFlightForecast = this.costEstimator.estimate({
+    const preFlightForecast = estimateBenchmarkCost({
       versions: resolvedVersions,
       testCount: command.testCount,
       avgInputTokens: STUB_AVG_INPUT_TOKENS,
@@ -123,7 +121,7 @@ export class CreateBenchmarkUseCase {
     // stored cost estimate reflects what the run will actually cost. Also
     // re-checks the budget gate in case the generator produced unusually
     // long inputs that the stub under-estimated.
-    const costForecast = this.costEstimator.estimate({
+    const costForecast = estimateBenchmarkCost({
       versions: resolvedVersions,
       testCount: generated.length,
       avgInputTokens: averageTokenCount(generated.map((tc) => tc.input)),

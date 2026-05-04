@@ -11,11 +11,12 @@ import {
 } from "../../../domain/entities/benchmark-result.js";
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import { NotFoundError } from "../../../domain/errors/domain-error.js";
-import { BenchmarkMatrix, type MatrixCell } from "../../../domain/value-objects/benchmark-matrix.js";
+import { buildBenchmarkMatrix, type MatrixCell } from "../../../domain/value-objects/benchmark-matrix.js";
 import type { IBenchmarkRepository } from "../../../domain/repositories/benchmark-repository.js";
 import type { IBenchmarkResultRepository } from "../../../domain/repositories/benchmark-result-repository.js";
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { JudgeScore } from "../../../domain/value-objects/judge-score.js";
+import { fnv1a } from "../../utils/fnv1a.js";
 import { mapConcurrent } from "../../utils/map-concurrent.js";
 import { seededShuffle } from "../../utils/seeded-shuffle.js";
 import { mean } from "../../utils/statistics.js";
@@ -112,14 +113,12 @@ export class BenchmarkRunner {
         [...benchmark.promptVersionIds],
         benchmark.organizationId,
       );
-      const matrix = BenchmarkMatrix.build({
+      const cells = buildBenchmarkMatrix({
         testCases: benchmark.testCases,
         versions,
         solverModels: [...benchmark.solverModels],
         repetitions: benchmark.repetitions,
       });
-
-      const cells = [...matrix.cells];
       const estimatedCellCostUsd = estimateCellCostUsd(benchmark, cells.length);
       const existingRows = await this.deps.results.listByBenchmark(benchmarkId);
       const existingByKey = new Map(
@@ -726,21 +725,16 @@ const bucketByTestCase = (
   return seededShuffle(shuffledBuckets, outerSeed);
 };
 
-// Deterministic 32-bit FNV-1a derivation: positive int seed reproducible
-// from (benchmarkSeed, namespacing string).
+// Mask to 31 bits so derived seeds satisfy the BenchmarkSeed contract
+// ([0, 2^31)) — that's the same range the runner's downstream PRNG callers
+// expect. Domain choices:
 //   - solver path passes the cell coordinates so each rep gets a distinct
 //     sampling seed.
 //   - batch-judge path passes (triple, judgeModel) so the judge sees a
 //     deterministic label permutation that is fixed across the triple's
 //     reps but distinct per (triple, judgeModel).
-const fnvSeed = (benchmarkSeed: number, str: string): number => {
-  let h = benchmarkSeed >>> 0;
-  for (let i = 0; i < str.length; i += 1) {
-    h = (h ^ str.charCodeAt(i)) >>> 0;
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h & 0x7fffffff;
-};
+const fnvSeed = (benchmarkSeed: number, str: string): number =>
+  fnv1a(benchmarkSeed, str) & 0x7fffffff;
 
 const deriveSolverSeed = (benchmarkSeed: number, cell: MatrixCell): number =>
   fnvSeed(

@@ -36,7 +36,8 @@ import type {
   JudgeVote,
 } from "../../../domain/entities/benchmark-result.js";
 import type { BenchmarkTestCase } from "../../../domain/entities/benchmark.js";
-import { PPD } from "../../../domain/value-objects/ppd.js";
+import { computePPD } from "../../../domain/value-objects/ppd.js";
+import { fnv1a } from "../../utils/fnv1a.js";
 import { mean } from "../../utils/statistics.js";
 
 const BOOTSTRAP_SAMPLES = 10_000;
@@ -363,14 +364,14 @@ const pickBaseline = (
   return eligible.sort((a, b) => b.totalCostUsd - a.totalCostUsd)[0] ?? null;
 };
 
-const computePPD = (
+const buildPPDRows = (
   candidates: readonly CandidateStats[],
   baseline: CandidateStats,
 ): PPDRow[] =>
   candidates
     .filter(isReliableForComparativeViews)
     .map((c) => {
-      const score = PPD.compute(
+      const score = computePPD(
         { accuracy: c.meanFinalScore, costUsd: c.totalCostUsd },
         { accuracy: baseline.meanFinalScore, costUsd: baseline.totalCostUsd },
       );
@@ -747,7 +748,7 @@ export const computeAnalysis = (
 
   const ppd =
     baseline && baseline.totalCostUsd > 0 && baseline.meanFinalScore > 0
-      ? computePPD(comparableCandidates, baseline)
+      ? buildPPDRows(comparableCandidates, baseline)
       : [];
 
   return {
@@ -952,7 +953,7 @@ const pairedDifferenceCI = (
     0,
   );
   if (totalDiffs < 2) return null;
-  const rng = mulberry32(hashString(sharedKeys.join("|")));
+  const rng = mulberry32(fnv1a(BOOTSTRAP_SEED, sharedKeys.join("|")));
   return clusterBootstrapCI([...diffsByTestCase.values()], rng);
 };
 
@@ -1124,11 +1125,3 @@ const mulberry32 = (seed: number): (() => number) => {
   };
 };
 
-const hashString = (value: string): number => {
-  let h = BOOTSTRAP_SEED >>> 0;
-  for (let i = 0; i < value.length; i += 1) {
-    h = (h ^ value.charCodeAt(i)) >>> 0;
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h >>> 0;
-};

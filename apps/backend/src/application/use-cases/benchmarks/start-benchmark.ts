@@ -7,9 +7,9 @@ import {
   type BenchmarkJobPayload,
 } from "../../services/benchmark/benchmark-job.js";
 import {
-  BenchmarkCostEstimator,
   DEFAULT_BUDGET_USD,
   averageTokenCount,
+  estimateBenchmarkCost,
 } from "../../services/benchmark/benchmark-cost-estimator.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
@@ -30,8 +30,6 @@ export interface StartBenchmarkResult {
 // running" transitions. The runner is idempotent on already-completed cells.
 
 export class StartBenchmarkUseCase {
-  private readonly costEstimator = new BenchmarkCostEstimator();
-
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly promptQueries: IPromptQueryService,
@@ -56,7 +54,7 @@ export class StartBenchmarkUseCase {
     }
     const versions = benchmark.promptVersionIds.map((id) => versionsById.get(id)!);
     const inputs = benchmark.testCases.map((testCase) => testCase.input);
-    const costForecast = this.costEstimator.estimate({
+    const costForecast = estimateBenchmarkCost({
       versions,
       testCount: inputs.length,
       avgInputTokens: averageTokenCount(inputs),

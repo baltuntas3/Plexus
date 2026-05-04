@@ -56,86 +56,86 @@ export interface BenchmarkCostEstimatorInput {
   repetitions: number;
 }
 
-export class BenchmarkCostEstimator {
-  estimate(input: BenchmarkCostEstimatorInput): BenchmarkCostForecast {
-    const versionPrompts = input.versions.map((v) => v.executablePrompt);
-    const avgSystemPromptTokens = mean(versionPrompts.map(estimateTokenCount));
-    const avgUserInputTokens = input.avgInputTokens;
-    const avgCandidateOutputTokens = Math.max(
-      64,
-      Math.round(avgUserInputTokens * 1.6),
+export const estimateBenchmarkCost = (
+  input: BenchmarkCostEstimatorInput,
+): BenchmarkCostForecast => {
+  const versionPrompts = input.versions.map((v) => v.executablePrompt);
+  const avgSystemPromptTokens = mean(versionPrompts.map(estimateTokenCount));
+  const avgUserInputTokens = input.avgInputTokens;
+  const avgCandidateOutputTokens = Math.max(
+    64,
+    Math.round(avgUserInputTokens * 1.6),
+  );
+  const estimatedMatrixCells =
+    input.testCount *
+    input.versions.length *
+    input.solverModels.length *
+    input.repetitions;
+
+  let estimatedCandidateCostUsd = 0;
+  for (const solverModel of input.solverModels) {
+    const perCell = calculateCost(
+      solverModel,
+      Math.round(avgSystemPromptTokens + avgUserInputTokens),
+      avgCandidateOutputTokens,
     );
-    const estimatedMatrixCells =
+    estimatedCandidateCostUsd +=
+      perCell.totalUsd *
       input.testCount *
       input.versions.length *
-      input.solverModels.length *
       input.repetitions;
-
-    let estimatedCandidateCostUsd = 0;
-    for (const solverModel of input.solverModels) {
-      const perCell = calculateCost(
-        solverModel,
-        Math.round(avgSystemPromptTokens + avgUserInputTokens),
-        avgCandidateOutputTokens,
-      );
-      estimatedCandidateCostUsd +=
-        perCell.totalUsd *
-        input.testCount *
-        input.versions.length *
-        input.repetitions;
-    }
-
-    // Batched judging: the runner issues ONE call per
-    // (testCase × version × solver × judgeModel). All `repetitions`
-    // candidate outputs of that triple share the call's static prompt
-    // (judge system prompt + system_prompt_under_evaluation + input +
-    // reference) and only the per-attempt wrapping plus the candidate
-    // body scale with `repetitions`. The output scales linearly because
-    // the judge writes one rubric entry per ATTEMPT label.
-    const judgeCallsPerJudgeModel =
-      input.testCount * input.versions.length * input.solverModels.length;
-    const judgeFixedInputTokens = Math.round(
-      JUDGE_PROMPT_OVERHEAD_TOKENS +
-        avgSystemPromptTokens +
-        avgUserInputTokens,
-    );
-    const judgePerAttemptInputTokens =
-      avgCandidateOutputTokens + ATTEMPT_WRAPPER_TOKENS;
-    const judgeInputTokensPerCall =
-      judgeFixedInputTokens + judgePerAttemptInputTokens * input.repetitions;
-    const judgeOutputTokensPerCall =
-      JUDGE_OUTPUT_TOKENS_PER_CANDIDATE * input.repetitions;
-
-    let estimatedJudgeCostUsd = 0;
-    for (const judgeModel of input.judgeModels) {
-      const perCall = calculateCost(
-        judgeModel,
-        judgeInputTokensPerCall,
-        judgeOutputTokensPerCall,
-      );
-      estimatedJudgeCostUsd += perCall.totalUsd * judgeCallsPerJudgeModel;
-    }
-
-    const totalJudgeCalls =
-      judgeCallsPerJudgeModel * input.judgeModels.length;
-
-    return {
-      estimatedMatrixCells,
-      estimatedCandidateInputTokens: Math.round(
-        (avgSystemPromptTokens + avgUserInputTokens) * estimatedMatrixCells,
-      ),
-      estimatedCandidateOutputTokens:
-        avgCandidateOutputTokens * estimatedMatrixCells,
-      estimatedJudgeInputTokens:
-        judgeInputTokensPerCall * totalJudgeCalls,
-      estimatedJudgeOutputTokens:
-        judgeOutputTokensPerCall * totalJudgeCalls,
-      estimatedCandidateCostUsd,
-      estimatedJudgeCostUsd,
-      estimatedTotalCostUsd: estimatedCandidateCostUsd + estimatedJudgeCostUsd,
-    };
   }
-}
+
+  // Batched judging: the runner issues ONE call per
+  // (testCase × version × solver × judgeModel). All `repetitions`
+  // candidate outputs of that triple share the call's static prompt
+  // (judge system prompt + system_prompt_under_evaluation + input +
+  // reference) and only the per-attempt wrapping plus the candidate
+  // body scale with `repetitions`. The output scales linearly because
+  // the judge writes one rubric entry per ATTEMPT label.
+  const judgeCallsPerJudgeModel =
+    input.testCount * input.versions.length * input.solverModels.length;
+  const judgeFixedInputTokens = Math.round(
+    JUDGE_PROMPT_OVERHEAD_TOKENS +
+      avgSystemPromptTokens +
+      avgUserInputTokens,
+  );
+  const judgePerAttemptInputTokens =
+    avgCandidateOutputTokens + ATTEMPT_WRAPPER_TOKENS;
+  const judgeInputTokensPerCall =
+    judgeFixedInputTokens + judgePerAttemptInputTokens * input.repetitions;
+  const judgeOutputTokensPerCall =
+    JUDGE_OUTPUT_TOKENS_PER_CANDIDATE * input.repetitions;
+
+  let estimatedJudgeCostUsd = 0;
+  for (const judgeModel of input.judgeModels) {
+    const perCall = calculateCost(
+      judgeModel,
+      judgeInputTokensPerCall,
+      judgeOutputTokensPerCall,
+    );
+    estimatedJudgeCostUsd += perCall.totalUsd * judgeCallsPerJudgeModel;
+  }
+
+  const totalJudgeCalls =
+    judgeCallsPerJudgeModel * input.judgeModels.length;
+
+  return {
+    estimatedMatrixCells,
+    estimatedCandidateInputTokens: Math.round(
+      (avgSystemPromptTokens + avgUserInputTokens) * estimatedMatrixCells,
+    ),
+    estimatedCandidateOutputTokens:
+      avgCandidateOutputTokens * estimatedMatrixCells,
+    estimatedJudgeInputTokens:
+      judgeInputTokensPerCall * totalJudgeCalls,
+    estimatedJudgeOutputTokens:
+      judgeOutputTokensPerCall * totalJudgeCalls,
+    estimatedCandidateCostUsd,
+    estimatedJudgeCostUsd,
+    estimatedTotalCostUsd: estimatedCandidateCostUsd + estimatedJudgeCostUsd,
+  };
+};
 
 // Empirical average token count helper for callers that already have real
 // inputs (start-benchmark, update-test-cases). The token counter matches

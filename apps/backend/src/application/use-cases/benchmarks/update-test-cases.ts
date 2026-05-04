@@ -4,8 +4,8 @@ import type { IIdGenerator } from "../../../domain/services/id-generator.js";
 import type { IPromptQueryService } from "../../queries/prompt-query-service.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import {
-  BenchmarkCostEstimator,
   averageTokenCount,
+  estimateBenchmarkCost,
 } from "../../services/benchmark/benchmark-cost-estimator.js";
 import { ensureBenchmarkAccess } from "./ensure-benchmark-access.js";
 
@@ -29,8 +29,6 @@ export interface UpdateTestCasesCommand {
 // add new cases while the benchmark is still in draft. The "draft only"
 // invariant lives on the aggregate now; this use case only orchestrates.
 export class UpdateTestCasesUseCase {
-  private readonly costEstimator = new BenchmarkCostEstimator();
-
   constructor(
     private readonly benchmarks: IBenchmarkRepository,
     private readonly promptQueries: IPromptQueryService,
@@ -62,7 +60,7 @@ export class UpdateTestCasesUseCase {
       throw ValidationError(`PromptVersion(s) not found: ${missing.join(", ")}`);
     }
     const inputs = benchmark.testCases.map((testCase) => testCase.input);
-    const costForecast = this.costEstimator.estimate({
+    const costForecast = estimateBenchmarkCost({
       versions: benchmark.promptVersionIds.map((id) => versionsById.get(id)!),
       testCount: inputs.length,
       avgInputTokens: averageTokenCount(inputs),

@@ -7,7 +7,7 @@ import {
   BenchmarkNotInDraftError,
   ValidationError,
 } from "../errors/domain-error.js";
-import { BenchmarkSeed } from "../value-objects/benchmark-seed.js";
+import { assertBenchmarkSeed } from "../value-objects/benchmark-seed.js";
 
 // Forecast of the total USD + token cost a benchmark run is expected to
 // incur, given its configuration (versions × solvers × judges × reps × test
@@ -152,7 +152,7 @@ export class Benchmark {
     // Run the VOs for their side-effect: they throw on invalid input and
     // keep the creation boundary consistent without us having to rewrite
     // the same check in every caller.
-    BenchmarkSeed.of(params.seed);
+    assertBenchmarkSeed(params.seed);
     if (params.budgetUsd !== null) {
       // Budget cap of `null` opts out; any explicit number must be a positive
       // finite USD amount. Zero is rejected so "how much can we spend?" stays

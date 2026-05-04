@@ -39,7 +39,13 @@ import { randomBenchmarkSeed } from "../../../domain/value-objects/benchmark-see
 const DEFAULT_GENERATOR_MODEL = "openai/gpt-oss-120b";
 const DEFAULT_JUDGE_COUNT = 2;
 const DEFAULT_REPETITIONS = 3;
-const DEFAULT_CONCURRENCY = 4;
+// Triple-level outer concurrency (how many (testCase × version × solver)
+// triples are in flight at once). The runner additionally bounds within-
+// triple solver parallelism and serializes judges, so peak simultaneous
+// LLM calls = `DEFAULT_CONCURRENCY × INNER_SOLVER_CONCURRENCY`. Two is
+// the right ceiling for free/dev tier rate limits (e.g. Groq's 8k TPM
+// on `openai/gpt-oss-20b`); raising it requires a paid tier.
+const DEFAULT_CONCURRENCY = 2;
 
 export type CreateBenchmarkCommand = CreateBenchmarkDto & {
   organizationId: string;

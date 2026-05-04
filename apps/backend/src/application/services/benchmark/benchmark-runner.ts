@@ -66,6 +66,15 @@ const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 // repetitions doing what they're for: capturing sampling variance.
 const SOLVER_TEMPERATURE = 0.7;
 
+// Within-triple solver fan-out cap. A triple holds `repetitions` cells
+// (same testCase × version × solver, different runIndex). Without a
+// bound, `repetitions=10` would fire 10 simultaneous solver calls inside
+// each in-flight triple, multiplying with the outer triple-level
+// concurrency to easily blow per-model TPM caps. Two keeps the cells
+// pipelined enough to amortize provider latency without saturating the
+// rate-limit window.
+const INNER_SOLVER_CONCURRENCY = 2;
+
 interface Triple {
   testCaseId: string;
   versionId: string;
@@ -304,6 +313,9 @@ export class BenchmarkRunner {
 
     // Solver phase — one call per rep. Failures are captured as per-rep
     // failed rows; successful candidates feed the batched judge phase.
+    // Bounded by `INNER_SOLVER_CONCURRENCY` so a high-repetition triple
+    // does not fan out its reps simultaneously and trip per-model TPM
+    // caps when stacked with the outer triple-level concurrency.
     interface SolverOutcome {
       cell: MatrixCell;
       candidate: GenerateResponse | null;
@@ -311,8 +323,10 @@ export class BenchmarkRunner {
       latencyMs: number;
       error: unknown | null;
     }
-    const solverOutcomes: SolverOutcome[] = await Promise.all(
-      triple.cells.map(async (cell) => {
+    const solverOutcomes: SolverOutcome[] = await mapConcurrent(
+      triple.cells,
+      INNER_SOLVER_CONCURRENCY,
+      async (cell) => {
         const solverSeed = deriveSolverSeed(benchmark.seed, cell);
         const start = Date.now();
         try {
@@ -346,7 +360,7 @@ export class BenchmarkRunner {
             error: err,
           };
         }
-      }),
+      },
     );
 
     const successful = solverOutcomes.filter(
@@ -370,6 +384,12 @@ export class BenchmarkRunner {
 
     // Judge phase — one batched call per judge model, scoring all
     // successful candidates of THIS triple in a single LLM round-trip.
+    // Sequential across judges (not Promise.all): the outer triple-level
+    // concurrency already runs multiple triples in parallel, and judges
+    // typically share the same provider with the solver, so fanning out
+    // ensemble calls within a single triple multiplies per-model TPM
+    // pressure for no real wall-clock win — each judge call is its own
+    // round-trip and the next judge can start the moment this one returns.
     interface JudgeOutcome {
       model: string;
       // Per-candidate vote, aligned with `successful` order.
@@ -378,73 +398,67 @@ export class BenchmarkRunner {
       error: unknown | null;
     }
 
-    const judgeOutcomes: JudgeOutcome[] = await Promise.all(
-      judges.map(async ({ model, judge }) => {
-        try {
-          const graded: BatchJudgeResult = await judge.gradeBatch({
-            input: firstCell.testCase.input,
-            candidates: successful.map((s) => s.candidate.text),
-            seed: deriveBatchJudgeSeed(benchmark.seed, triple, model),
-            reference: firstCell.testCase.expectedOutput ?? undefined,
-            systemPrompt,
-          });
-          // Equal usage attribution across the batched candidates — the
-          // judge prompt is shared, so per-candidate "true" cost is not
-          // recoverable. Equal split keeps PPD honest by giving each row
-          // an identical denominator contribution.
-          const n = successful.length;
-          const inputPer = Math.floor(graded.usage.inputTokens / n);
-          const outputPer = Math.floor(graded.usage.outputTokens / n);
-          const perCellCost = calculateCost(graded.model, inputPer, outputPer);
-          const votes: JudgeVote[] = graded.scores.map((score) => ({
-            model,
-            accuracy: score.rubric.accuracy,
-            coherence: score.rubric.coherence,
-            instruction: score.rubric.instruction,
-            reasoning: score.reasoning,
-            inputTokens: inputPer,
-            outputTokens: outputPer,
-            costUsd: perCellCost.totalUsd,
-          }));
-          return {
-            model,
-            votes,
-            partial: null,
-            error: null,
-          };
-        } catch (err) {
-          // Extract partial usage from a JudgeExecutionError (if any) and
-          // distribute it equally across attempted candidates so per-row
-          // token/cost reflects what was actually spent before the failure.
-          let perCellPartial:
-            | { inputTokens: number; outputTokens: number; costUsd: number }
-            | null = null;
-          if (err instanceof JudgeExecutionError && err.partial?.usage) {
-            const usage = err.partial.usage;
-            const judgeModel = err.partial.model ?? model;
-            const cost = calculateCost(
-              judgeModel,
-              usage.inputTokens,
-              usage.outputTokens,
-            );
-            const count = successful.length;
-            if (count > 0) {
-              perCellPartial = {
-                inputTokens: Math.floor(usage.inputTokens / count),
-                outputTokens: Math.floor(usage.outputTokens / count),
-                costUsd: cost.totalUsd / count,
-              };
-            }
+    const judgeOutcomes: JudgeOutcome[] = [];
+    for (const { model, judge } of judges) {
+      try {
+        const graded: BatchJudgeResult = await judge.gradeBatch({
+          input: firstCell.testCase.input,
+          candidates: successful.map((s) => s.candidate.text),
+          seed: deriveBatchJudgeSeed(benchmark.seed, triple, model),
+          reference: firstCell.testCase.expectedOutput ?? undefined,
+          systemPrompt,
+        });
+        // Equal usage attribution across the batched candidates — the
+        // judge prompt is shared, so per-candidate "true" cost is not
+        // recoverable. Equal split keeps PPD honest by giving each row
+        // an identical denominator contribution.
+        const n = successful.length;
+        const inputPer = Math.floor(graded.usage.inputTokens / n);
+        const outputPer = Math.floor(graded.usage.outputTokens / n);
+        const perCellCost = calculateCost(graded.model, inputPer, outputPer);
+        const votes: JudgeVote[] = graded.scores.map((score) => ({
+          model,
+          accuracy: score.rubric.accuracy,
+          coherence: score.rubric.coherence,
+          instruction: score.rubric.instruction,
+          reasoning: score.reasoning,
+          inputTokens: inputPer,
+          outputTokens: outputPer,
+          costUsd: perCellCost.totalUsd,
+        }));
+        judgeOutcomes.push({ model, votes, partial: null, error: null });
+      } catch (err) {
+        // Extract partial usage from a JudgeExecutionError (if any) and
+        // distribute it equally across attempted candidates so per-row
+        // token/cost reflects what was actually spent before the failure.
+        let perCellPartial:
+          | { inputTokens: number; outputTokens: number; costUsd: number }
+          | null = null;
+        if (err instanceof JudgeExecutionError && err.partial?.usage) {
+          const usage = err.partial.usage;
+          const judgeModel = err.partial.model ?? model;
+          const cost = calculateCost(
+            judgeModel,
+            usage.inputTokens,
+            usage.outputTokens,
+          );
+          const count = successful.length;
+          if (count > 0) {
+            perCellPartial = {
+              inputTokens: Math.floor(usage.inputTokens / count),
+              outputTokens: Math.floor(usage.outputTokens / count),
+              costUsd: cost.totalUsd / count,
+            };
           }
-          return {
-            model,
-            votes: successful.map(() => null),
-            partial: perCellPartial,
-            error: err,
-          };
         }
-      }),
-    );
+        judgeOutcomes.push({
+          model,
+          votes: successful.map(() => null),
+          partial: perCellPartial,
+          error: err,
+        });
+      }
+    }
 
     // Stitch per-cell rows from solver outcome + per-judge votes.
     const successfulRows: UpsertableBenchmarkResult[] = successful.map(

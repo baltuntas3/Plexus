@@ -1,5 +1,8 @@
 import OpenAI from "openai";
-import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions.js";
+import type {
+  ChatCompletion,
+  ChatCompletionCreateParamsNonStreaming,
+} from "openai/resources/chat/completions.js";
 import type {
   ChatMessage,
   GenerateRequest,
@@ -9,6 +12,48 @@ import type {
 
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.6;
+
+// Rate-limit retry policy. Groq returns 429 with a "Please try again in Xs"
+// body whenever a request would push the per-model TPM bucket over its cap;
+// honouring that wait and reissuing is the cheapest correct fix and keeps
+// long benchmarks from failing on transient throughput pressure. Retries
+// only on rate-limit; other 4xx/5xx errors propagate immediately.
+const MAX_RATE_LIMIT_RETRIES = 3;
+// Floor for the backoff so a parsed wait of e.g. "0.05s" doesn't immediately
+// retry into the same window. Also serves as the base for the exponential
+// fallback when the body offers no explicit wait.
+const MIN_RATE_LIMIT_BACKOFF_MS = 500;
+// Small safety pad on top of any parsed wait — Groq's "try again in Xs"
+// is computed at the moment of rejection and has microsecond drift before
+// our setTimeout fires.
+const RATE_LIMIT_WAIT_BUFFER_MS = 200;
+const RETRY_AFTER_BODY_PATTERN = /try again in ([\d.]+)\s*s/i;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const parseRateLimitWaitMs = (err: unknown): number | null => {
+  if (!(err instanceof OpenAI.APIError) || err.status !== 429) return null;
+  // Prefer the body-level "Please try again in X.Xs" — Groq's bucket math
+  // produces a tighter estimate than the Retry-After header in practice.
+  const message = typeof err.message === "string" ? err.message : "";
+  const bodyMatch = message.match(RETRY_AFTER_BODY_PATTERN);
+  if (bodyMatch) {
+    const seconds = parseFloat(bodyMatch[1] as string);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.ceil(seconds * 1000) + RATE_LIMIT_WAIT_BUFFER_MS;
+    }
+  }
+  // Fall back to Retry-After (in seconds, per HTTP spec).
+  const headerValue = err.headers?.["retry-after"];
+  if (typeof headerValue === "string") {
+    const seconds = parseFloat(headerValue);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.ceil(seconds * 1000) + RATE_LIMIT_WAIT_BUFFER_MS;
+    }
+  }
+  return null;
+};
 
 // Groq quirks we normalize inside this adapter:
 //
@@ -49,7 +94,7 @@ export class GroqProvider implements IAIProvider {
       groqExtensionsFor(request.model),
     );
 
-    const completion = await this.client.chat.completions.create(paramsWithExtras);
+    const completion = await this.callWithRateLimitRetry(paramsWithExtras);
     const choice = completion.choices[0];
     const text = choice?.message?.content ?? "";
 
@@ -61,6 +106,32 @@ export class GroqProvider implements IAIProvider {
       },
       model: completion.model,
     };
+  }
+
+  // Reissues a Groq call on 429 by parsing the provider's "try again in Xs"
+  // hint (or Retry-After header) and sleeping that long, falling back to an
+  // exponential backoff if neither is parseable. Capped at
+  // MAX_RATE_LIMIT_RETRIES retries; non-429 errors are not retried.
+  private async callWithRateLimitRetry(
+    params: ChatCompletionCreateParamsNonStreaming,
+  ): Promise<ChatCompletion> {
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await this.client.chat.completions.create(params);
+      } catch (err) {
+        const parsedWait = parseRateLimitWaitMs(err);
+        if (parsedWait === null) throw err;
+        attempt += 1;
+        if (attempt > MAX_RATE_LIMIT_RETRIES) throw err;
+        // Floor the wait so we never retry into the same TPM window; if the
+        // provider's hint is shorter than the floor (or missing entirely),
+        // the exponential fallback keeps us out of a busy-loop.
+        const exponentialFallback =
+          MIN_RATE_LIMIT_BACKOFF_MS * Math.pow(2, attempt - 1);
+        await sleep(Math.max(parsedWait, exponentialFallback));
+      }
+    }
   }
 }
 

@@ -16,6 +16,7 @@
 
 import type { IAIProvider } from "../ai-provider.js";
 import type { BraidChatTurn, TaskType } from "@plexus/shared-types";
+import { buildCompactBraidRulesPrompt } from "./braid-rules-prompt.js";
 
 type ChatOutputType = "diagram" | "question";
 
@@ -42,19 +43,7 @@ interface ChatInput {
   history?: BraidChatTurn[];
 }
 
-// Condensed BRAID rules for the interactive prompt. The full rules live in
-// enhanced-generation-prompt.ts; this variant is trimmed for token efficiency
-// while preserving all 7 constraints that the linter will check.
-const BRAID_RULES = `BRAID graph rules (MANDATORY — the linter will check all of these):
-1. NODE ATOMICITY: Each node = one discrete reasoning step, ≤15 tokens. No dense multi-action nodes.
-2. NO ANSWER LEAKAGE: Nodes encode the PLAN, never the literal output text.
-3. DETERMINISTIC BRANCHING: Every fork uses a diamond node {Question?} with labeled edges on every branch.
-4. MUTUAL EXCLUSIVITY: Branch conditions from the same node must be mutually exclusive and exhaustive.
-5. TERMINAL VERIFICATION LOOPS (most important): Every terminal node must start with Check/Verify/Validate/Assert/Critic. At least one Check node must have a fail→revise→Check back-loop. Terminals like "End", "Done", "Output" are forbidden.
-6. DAG STRUCTURE: The graph is a DAG except for the critic-revision loops required by rule 5.
-7. REACHABILITY: Every node must be reachable from the root. No orphan nodes.
-
-Mermaid syntax: start with "flowchart TD;" — use A[label] for actions, A{label?} for decisions, end each line with semicolon.`;
+const BRAID_RULES = buildCompactBraidRulesPrompt();
 
 const RESPONSE_FORMAT = `Respond ONLY with a valid JSON object — one of these two shapes:
 

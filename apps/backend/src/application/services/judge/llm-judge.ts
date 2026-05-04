@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { TaskType } from "@plexus/shared-types";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import { buildJudgeScore, type JudgeScore } from "../../../domain/value-objects/judge-score.js";
+import { extractJsonObject } from "../../utils/extract-json-object.js";
 import type { IAIProviderFactory } from "../ai-provider.js";
 import {
   JudgeExecutionError,
@@ -154,34 +155,11 @@ export class LLMJudge implements IJudge {
   }
 }
 
-// Depth-tracking extractor that skips content inside JSON strings so a `}`
-// inside a reasoning sentence cannot prematurely close the match.
-const extractTopLevelJsonObject = (text: string): string | null => {
-  const start = text.indexOf("{");
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < text.length; i += 1) {
-    const ch = text[i] as string;
-    if (escape) { escape = false; continue; }
-    if (ch === "\\" && inString) { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === "{") depth += 1;
-    if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
-};
-
 const parseBatchRubric = (
   text: string,
   expectedLabels: ReadonlyMap<string, number>,
 ): z.infer<typeof batchRubricSchema> => {
-  const match = extractTopLevelJsonObject(text.trim());
+  const match = extractJsonObject(text.trim());
   if (!match) {
     throw ValidationError("Batch judge returned no JSON object");
   }

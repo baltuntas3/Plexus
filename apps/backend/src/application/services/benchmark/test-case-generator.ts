@@ -6,6 +6,7 @@ import {
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
 import type { TestGenerationMode } from "../../../domain/entities/benchmark.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
+import { extractJsonObject } from "../../utils/extract-json-object.js";
 import { seededShuffle } from "../../utils/seeded-shuffle.js";
 import type { IAIProviderFactory } from "../ai-provider.js";
 import { buildVersionGenerationSection } from "./evaluation-prompt.js";
@@ -114,27 +115,6 @@ export const buildEvaluationSpecFromVersions = (
     seed,
     taskType,
   );
-
-const extractJsonObject = (text: string): string | null => {
-  const start = text.indexOf("{");
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = start; i < text.length; i += 1) {
-    const ch = text[i]!;
-    if (escape) { escape = false; continue; }
-    if (ch === "\\" && inString) { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === "{") depth += 1;
-    if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
-};
 
 const buildGenerationPrompt = (systemPrompt: string, count: number): string =>
   `You are a senior QA engineer designing a benchmark for the system specified below. You will write user-side inputs (the "user" turn) that genuinely probe how THIS system behaves — not generic prompts that any LLM could answer.

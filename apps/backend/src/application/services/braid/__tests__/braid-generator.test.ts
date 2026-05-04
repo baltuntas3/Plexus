@@ -5,6 +5,7 @@ import {
   FakeAIProviderFactory,
 } from "../../../../__tests__/fakes/fake-ai-provider.js";
 import { DomainError } from "../../../../domain/errors/domain-error.js";
+import { createDefaultGraphLinter } from "../lint/default-graph-linter.js";
 
 const VALID_GRAPH = `flowchart TD;
 A[Read user request] --> B[Identify constraints];
@@ -18,16 +19,17 @@ const makeProvider = (text: string, inputTokens = 100, outputTokens = 50): FakeA
     model: "openai/gpt-oss-20b",
   }));
 
-// Skipped: this suite has been hanging for hours in CI / local runs despite
-// using FakeAIProvider. The root cause is not in this suite's assertions —
-// re-enable it once the underlying hang is diagnosed.
-describe.skip("BraidGenerator", () => {
+const makeGenerator = (provider: FakeAIProvider): BraidGenerator =>
+  new BraidGenerator(
+    new FakeAIProviderFactory(provider),
+    new InMemoryCacheStore(),
+    createDefaultGraphLinter(),
+  );
+
+describe("BraidGenerator", () => {
   it("generates and parses a valid BRAID graph", async () => {
     const provider = makeProvider(VALID_GRAPH);
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     const result = await generator.generate({
       sourcePrompt: "Summarize the text",
@@ -44,10 +46,7 @@ describe.skip("BraidGenerator", () => {
 
   it("strips markdown code fences around Mermaid output", async () => {
     const provider = makeProvider(`\`\`\`mermaid\n${VALID_GRAPH}\n\`\`\``);
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     const result = await generator.generate({
       sourcePrompt: "Summarize the text",
@@ -59,10 +58,7 @@ describe.skip("BraidGenerator", () => {
 
   it("returns cached result on second call with same input", async () => {
     const provider = makeProvider(VALID_GRAPH);
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     await generator.generate({
       sourcePrompt: "Summarize",
@@ -81,10 +77,7 @@ describe.skip("BraidGenerator", () => {
 
   it("bypasses cache when forceRegenerate is true", async () => {
     const provider = makeProvider(VALID_GRAPH);
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     await generator.generate({
       sourcePrompt: "Summarize",
@@ -103,10 +96,7 @@ describe.skip("BraidGenerator", () => {
 
   it("re-fetches when sourcePrompt changes", async () => {
     const provider = makeProvider(VALID_GRAPH);
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     await generator.generate({
       sourcePrompt: "Summarize A",
@@ -124,10 +114,7 @@ describe.skip("BraidGenerator", () => {
 
   it("throws on empty generator output", async () => {
     const provider = makeProvider("");
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     await expect(
       generator.generate({
@@ -140,10 +127,7 @@ describe.skip("BraidGenerator", () => {
 
   it("throws on invalid Mermaid output", async () => {
     const provider = makeProvider("this is not mermaid");
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     await expect(
       generator.generate({
@@ -156,10 +140,7 @@ describe.skip("BraidGenerator", () => {
 
   it("does not cache failed generations", async () => {
     const provider = makeProvider("bad output");
-    const generator = new BraidGenerator(
-      new FakeAIProviderFactory(provider),
-      new InMemoryCacheStore(),
-    );
+    const generator = makeGenerator(provider);
 
     await expect(
       generator.generate({
@@ -176,7 +157,39 @@ describe.skip("BraidGenerator", () => {
         generatorModel: "openai/gpt-oss-20b",
       }),
     ).rejects.toThrow(DomainError);
+
+    expect(provider.calls).toBe(4);
+  });
+
+  it("repairs a graph with lint issues once before caching", async () => {
+    const leakyGraph = `flowchart TD;
+A[Write: Hello user directly] --> B[Check: final answer];`;
+    const responses = [leakyGraph, VALID_GRAPH];
+    const provider = new FakeAIProvider(() => {
+      const text = responses.shift() ?? VALID_GRAPH;
+      return {
+        text,
+        usage: { inputTokens: 100, outputTokens: 50 },
+        model: "openai/gpt-oss-20b",
+      };
+    });
+    const generator = makeGenerator(provider);
+
+    const result = await generator.generate({
+      sourcePrompt: "Summarize",
+      taskType: "general",
+      generatorModel: "openai/gpt-oss-20b",
+    });
+    const cached = await generator.generate({
+      sourcePrompt: "Summarize",
+      taskType: "general",
+      generatorModel: "openai/gpt-oss-20b",
+    });
 
     expect(provider.calls).toBe(2);
+    expect(result.cached).toBe(false);
+    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 100 });
+    expect(cached.cached).toBe(true);
+    expect(cached.graph.mermaidCode).toBe(VALID_GRAPH);
   });
 });

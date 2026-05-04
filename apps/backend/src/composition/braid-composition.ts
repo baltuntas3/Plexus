@@ -10,7 +10,7 @@ interface BraidComposition {
 }
 
 export const createBraidComposition = (aiFactory: IAIProviderFactory): BraidComposition => {
-  const generator = new BraidGenerator(aiFactory, new InMemoryCacheStore());
   const linter = createDefaultGraphLinter();
+  const generator = new BraidGenerator(aiFactory, new InMemoryCacheStore(), linter);
   return { generator, linter };
 };

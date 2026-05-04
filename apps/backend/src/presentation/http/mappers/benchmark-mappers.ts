@@ -50,7 +50,7 @@ export const toBenchmarkDto = (bm: BenchmarkLike): BenchmarkDto => ({
 // `finalScore`) are derived for the DTO rather than persisted on the row:
 // `input` resolves through `testCaseId` and the rubric means come from
 // `judgeVotes`. Frontend contract preserved; storage stays normalized.
-export const toBenchmarkResultDto = (
+const toBenchmarkResultDto = (
   r: BenchmarkResult,
   testCasesById: Record<string, Pick<BenchmarkTestCase, "input">>,
 ): BenchmarkResultDto => {

@@ -36,7 +36,7 @@ describe.skip("BraidGenerator", () => {
     });
 
     expect(result.cached).toBe(false);
-    expect(result.graph.nodeCount).toBe(4);
+    expect(result.graph.nodes.length).toBe(4);
     expect(result.usage.inputTokens).toBe(100);
     expect(result.cost.totalUsd).toBeGreaterThan(0);
     expect(provider.calls).toBe(1);
@@ -54,7 +54,7 @@ describe.skip("BraidGenerator", () => {
       taskType: "general",
       generatorModel: "openai/gpt-oss-20b",
     });
-    expect(result.graph.nodeCount).toBe(4);
+    expect(result.graph.nodes.length).toBe(4);
   });
 
   it("returns cached result on second call with same input", async () => {

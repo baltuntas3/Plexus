@@ -7,14 +7,12 @@ export type DomainErrorCode =
   | "INTERNAL"
   | "PROMPT_NOT_FOUND"
   | "PROMPT_VERSION_NOT_FOUND"
-  | "PROMPT_NOT_OWNED"
   | "PROMPT_AGGREGATE_STALE"
   | "PROMPT_VERSION_AGGREGATE_STALE"
   | "PROMPT_SOURCE_EMPTY"
   | "PROMPT_VERSION_HAS_NO_BRAID"
   | "PROMPT_INVALID_VERSION_TRANSITION"
   | "BENCHMARK_NOT_FOUND"
-  | "BENCHMARK_NOT_OWNED"
   | "BENCHMARK_AGGREGATE_STALE"
   | "BENCHMARK_ILLEGAL_TRANSITION"
   | "BENCHMARK_NOT_IN_DRAFT"
@@ -92,13 +90,6 @@ export const PromptVersionNotFoundError = (version?: string): DomainError =>
     version ? { version } : undefined,
   );
 
-// Kept for defense-in-depth. Production write paths now reject foreign
-// prompts as "not found" at the repository boundary so existence does not
-// leak via id enumeration; this error covers the path where an aggregate
-// somehow arrives unscoped (direct test calls, future code paths).
-export const PromptNotOwnedError = (): DomainError =>
-  new DomainError("PROMPT_NOT_OWNED", "Caller does not own this prompt");
-
 export const PromptAggregateStaleError = (): DomainError =>
   new DomainError(
     "PROMPT_AGGREGATE_STALE",
@@ -137,11 +128,6 @@ export const BenchmarkNotFoundError = (id?: string): DomainError =>
     id ? `Benchmark ${id} not found` : "Benchmark not found",
     id ? { id } : undefined,
   );
-
-// See note on `PromptNotOwnedError` — kept for defense-in-depth after the
-// write path unified missing+foreign as "not found".
-export const BenchmarkNotOwnedError = (): DomainError =>
-  new DomainError("BENCHMARK_NOT_OWNED", "Caller does not own this benchmark");
 
 export const BenchmarkAggregateStaleError = (): DomainError =>
   new DomainError(

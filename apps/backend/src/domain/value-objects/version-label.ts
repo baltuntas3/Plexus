@@ -31,8 +31,4 @@ export class VersionLabel {
   toString(): string {
     return this.value;
   }
-
-  equals(other: VersionLabel): boolean {
-    return this.value === other.value;
-  }
 }

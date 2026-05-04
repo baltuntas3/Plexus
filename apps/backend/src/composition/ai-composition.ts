@@ -10,7 +10,6 @@ const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 
 export interface AIComposition {
   factory: IAIProviderFactory;
-  enabledProviders: ProviderName[];
 }
 
 export const createAIComposition = (): AIComposition => {
@@ -23,15 +22,13 @@ export const createAIComposition = (): AIComposition => {
     );
   }
 
-  const enabledProviders = [...providers.keys()];
-  if (enabledProviders.length === 0) {
+  if (providers.size === 0) {
     logger.warn("No AI providers configured (GROQ_API_KEY missing)");
   } else {
-    logger.info({ providers: enabledProviders }, "AI providers initialized");
+    logger.info({ providers: [...providers.keys()] }, "AI providers initialized");
   }
 
   return {
     factory: new AIProviderFactory(providers),
-    enabledProviders,
   };
 };

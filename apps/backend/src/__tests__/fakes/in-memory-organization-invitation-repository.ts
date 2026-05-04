@@ -24,23 +24,6 @@ export class InMemoryOrganizationInvitationRepository
     return data ? OrganizationInvitation.hydrate({ ...data }) : null;
   }
 
-  async findActiveByOrganizationAndEmail(
-    organizationId: string,
-    email: string,
-  ): Promise<OrganizationInvitation | null> {
-    const normalized = email.toLowerCase().trim();
-    for (const data of this.invitations.values()) {
-      if (
-        data.organizationId === organizationId &&
-        data.email === normalized &&
-        data.status === "pending"
-      ) {
-        return OrganizationInvitation.hydrate({ ...data });
-      }
-    }
-    return null;
-  }
-
   async findByTokenHash(
     tokenHash: string,
   ): Promise<OrganizationInvitation | null> {

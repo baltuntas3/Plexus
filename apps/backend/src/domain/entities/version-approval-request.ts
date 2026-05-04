@@ -126,16 +126,6 @@ export class VersionApprovalRequest {
     return this.state.rejections;
   }
 
-  // Convenience: voter ids only. Useful for "has this user already voted?"
-  // checks without making callers walk the vote rows themselves.
-  get approverIds(): ReadonlyArray<string> {
-    return this.state.approvals.map((v) => v.userId);
-  }
-
-  get rejecterIds(): ReadonlyArray<string> {
-    return this.state.rejections.map((v) => v.userId);
-  }
-
   get status(): VersionApprovalRequestStatus {
     return this.state.status;
   }

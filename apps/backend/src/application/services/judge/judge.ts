@@ -38,7 +38,6 @@ export class JudgeExecutionError extends Error {
     public readonly partial?: {
       usage?: JudgeUsage;
       model?: string;
-      reasoning?: string;
     },
     options?: { cause?: unknown },
   ) {

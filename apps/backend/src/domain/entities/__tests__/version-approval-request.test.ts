@@ -35,14 +35,14 @@ describe("VersionApprovalRequest aggregate", () => {
     const r = make({ requiredApprovals: 3 });
     r.approve("u1");
     expect(r.status).toBe("pending");
-    expect(r.approverIds).toEqual(["u1"]);
+    expect(r.approvals.map((v) => v.userId)).toEqual(["u1"]);
     expect(r.approvals[0]?.userId).toBe("u1");
     expect(r.approvals[0]?.decidedAt).toBeInstanceOf(Date);
     expect(r.approvals[0]?.comment).toBeNull();
     expect(r.resolvedAt).toBeNull();
     r.approve("u2");
     expect(r.status).toBe("pending");
-    expect(r.approverIds).toEqual(["u1", "u2"]);
+    expect(r.approvals.map((v) => v.userId)).toEqual(["u1", "u2"]);
   });
 
   it("captures decidedAt and an optional trimmed comment on each vote", () => {
@@ -131,6 +131,6 @@ describe("VersionApprovalRequest aggregate", () => {
       decidedAt: new Date(),
       comment: null,
     });
-    expect(r2.approverIds).toEqual(["u1"]);
+    expect(r2.approvals.map((v) => v.userId)).toEqual(["u1"]);
   });
 });

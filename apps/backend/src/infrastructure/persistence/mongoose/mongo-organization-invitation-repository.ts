@@ -56,19 +56,6 @@ export class MongoOrganizationInvitationRepository
     return doc ? OrganizationInvitation.hydrate(toPrimitives(doc)) : null;
   }
 
-  async findActiveByOrganizationAndEmail(
-    organizationId: string,
-    email: string,
-  ): Promise<OrganizationInvitation | null> {
-    const session = getCurrentSession();
-    const doc = await OrganizationInvitationModel.findOne(
-      { organizationId, email: email.toLowerCase().trim(), status: "pending" },
-      null,
-      { session },
-    ).lean<InvitationDocShape>();
-    return doc ? OrganizationInvitation.hydrate(toPrimitives(doc)) : null;
-  }
-
   async findByTokenHash(
     tokenHash: string,
   ): Promise<OrganizationInvitation | null> {

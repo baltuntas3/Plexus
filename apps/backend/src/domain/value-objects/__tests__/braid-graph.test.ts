@@ -18,8 +18,8 @@ describe("BraidGraph.parse", () => {
     const code = `flowchart TD;
 A[Start] --> B[End];`;
     const graph = BraidGraph.parse(code);
-    expect(graph.nodeCount).toBe(2);
-    expect(graph.edgeCount).toBe(1);
+    expect(graph.nodes.length).toBe(2);
+    expect(graph.edges.length).toBe(1);
     expect(graph.nodes.find((n) => n.id === "A")?.label).toBe("Start");
     expect(graph.edges[0]).toEqual({ from: "A", to: "B", label: null });
   });
@@ -30,8 +30,8 @@ A[Read request] --> B[Identify constraints];
 B --> C[Draft response];
 C --> D[Check: length <= 250 words];`;
     const graph = BraidGraph.parse(code);
-    expect(graph.nodeCount).toBe(4);
-    expect(graph.edgeCount).toBe(3);
+    expect(graph.nodes.length).toBe(4);
+    expect(graph.edges.length).toBe(3);
   });
 
   it("parses quoted edge labels", () => {
@@ -61,7 +61,7 @@ A[Start] -- "If text > 300 words" --> B[Truncate];`;
     const code = `graph TD;
 A[X] --> B[Y];`;
     const graph = BraidGraph.parse(code);
-    expect(graph.nodeCount).toBe(2);
+    expect(graph.nodes.length).toBe(2);
   });
 
   it("parses diamond decision nodes using {...}", () => {
@@ -70,7 +70,7 @@ A[Identify inquiry] --> B{Billing or Technical?};
 B -- "Billing" --> C[Check account];
 B -- "Technical" --> D[Identify product area];`;
     const graph = BraidGraph.parse(code);
-    expect(graph.nodeCount).toBe(4);
+    expect(graph.nodes.length).toBe(4);
     expect(graph.nodes.find((n) => n.id === "B")?.label).toBe("Billing or Technical?");
     expect(graph.edges.length).toBeGreaterThanOrEqual(3);
     const labeled = graph.edges.filter((e) => e.label === "Billing" || e.label === "Technical");
@@ -83,7 +83,7 @@ A{Decide} --> B[Do A];
 A --> C{Another decision};
 C --> D[Done];`;
     const graph = BraidGraph.parse(code);
-    expect(graph.nodeCount).toBe(4);
+    expect(graph.nodes.length).toBe(4);
     expect(graph.edges.find((e) => e.from === "A" && e.to === "B")).toBeDefined();
     expect(graph.edges.find((e) => e.from === "C" && e.to === "D")).toBeDefined();
   });

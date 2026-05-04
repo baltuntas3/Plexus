@@ -22,12 +22,4 @@ export class InMemoryCacheStore implements ICacheStore {
     const expiresAt = ttlSeconds !== undefined ? Date.now() + ttlSeconds * 1000 : null;
     this.store.set(key, { value, expiresAt });
   }
-
-  async delete(key: string): Promise<void> {
-    this.store.delete(key);
-  }
-
-  async has(key: string): Promise<boolean> {
-    return (await this.get(key)) !== null;
-  }
 }

@@ -32,20 +32,6 @@ export interface GenerateResponse {
   model: string;
 }
 
-export class AIProviderError extends Error {
-  constructor(
-    message: string,
-    public readonly partial?: Partial<GenerateResponse>,
-    options?: { cause?: unknown },
-  ) {
-    super(message);
-    this.name = "AIProviderError";
-    if (options?.cause !== undefined) {
-      this.cause = options.cause;
-    }
-  }
-}
-
 export interface IAIProvider {
   generate(request: GenerateRequest): Promise<GenerateResponse>;
 }

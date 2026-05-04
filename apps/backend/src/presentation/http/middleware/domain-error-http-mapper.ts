@@ -27,8 +27,6 @@ export const domainErrorCodeToHttpStatus = (code: DomainErrorCode): number => {
     case "UNAUTHORIZED":
       return 401;
     case "FORBIDDEN":
-    case "PROMPT_NOT_OWNED":
-    case "BENCHMARK_NOT_OWNED":
     case "ORGANIZATION_MEMBERSHIP_REQUIRED":
       return 403;
     case "NOT_FOUND":

@@ -1,19 +1,12 @@
 import type { OrganizationInvitation } from "../entities/organization-invitation.js";
 
-// Write-side port for invitations. Two narrow lookups beyond the standard
-// `findById`: `findActiveByOrganizationAndEmail` enforces the "one
-// pending invitation per recipient" rule at the use-case layer, and
-// `findByTokenHash` is the redemption path (recipient hands back the
-// plaintext, the use case hashes it and matches here).
+// Write-side port for invitations. The "one pending invitation per
+// (orgId, email)" rule is enforced by the unique partial index in the
+// repository implementations; `findByTokenHash` is the redemption path
+// (recipient hands back the plaintext, the use case hashes it and
+// matches here).
 export interface IOrganizationInvitationRepository {
   findById(id: string): Promise<OrganizationInvitation | null>;
-  // Returns the pending row for `(orgId, email)`, or null when no
-  // pending invitation exists. Cancelled/accepted/expired rows are
-  // ignored — the unique constraint targets only `pending`.
-  findActiveByOrganizationAndEmail(
-    organizationId: string,
-    email: string,
-  ): Promise<OrganizationInvitation | null>;
   // Used during redemption. The token plaintext is hashed by the use
   // case; this lookup is the only path that resolves a hash to an
   // invitation, and it intentionally does not narrow by org/email so

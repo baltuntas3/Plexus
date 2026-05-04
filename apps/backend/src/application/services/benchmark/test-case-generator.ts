@@ -54,7 +54,7 @@ const responseSchema = z.object({
 // output toward the "newest" or chronologically-last prompt in diff-seeking
 // mode. `seed` makes the shuffle reproducible across runs of the same
 // benchmark.
-export const buildEvaluationSpec = (
+const buildEvaluationSpec = (
   versionSpecs: readonly string[],
   mode: TestGenerationMode = "shared-core",
   seed?: number,

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { TaskType } from "@plexus/shared-types";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
 import { buildJudgeScore, type JudgeScore } from "../../../domain/value-objects/judge-score.js";
-import { AIProviderError, type IAIProviderFactory } from "../ai-provider.js";
+import type { IAIProviderFactory } from "../ai-provider.js";
 import {
   JudgeExecutionError,
   type BatchJudgeInput,
@@ -72,24 +72,13 @@ export class LLMJudge implements IJudge {
     // uniform across the benchmark; this is a fairness contract.
     const provider = this.providers.forModel(this.config.judgeModel);
     const built = buildBatchJudgeMessages(input, this.config.taskType);
-    let response;
-    try {
-      response = await provider.generate({
-        model: this.config.judgeModel,
-        messages: built.messages,
-        temperature: JUDGE_TEMPERATURE,
-        seed: input.seed,
-        responseFormat: "json",
-      });
-    } catch (err) {
-      if (err instanceof AIProviderError) {
-        throw new JudgeExecutionError(err.message, {
-          usage: err.partial?.usage,
-          model: err.partial?.model ?? this.config.judgeModel,
-        }, { cause: err });
-      }
-      throw err;
-    }
+    const response = await provider.generate({
+      model: this.config.judgeModel,
+      messages: built.messages,
+      temperature: JUDGE_TEMPERATURE,
+      seed: input.seed,
+      responseFormat: "json",
+    });
 
     let parsed: z.infer<typeof batchRubricSchema>;
     let totalInputTokens = response.usage.inputTokens;

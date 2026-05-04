@@ -75,14 +75,6 @@ export class BraidGraph {
     return new BraidGraph(toMermaid(nodes, edges), nodes, edges);
   }
 
-  get nodeCount(): number {
-    return this.nodes.length;
-  }
-
-  get edgeCount(): number {
-    return this.edges.length;
-  }
-
   // ── Mutations (each returns a new BraidGraph) ─────────────────────────────
 
   renameNode(nodeId: string, newLabel: string): BraidGraph {

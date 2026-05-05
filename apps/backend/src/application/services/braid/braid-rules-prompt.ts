@@ -79,11 +79,7 @@ const BRAID_RULES: BraidRulePromptDefinition[] = [
       "  J -- \"no\" --> H",
       "  J -- \"yes\" --> K[Critic: final self-review against rubric]",
       "",
-      "Reject your own output if ANY of these are true:",
-      "  - A terminal node's label does not begin with Check/Verify/Validate/Assert/Critic.",
-      "  - There is no critic-revision back-edge anywhere in the graph.",
-      "  - A Check node has only one outgoing edge (a real check must branch pass/fail).",
-      "  - A verification label is vague (\"Check: output\", \"Verify: done\").",
+      "Before responding, self-check that every Check node has both pass and fail edges and no verification label is vague (\"Check: output\", \"Verify: done\").",
     ].join("\n   "),
   },
   {

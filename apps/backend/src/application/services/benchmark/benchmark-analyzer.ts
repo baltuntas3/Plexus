@@ -10,8 +10,11 @@
 //
 //   1. Pareto frontier on (maximize meanFinalScore, minimize totalCostUsd) —
 //      non-dominated candidates are highlighted in the UI.
-//   2. PPD vs. a Pareto-eligible baseline (most expensive among candidates
-//      clearing an 80% score floor), matching the paper's framing.
+//   2. PPD vs. a score-floor-eligible baseline (most expensive reliable
+//      candidate that clears the 80% score floor; falls back to the highest-
+//      scoring reliable candidate when nobody clears the floor). This is the
+//      "expensive incumbent" the paper's PPD framing measures lift against
+//      and is independent of the Pareto frontier.
 //   3. Composite ranking: quality (80%, geometric mean of normalised rubric
 //      dimensions + consistency) plus efficiency (20%, harmonic-against-best
 //      normalised solver latency + cost — `bestValue / max(bestValue, value)`, so
@@ -394,6 +397,12 @@ export const computeParetoFrontier = (
   });
 };
 
+// Picks the PPD baseline as the most expensive reliable candidate clearing
+// the score floor — the "expensive incumbent" PPD compares lift against.
+// When no candidate clears the floor, falls back to the highest-scoring
+// reliable candidate so PPD still has a reference even on a weak benchmark.
+// Unrelated to the Pareto frontier: the baseline can sit on or off the
+// frontier depending on the cohort.
 const pickBaseline = (
   candidates: readonly CandidateStats[],
   scoreFloor: number,
@@ -1019,9 +1028,18 @@ const pairedDifferenceCI = (
   return clusterBootstrapCI([...diffsByTestCase.values()], rng);
 };
 
-// Pick the top-composite candidate; if a runner-up is not statistically
+// Pick the top-composite candidate; if any runner-up is not statistically
 // separable from the top under paired bootstrap of per-cell score
-// differences, prefer the cheaper candidate among those tied setups.
+// differences, prefer the cheapest candidate among that tied set.
+//
+// Transitivity guard: "not statistically separable" is a pairwise relation
+// and is NOT transitive. top↔A and top↔B may both be tied while A↔B is
+// separable. If the cheapest tied candidate fails this transitivity
+// check (it is separable from another tied member that is also tied with
+// top), the tie set is internally inconsistent and we fall back to the
+// top — picking the cheapest in that situation could swap to a candidate
+// that is statistically WORSE than another tied alternative, which would
+// undermine the "cheap among tied equals" intent of the tie-break.
 export const pickWithPairedSignificanceTieBreak = (
   ranking: readonly CompositeRanking[],
   completed: readonly CandidateStats[],
@@ -1055,47 +1073,107 @@ export const pickWithPairedSignificanceTieBreak = (
     };
   }
 
-  let best: { rank: CompositeRanking; stats: CandidateStats } = {
-    rank: top,
-    stats: topStats,
+  const isPairTied = (
+    aKey: string,
+    bKey: string,
+    aStats: CandidateStats,
+    bStats: CandidateStats,
+  ): { tied: boolean; diffCi: { low: number; high: number } | null } => {
+    const diffCi = pairedDifferenceCI(
+      rowsByCandidate.get(aKey) ?? [],
+      rowsByCandidate.get(bKey) ?? [],
+      finalScoreByRowId,
+    );
+    const tied = diffCi
+      ? diffCi.low <= 0 && diffCi.high >= 0
+      : aStats.ci95Low <= bStats.ci95High && aStats.ci95High >= bStats.ci95Low;
+    return { tied, diffCi };
   };
-  let decision: {
-    mode: "top_composite" | "paired_cost_tie_break";
-    comparedAgainstKey: string | null;
-    pairedDiffCi: { low: number; high: number } | null;
-  } = {
-    mode: "top_composite",
-    comparedAgainstKey: null,
-    pairedDiffCi: null,
-  };
+
+  // 1) Collect all candidates tied with the top under paired bootstrap.
+  interface TiedEntry {
+    rank: CompositeRanking;
+    stats: CandidateStats;
+    diffCiVsTop: { low: number; high: number } | null;
+  }
+  const tiedWithTop: TiedEntry[] = [];
   for (const other of ranking.slice(1)) {
     const otherStats = byKey.get(other.candidateKey);
     if (!otherStats) continue;
-    const diffCi = pairedDifferenceCI(
-      rowsByCandidate.get(top.candidateKey) ?? [],
-      rowsByCandidate.get(other.candidateKey) ?? [],
-      finalScoreByRowId,
+    const { tied, diffCi } = isPairTied(
+      top.candidateKey,
+      other.candidateKey,
+      topStats,
+      otherStats,
     );
-    const notSeparable = diffCi
-      ? diffCi.low <= 0 && diffCi.high >= 0
-      : otherStats.ci95Low <= topStats.ci95High &&
-        otherStats.ci95High >= topStats.ci95Low;
-    if (!notSeparable) continue;
-    if (otherStats.meanCostUsd < best.stats.meanCostUsd) {
-      best = { rank: other, stats: otherStats };
-      decision = {
-        mode: "paired_cost_tie_break",
-        comparedAgainstKey: top.candidateKey,
-        pairedDiffCi: diffCi,
+    if (tied) {
+      tiedWithTop.push({ rank: other, stats: otherStats, diffCiVsTop: diffCi });
+    }
+  }
+
+  if (tiedWithTop.length === 0) {
+    return {
+      rank: top,
+      mode: "top_composite",
+      topCompositeKey: top.candidateKey,
+      comparedAgainstKey: null,
+      pairedDiffCi: null,
+    };
+  }
+
+  // 2) Cheapest among tied (including the top itself, so the tie-break
+  // never preserves a more-expensive top when a cheaper tied alternative
+  // exists).
+  let cheapest: { rank: CompositeRanking; stats: CandidateStats; diffCiVsTop: { low: number; high: number } | null } = {
+    rank: top,
+    stats: topStats,
+    diffCiVsTop: null,
+  };
+  for (const entry of tiedWithTop) {
+    if (entry.stats.meanCostUsd < cheapest.stats.meanCostUsd) {
+      cheapest = entry;
+    }
+  }
+
+  if (cheapest.rank.candidateKey === top.candidateKey) {
+    return {
+      rank: top,
+      mode: "top_composite",
+      topCompositeKey: top.candidateKey,
+      comparedAgainstKey: null,
+      pairedDiffCi: null,
+    };
+  }
+
+  // 3) Transitivity guard: cheapest must also be tied with every OTHER
+  // tied-with-top member. If it is statistically separable from one of
+  // them, the tie set is inconsistent and falling through to the cheapest
+  // could swap in a candidate that is worse than another tied alternative.
+  for (const entry of tiedWithTop) {
+    if (entry.rank.candidateKey === cheapest.rank.candidateKey) continue;
+    const { tied } = isPairTied(
+      cheapest.rank.candidateKey,
+      entry.rank.candidateKey,
+      cheapest.stats,
+      entry.stats,
+    );
+    if (!tied) {
+      return {
+        rank: top,
+        mode: "top_composite",
+        topCompositeKey: top.candidateKey,
+        comparedAgainstKey: null,
+        pairedDiffCi: null,
       };
     }
   }
+
   return {
-    rank: best.rank,
-    mode: decision.mode,
+    rank: cheapest.rank,
+    mode: "paired_cost_tie_break",
     topCompositeKey: top.candidateKey,
-    comparedAgainstKey: decision.comparedAgainstKey,
-    pairedDiffCi: decision.pairedDiffCi,
+    comparedAgainstKey: top.candidateKey,
+    pairedDiffCi: cheapest.diffCiVsTop,
   };
 };
 

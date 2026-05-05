@@ -13,6 +13,22 @@
 
 import { buildDetailedBraidRulesPrompt } from "./braid-rules-prompt.js";
 
+// Single source of truth for the Mermaid output contract. Used by the
+// initial generation prompt and the repair prompt so a relaxed format on
+// one side cannot create asymmetries — both turns must produce text the
+// parser/validator accepts under the same rules.
+export const MERMAID_OUTPUT_CONTRACT = [
+  "Shape vocabulary:",
+  "- A[Label]   — step (action, observation, draft, check)",
+  "- A{Label?}  — decision point (used with labeled branches)",
+  "",
+  "Output Requirements (STRICT):",
+  "1. Output ONLY Mermaid code. No markdown fences, no prose, no explanation.",
+  "2. Start exactly with \"flowchart TD;\" on the first line.",
+  "3. End each statement with a semicolon.",
+  "4. Node IDs are letters or short alphanumerics (A, B, C1, G2). Never quote IDs.",
+].join("\n");
+
 export const ENHANCED_SYSTEM_PROMPT = `You are an expert at designing BRAID (Bounded Reasoning for Autonomous Inference and Decisions) graphs. Your job is to convert a task description into a Mermaid flowchart that a smaller solver model will traverse step-by-step to produce the final response.
 
 Task:
@@ -23,12 +39,4 @@ Task:
 
 ${buildDetailedBraidRulesPrompt()}
 
-Shape vocabulary:
-- A[Label]   — step (action, observation, draft, check)
-- A{Label?}  — decision point (used with labeled branches)
-
-Output Requirements (STRICT):
-1. Output ONLY Mermaid code. No markdown fences, no prose, no explanation.
-2. Start exactly with "flowchart TD;" on the first line.
-3. End each statement with a semicolon.
-4. Node IDs are letters or short alphanumerics (A, B, C1, G2). Never quote IDs.`;
+${MERMAID_OUTPUT_CONTRACT}`;

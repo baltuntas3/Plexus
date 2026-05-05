@@ -3,12 +3,19 @@ import type { TaskType } from "@plexus/shared-types";
 import { BraidGraph } from "../../../domain/value-objects/braid-graph.js";
 import { TokenCost } from "../../../domain/value-objects/token-cost.js";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
-import type { GraphQualityScore } from "../../../domain/value-objects/graph-quality-score.js";
+import {
+  GraphQualityScore,
+  type RuleResult,
+} from "../../../domain/value-objects/graph-quality-score.js";
 import type { IAIProviderFactory, TokenUsage } from "../ai-provider.js";
 import { calculateCost } from "../model-registry.js";
 import type { ICacheStore } from "../cache-store.js";
 import type { GraphLinter } from "./lint/graph-linter.js";
-import { ENHANCED_SYSTEM_PROMPT } from "./enhanced-generation-prompt.js";
+import {
+  ENHANCED_SYSTEM_PROMPT,
+  MERMAID_OUTPUT_CONTRACT,
+} from "./enhanced-generation-prompt.js";
+import { buildDetailedBraidRulesPrompt } from "./braid-rules-prompt.js";
 
 interface BraidGenerationInput {
   sourcePrompt: string;
@@ -26,19 +33,35 @@ interface BraidGenerationResult {
   qualityScore: GraphQualityScore;
 }
 
+// Persisted alongside the mermaid so the cache-hit path returns the same
+// quality score the generator computed during validation, with no extra
+// lint pass on retrieval. Storing the full RuleResult[] (not just issues)
+// preserves per-rule scores and display names, so the rebuilt score is
+// byte-identical to the original.
 interface CachedEntry {
   mermaidCode: string;
   usage: TokenUsage;
+  qualityRuleResults: RuleResult[];
 }
 
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 // Bump whenever the generation or repair prompt changes so stale cache
 // entries generated with older templates are not reused.
-const PROMPT_TEMPLATE_VERSION = "v5-single-call-lint-repair";
+const PROMPT_TEMPLATE_VERSION = "v6-shared-rules-repair";
 
 const GENERATION_TEMPERATURE = 0;
+// Single repair attempt: the validator is deterministic and additional turns
+// rarely succeed where the first repair did not. The repair turn receives
+// the full rule book (REPAIR_SYSTEM_PROMPT) so the model is never asked to
+// fix a graph against criteria it can no longer see.
 const MAX_REPAIR_ATTEMPTS = 1;
+
+const REPAIR_SYSTEM_PROMPT = `You are an expert BRAID graph designer fixing a Mermaid flowchart that failed validation. Apply the listed validation failures while keeping every other aspect of the graph intact.
+
+${buildDetailedBraidRulesPrompt()}
+
+${MERMAID_OUTPUT_CONTRACT}`;
 
 export class BraidGenerator {
   constructor(
@@ -54,14 +77,22 @@ export class BraidGenerator {
       const hit = await this.cache.get<CachedEntry>(key);
       if (hit) {
         const graph = BraidGraph.parse(hit.mermaidCode);
-        return this.buildResult(graph, input.generatorModel, hit.usage, true, this.linter.lint(graph));
+        const qualityScore = GraphQualityScore.fromRuleResults(hit.qualityRuleResults);
+        return this.buildResult(graph, input.generatorModel, hit.usage, true, qualityScore);
       }
     }
 
     const generated = await this.generateAndRepair(input);
-    const mermaidCode = generated.graph.mermaidCode;
 
-    await this.cache.set<CachedEntry>(key, { mermaidCode, usage: generated.usage }, CACHE_TTL_SECONDS);
+    await this.cache.set<CachedEntry>(
+      key,
+      {
+        mermaidCode: generated.graph.mermaidCode,
+        usage: generated.usage,
+        qualityRuleResults: generated.qualityScore.results,
+      },
+      CACHE_TTL_SECONDS,
+    );
 
     return this.buildResult(
       generated.graph,
@@ -99,11 +130,7 @@ export class BraidGenerator {
         model: input.generatorModel,
         temperature: GENERATION_TEMPERATURE,
         messages: [
-          {
-            role: "system",
-            content:
-              "You repair BRAID Mermaid graphs. Output ONLY the complete corrected Mermaid code starting with \"flowchart TD;\". No prose, no markdown fences.",
-          },
+          { role: "system", content: REPAIR_SYSTEM_PROMPT },
           {
             role: "user",
             content: buildRepairPrompt(input, currentText, validation.diagnostics),

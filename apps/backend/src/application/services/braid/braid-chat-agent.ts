@@ -16,6 +16,7 @@
 
 import type { IAIProvider } from "../ai-provider.js";
 import type { BraidChatTurn, TaskType } from "@plexus/shared-types";
+import { ValidationError } from "../../../domain/errors/domain-error.js";
 import { buildCompactBraidRulesPrompt } from "./braid-rules-prompt.js";
 
 type ChatOutputType = "diagram" | "question";
@@ -169,15 +170,18 @@ export class BraidChatAgent {
   private buildOutput(rawText: string, inputTokens: number, outputTokens: number): ChatOutput {
     const parsed = parseAgentResponse(rawText);
 
+    // Surface a parse failure as a domain error rather than wrapping the
+    // raw text into a fake "question". A non-conforming output is an agent
+    // bug, not a user-facing question; classifying it as one would silently
+    // pollute the conversation with whatever the model actually emitted
+    // (markdown explanations, partial JSON, leaked thinking) and the
+    // frontend would render that as if the agent asked for clarification.
+    // The use case translates this to an HTTP 422 so the user can retry.
     if (!parsed) {
-      // Fallback: treat the whole text as a question so we don't silently swallow it
-      return {
-        type: "question",
-        mermaidCode: "",
-        question: rawText.trim(),
-        totalInputTokens: inputTokens,
-        totalOutputTokens: outputTokens,
-      };
+      throw ValidationError(
+        "BRAID chat agent returned a response that did not match the required JSON shape. The model output could not be classified as a diagram or a question.",
+        { rawText },
+      );
     }
 
     if (parsed.type === "question") {

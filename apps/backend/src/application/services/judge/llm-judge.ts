@@ -88,11 +88,20 @@ export class LLMJudge implements IJudge {
     try {
       parsed = parseBatchRubric(response.text, built.labelToOriginalIndex);
     } catch (firstErr) {
+      // Defensive retry on parse failure. A fully deterministic provider
+      // (T=0 + same seed) would re-emit the same bytes here, but parse
+      // failures in practice come from two sources where retry IS useful:
+      //   (a) providers that ignore `seed` (Anthropic) sample a fresh
+      //       token stream on every call, so the retry can land valid
+      //       JSON where the first attempt did not.
+      //   (b) providers that respect the seed but still produce sporadic
+      //       JSON-mode glitches under load — a fresh request bypasses
+      //       any per-connection state that contributed to the glitch.
+      // Echoing the bad assistant turn back would roughly double input
+      // tokens for an N-candidate batched prompt; a fresh deterministic
+      // call is cheaper and recovery rate is empirically high enough
+      // that it is worth the single extra round-trip.
       try {
-        // One defensive retry at T=0. Batched prompts carry N candidate
-        // outputs in the user message, so reissuing the same prompt is
-        // far cheaper than echoing the bad response back for a recovery
-        // that almost always works on a fresh deterministic try.
         const retry = await provider.generate({
           model: this.config.judgeModel,
           messages: built.messages,

@@ -216,6 +216,41 @@ export const candidateKey = (c: Pick<
   "promptVersionId" | "solverModel"
 >): string => `${c.promptVersionId}::${c.solverModel}`;
 
+// Per-analysis cross-reference index. Built once at the top of
+// computeAnalysis from the row set, then passed to every helper that
+// needs to look up rows by candidate or per-row final scores. Without
+// this index, each helper rebuilt its own rowsByCandidate map and
+// recomputed `judgeRubricAggregate` on the same rows — turning an
+// O(rows) job into roughly O(rows × consumers).
+interface AnalysisIndex {
+  // Every result, keyed by candidate (promptVersionId::solverModel).
+  // Includes failed rows (consumers like coverage signature need them).
+  rowsByCandidate: ReadonlyMap<string, BenchmarkResult[]>;
+  // Final score (rubric-derived) for every COMPLETED row, keyed by row id.
+  // Failed rows are absent — they have no rubric and consumers must skip
+  // them anyway. Lookups return 0 via `.get(id) ?? 0` for the rare path
+  // where the row id is forwarded from a context that already filtered
+  // out failures.
+  finalScoreByRowId: ReadonlyMap<string, number>;
+}
+
+const buildAnalysisIndex = (
+  results: readonly BenchmarkResult[],
+): AnalysisIndex => {
+  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
+  const finalScoreByRowId = new Map<string, number>();
+  for (const row of results) {
+    const key = candidateKey(row);
+    const bucket = rowsByCandidate.get(key);
+    if (bucket) bucket.push(row);
+    else rowsByCandidate.set(key, [row]);
+    if (row.status === "completed" && row.judgeVotes.length > 0) {
+      finalScoreByRowId.set(row.id, judgeRubricAggregate(row.judgeVotes).finalScore);
+    }
+  }
+  return { rowsByCandidate, finalScoreByRowId };
+};
+
 // Per-row metric accumulator shared by both aggregation passes (per-candidate
 // and per-(candidate, category)). Latency/cost/operational-issue counters
 // always advance — failed rows still pay wall time and provider cost. Only
@@ -408,9 +443,10 @@ const computeCompositeRanking = (
   const eligible = candidates.filter(isReliableForComparativeViews);
   if (eligible.length === 0) return [];
 
-  // Compute min/max once per dimension (was O(n²) per candidate before).
-  const latencyRange = rangeOf(eligible, (c) => c.meanSolverLatencyMs);
-  const costRange = rangeOf(eligible, (c) => c.meanCostUsd);
+  // Compute the cohort minimum once per dimension (was O(n²) per candidate
+  // before).
+  const bestLatency = minOf(eligible, (c) => c.meanSolverLatencyMs);
+  const bestCost = minOf(eligible, (c) => c.meanCostUsd);
 
   return eligible
     .map((c) => {
@@ -425,9 +461,9 @@ const computeCompositeRanking = (
         Math.pow(con, QUALITY_CONSISTENCY_FRACTION);
       const efficiency =
         EFFICIENCY_LATENCY_WEIGHT *
-          normaliseDescending(c.meanSolverLatencyMs, latencyRange) +
+          normaliseDescending(c.meanSolverLatencyMs, bestLatency) +
         EFFICIENCY_COST_WEIGHT *
-          normaliseDescending(c.meanCostUsd, costRange);
+          normaliseDescending(c.meanCostUsd, bestCost);
       const rawComposite = COMPOSITE_QUALITY_WEIGHT * quality + efficiency;
       const reliabilityMultiplier = Math.max(
         0,
@@ -439,32 +475,35 @@ const computeCompositeRanking = (
     .sort((a, b) => b.compositeScore - a.compositeScore);
 };
 
-interface NumericRange {
-  min: number;
-}
-
-const rangeOf = <T>(items: readonly T[], pick: (item: T) => number): NumericRange => {
+// Returns the smallest pick(item) across the cohort. Used by efficiency
+// normalisation as the "best" reference value (lowest latency / cost).
+// Empty / non-finite cohorts collapse to 0 — `normaliseDescending` then
+// short-circuits because bestValue <= 0.
+const minOf = <T>(items: readonly T[], pick: (item: T) => number): number => {
   let min = Number.POSITIVE_INFINITY;
   for (const item of items) {
     const value = pick(item);
     if (value < min) min = value;
   }
-  return { min: Number.isFinite(min) ? min : 0 };
+  return Number.isFinite(min) ? min : 0;
 };
 
-// Maps `value` against `bestValue` robustly. The absolute lowest (best) value in range
-// scores 1; as `value` grows against `bestValue`, the score falls harmonically.
-// Using `bestValue / Math.max(bestValue, value)` is naturally bounded to [0,1]
-// and entirely prevents single extreme outliers from compressing the scores of everybody else.
-const normaliseDescending = (value: number, range: NumericRange): number => {
-  const bestValue = range.min;
+// Maps `value` against `bestValue` robustly. The absolute lowest (best)
+// scores 1; as `value` grows against `bestValue`, the score falls
+// harmonically. `bestValue / max(bestValue, value)` is naturally bounded
+// to [0,1] and entirely prevents single extreme outliers from compressing
+// the scores of everybody else.
+const normaliseDescending = (value: number, bestValue: number): number => {
   if (value <= 0 || bestValue <= 0) return 1;
   return bestValue / Math.max(bestValue, value);
 };
 
+// Rubric means are the average of N integer judge votes in [1,5], so the
+// domain-valid range is [1,5]. Math.max/min clamps protect against
+// floating-point drift; values outside [1,5] are not produceable by the
+// upstream zod schema (`z.number().int().min(1).max(5)` per vote).
 const normaliseRubricMean = (value: number): number => {
-  const bounded = Math.max(0, Math.min(5, value));
-  if (bounded < 1) return Math.max(0.01, bounded * 0.1);
+  const bounded = Math.max(1, Math.min(5, value));
   return 0.1 + ((bounded - 1) / 4) * 0.9;
 };
 
@@ -487,7 +526,7 @@ const coverageSignature = (
 
 const pickComparableCoverageKeys = (
   candidates: readonly CandidateStats[],
-  results: readonly BenchmarkResult[],
+  index: AnalysisIndex,
 ): Set<string> => {
   const reliableKeys = new Set(
     candidates
@@ -500,15 +539,10 @@ const pickComparableCoverageKeys = (
     string,
     { candidateKeys: string[]; completedSamples: number }
   >();
-  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
-  for (const row of results) {
-    const key = candidateKey(row);
-    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
-  }
 
   for (const candidate of candidates) {
     if (!reliableKeys.has(candidate.candidateKey)) continue;
-    const rows = rowsByCandidate.get(candidate.candidateKey) ?? [];
+    const rows = index.rowsByCandidate.get(candidate.candidateKey) ?? [];
     const signature = coverageSignature(rows);
     const bucket = buckets.get(signature) ?? {
       candidateKeys: [],
@@ -682,12 +716,13 @@ export const computeAnalysis = (
   results: readonly BenchmarkResult[],
   options: AnalyzerOptions = {},
 ): BenchmarkAnalysis => {
+  const index = buildAnalysisIndex(results);
   const candidates = aggregateResults(results);
   const categoryBreakdown = aggregateCategoryBreakdown(
     results,
     options.testCasesById ?? {},
   );
-  const comparableCoverageKeys = pickComparableCoverageKeys(candidates, results);
+  const comparableCoverageKeys = pickComparableCoverageKeys(candidates, index);
   const comparableCandidates = candidates.filter((candidate) =>
     comparableCoverageKeys.has(candidate.candidateKey),
   );
@@ -752,6 +787,7 @@ export const computeAnalysis = (
     eligibleRanking,
     reliableCompleted.filter((candidate) => comparableCoverageKeys.has(candidate.candidateKey)),
     results,
+    index,
   );
   const recommendedKey = recommended?.rank.candidateKey ?? null;
   const recommendedStats = recommendedKey
@@ -792,7 +828,7 @@ export const computeAnalysis = (
           pairedDiffCiHigh: null,
         },
     judgeAgreement: computeJudgeAgreement(results),
-    ensembleJudgeReport: buildEnsembleJudgeReport(candidates, results),
+    ensembleJudgeReport: buildEnsembleJudgeReport(candidates, index),
   };
 };
 
@@ -822,23 +858,23 @@ const buildQuoteFromVote = (
 // reliability axis instead.
 const buildEnsembleJudgeReport = (
   candidates: readonly CandidateStats[],
-  results: readonly BenchmarkResult[],
+  index: AnalysisIndex,
 ): EnsembleJudgeReport => {
-  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
-  // Cached per-row final score so the per-judge top/bottom quote builder
-  // does not recompute the same rubric for every vote on the same row.
-  const finalScoreByRowId = new Map<string, number>();
-  for (const row of results) {
-    if (row.status !== "completed" || row.judgeVotes.length === 0) continue;
-    const key = candidateKey(row);
-    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
-    finalScoreByRowId.set(row.id, judgeRubricAggregate(row.judgeVotes).finalScore);
+  // Filter to completed-with-votes rows for the per-candidate report. The
+  // shared index already contains every row by candidate; we just drop the
+  // ones the report cannot consume.
+  const completedRowsByCandidate = new Map<string, BenchmarkResult[]>();
+  for (const [key, rows] of index.rowsByCandidate) {
+    const usable = rows.filter(
+      (row) => row.status === "completed" && row.judgeVotes.length > 0,
+    );
+    if (usable.length > 0) completedRowsByCandidate.set(key, usable);
   }
 
   const perCandidate: EnsembleJudgeCandidateReport[] = [];
   for (const candidate of candidates) {
     if (candidate.completedCount === 0) continue;
-    const rows = rowsByCandidate.get(candidate.candidateKey) ?? [];
+    const rows = completedRowsByCandidate.get(candidate.candidateKey) ?? [];
     if (rows.length === 0) continue;
 
     const judgeBuckets = new Map<
@@ -887,14 +923,14 @@ const buildEnsembleJudgeReport = (
           meanCoherence: mean(bucket.coherences),
           meanInstruction: mean(bucket.instructions),
           topRated: top
-            ? buildQuoteFromVote(top.row, top.vote, finalScoreByRowId.get(top.row.id) ?? 0)
+            ? buildQuoteFromVote(top.row, top.vote, index.finalScoreByRowId.get(top.row.id) ?? 0)
             : null,
           bottomRated:
             bottom && bottom !== top
               ? buildQuoteFromVote(
                   bottom.row,
                   bottom.vote,
-                  finalScoreByRowId.get(bottom.row.id) ?? 0,
+                  index.finalScoreByRowId.get(bottom.row.id) ?? 0,
                 )
               : null,
         };
@@ -990,6 +1026,7 @@ export const pickWithPairedSignificanceTieBreak = (
   ranking: readonly CompositeRanking[],
   completed: readonly CandidateStats[],
   results: readonly BenchmarkResult[],
+  precomputedIndex?: AnalysisIndex,
 ): {
   rank: CompositeRanking;
   mode: "top_composite" | "paired_cost_tie_break";
@@ -999,19 +1036,12 @@ export const pickWithPairedSignificanceTieBreak = (
 } | null => {
   if (ranking.length === 0) return null;
   const byKey = new Map(completed.map((c) => [c.candidateKey, c] as const));
-  const rowsByCandidate = new Map<string, BenchmarkResult[]>();
-  // Pre-compute completed rows' final scores once. The top candidate's rows
-  // are otherwise re-aggregated against every other ranked candidate inside
-  // the loop, multiplying rubric work by N. Caching by row id collapses it
-  // to one pass over results.
-  const finalScoreByRowId = new Map<string, number>();
-  for (const row of results) {
-    const key = candidateKey(row);
-    rowsByCandidate.set(key, [...(rowsByCandidate.get(key) ?? []), row]);
-    if (row.status === "completed") {
-      finalScoreByRowId.set(row.id, judgeRubricAggregate(row.judgeVotes).finalScore);
-    }
-  }
+  // computeAnalysis passes the shared index so the inner pairwise loop can
+  // look up final scores in O(1) without rebuilding them. Direct callers
+  // (tests, ad-hoc) can omit it; we build a local index in that case so
+  // the function stays callable as a unit.
+  const index = precomputedIndex ?? buildAnalysisIndex(results);
+  const { rowsByCandidate, finalScoreByRowId } = index;
   const top = ranking[0];
   if (!top) return null;
   const topStats = byKey.get(top.candidateKey);
@@ -1105,6 +1135,14 @@ const meanWithinClusterStddev = (
   return mean(repeated.map(stddev));
 };
 
+// Linear taper from 1 (sd=0) to 0 (sd=CEILING). Clamped at the ends so the
+// score stays in [0,1]. The mapping is intentionally linear: rubric judges
+// emit integer scores in [1,5] which the analyzer normalises into [0,1],
+// so within-case stddev sits in roughly [0, 0.5]. Inside that narrow band
+// a simple linear scale is more interpretable to UI readers than an
+// exp/log taper, and a 1-point average swing in the integer rubric (sd
+// around 0.25 in the [0,1] view) maps cleanly to ~37.5% consistency under
+// the 0.4 ceiling.
 const consistencyFromStddev = (sd: number): number => {
   return Math.max(0, Math.min(1, 1 - sd / CONSISTENCY_STDDEV_CEILING));
 };
@@ -1117,6 +1155,25 @@ const consistencyFromStddev = (sd: number): number => {
 // erase, so the resulting CI is honest about how much information the
 // reps actually carry. Reduces to standard bootstrap when every cluster
 // has size 1 (i.e. repetitions == 1).
+//
+// Resampling unit is the cluster (selected uniformly with replacement
+// among `nonEmpty`). The bootstrap mean is computed over ALL observations
+// inside the resampled clusters, not over the K cluster means. With
+// uniform cluster selection, larger clusters automatically contribute
+// more observations to a single resample, which mirrors how the original
+// dataset weights cluster contributions toward the unweighted observation
+// mean — the estimator the candidate's `meanFinalScore` already reports.
+//
+// Edge cases (intentional):
+// - 0 clusters → CI 0..0 (no information).
+// - 1 cluster, 1 observation → CI collapses to that point.
+// - 1 cluster, K>1 observations → CI collapses to the cluster mean. The
+//   CI we report measures uncertainty over *different testCase inputs*,
+//   not within-rep variance. With a single input you cannot estimate how
+//   the candidate would behave on a different one no matter how many
+//   reps you take, so a zero-width CI is the honest answer; the
+//   alternative (i.i.d. resampling inside the cluster) would manufacture
+//   a width that conflates rep noise with input-coverage uncertainty.
 const clusterBootstrapCI = (
   groups: readonly (readonly number[])[],
   rng: () => number,

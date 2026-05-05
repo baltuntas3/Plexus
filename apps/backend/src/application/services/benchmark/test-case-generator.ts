@@ -227,7 +227,9 @@ export const generateTestCases = async (
 ): Promise<GeneratedTestCase[]> => {
   const provider = providers.forModel(model);
   const basePrompt = buildGenerationPrompt(systemPrompt, count);
-  const baseMessages = [{ role: "user" as const, content: basePrompt }];
+  const baseMessages: Array<{ role: "user" | "assistant"; content: string }> = [
+    { role: "user", content: basePrompt },
+  ];
 
   const firstResponse = await provider.generate({
     model,
@@ -242,16 +244,33 @@ export const generateTestCases = async (
     return finaliseTestCases(firstParsed.value, count);
   }
 
-  // Retry once at temperature 0 with the same base prompt. Echoing the
-  // bad assistant turn back would roughly double input tokens (the
-  // base prompt is long: spec + category plan + examples), and JSON
-  // parse failures with `responseFormat: "json"` are almost always
-  // format-compliance noise rather than the model needing to "see"
-  // what it got wrong. T=0 collapses sampling variance, which is the
-  // cheap fix this case actually needs.
+  // Retry strategy is keyed to the failure mode rather than blindly rerolling:
+  // - "format" (no JSON object / malformed JSON despite responseFormat: "json")
+  //   is sampling noise. T=0 collapses the variance and almost always recovers
+  //   without needing the bad assistant turn echoed back; that would roughly
+  //   double input tokens for no information gain since `responseFormat: "json"`
+  //   makes T=0 reliably emit valid JSON.
+  // - "schema" (parse succeeded, structure violated the rubric — wrong count,
+  //   wrong category, missing fields) means the model misread the contract.
+  //   T=0 alone would just re-emit the same misread; the model needs to *see*
+  //   what it got wrong. We append the bad output and the validation issues
+  //   as a follow-up turn so the next attempt grounds against concrete
+  //   problems instead of sampling blindly.
+  const retryMessages: Array<{ role: "user" | "assistant"; content: string }> =
+    firstParsed.kind === "schema"
+      ? [
+          ...baseMessages,
+          { role: "assistant", content: firstResponse.text },
+          {
+            role: "user",
+            content: buildSchemaRetryPrompt(firstParsed.issues, count),
+          },
+        ]
+      : baseMessages;
+
   const retryResponse = await provider.generate({
     model,
-    messages: baseMessages,
+    messages: retryMessages,
     temperature: 0,
     responseFormat: "json",
     ...(seed !== undefined ? { seed } : {}),
@@ -268,29 +287,59 @@ type RawTestCase = z.infer<typeof responseSchema>["testCases"][number];
 
 type ParseResult =
   | { ok: true; value: RawTestCase[] }
-  | { ok: false; error: Error };
+  | { ok: false; kind: "format"; error: Error }
+  | { ok: false; kind: "schema"; error: Error; issues: z.ZodIssue[] };
 
 const tryParseTestCases = (text: string): ParseResult => {
   const match = extractJsonObject(text.trim());
   if (!match) {
-    return { ok: false, error: ValidationError("Test case generator returned no JSON object") };
+    return {
+      ok: false,
+      kind: "format",
+      error: ValidationError("Test case generator returned no JSON object"),
+    };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(match);
   } catch {
-    return { ok: false, error: ValidationError("Test case generator returned malformed JSON") };
+    return {
+      ok: false,
+      kind: "format",
+      error: ValidationError("Test case generator returned malformed JSON"),
+    };
   }
   const result = responseSchema.safeParse(parsed);
   if (!result.success) {
     return {
       ok: false,
+      kind: "schema",
+      issues: result.error.issues,
       error: ValidationError("Test case generator output failed validation", {
         issues: result.error.issues,
       }),
     };
   }
   return { ok: true, value: result.data.testCases };
+};
+
+const buildSchemaRetryPrompt = (
+  issues: readonly z.ZodIssue[],
+  count: number,
+): string => {
+  const formattedIssues = issues
+    .map((issue) => `- ${issue.path.join(".") || "(root)"}: ${issue.message}`)
+    .join("\n");
+  return [
+    "Your previous response parsed as JSON but did not match the required schema. Fix the listed issues and resend the FULL test case set.",
+    "",
+    "Validation issues:",
+    formattedIssues,
+    "",
+    `Required: a JSON object {"testCases": [...]} with exactly ${count} entries; each entry must have a non-empty "input" string and a "category" from the allowed enum (typical, complex, ambiguous, adversarial, edge_case, contradictory, stress).`,
+    "",
+    "Return ONLY the corrected JSON object. No prose, no explanation.",
+  ].join("\n");
 };
 
 const normaliseForDedup = (input: string): string =>

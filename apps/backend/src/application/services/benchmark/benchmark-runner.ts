@@ -58,12 +58,14 @@ const DEFAULT_CELL_TIMEOUT_MS = 120_000;
 // Solver temperature is server-fixed (not a user knob) so two benchmarks of
 // the same prompts/models stay directly comparable. The value is non-zero
 // on purpose: Plexus measures real production behaviour, where users sample
-// from the model rather than pin it to greedy decoding. With T=0 every
-// repetition would collapse to the same output and the entire uncertainty
-// stack — repetitions, consistencyScore, ci95, paired-difference
-// significance, suggestedRepetitions — would degenerate to "no information
-// per cell". 0.7 matches the default real callers actually use and keeps
-// repetitions doing what they're for: capturing sampling variance.
+// from the model rather than pin it to greedy decoding. At T=0 reps would
+// only differ by provider-side infrastructure noise (FP reduction order,
+// batched-inference layout) rather than by real sampling, so the entire
+// uncertainty stack — repetitions, consistencyScore, ci95, paired-
+// difference significance, suggestedRepetitions — would degenerate into
+// "no signal per cell". 0.7 matches the default real callers actually use
+// and keeps repetitions doing what they're for: capturing sampling
+// variance.
 const SOLVER_TEMPERATURE = 0.7;
 
 // Within-triple solver fan-out cap. A triple holds `repetitions` cells
@@ -741,12 +743,27 @@ const bucketByTestCase = (
 
 // Mask to 31 bits so derived seeds satisfy the BenchmarkSeed contract
 // ([0, 2^31)) — that's the same range the runner's downstream PRNG callers
-// expect. Domain choices:
-//   - solver path passes the cell coordinates so each rep gets a distinct
-//     sampling seed.
-//   - batch-judge path passes (triple, judgeModel) so the judge sees a
-//     deterministic label permutation that is fixed across the triple's
-//     reps but distinct per (triple, judgeModel).
+// expect. Each derived seed has two distinct consumers, only one of which
+// is actually deterministic:
+//   - JS-side (bit-deterministic, fairness contract): bucket shuffle in
+//     `bucketByTestCase` and the judge label permutation in
+//     `judge-prompt.ts` consume the seed via `seededShuffle`. Same seed →
+//     same shuffle, every time. Removing the seed would break repeatable
+//     bucket order and let label position bias creep into judging.
+//   - Provider `seed` parameter (best-effort, NOT bit-stable): forwarded
+//     to the LLM call. Anthropic ignores it; OpenAI/Groq honor it but
+//     none of these are bit-stable across calls (FP reduction order,
+//     batched inference, MoE routing, provider-side quantization). For
+//     solvers, T=0.7 + repetitions are the actual variance source — the
+//     seed only buys weak reproducibility on cooperating providers and is
+//     a no-op elsewhere.
+// Domain choices for the seed string:
+//   - solver path passes per-cell coordinates so cooperating providers do
+//     not collapse reps onto the same sample.
+//   - batch-judge path passes (triple, judgeModel) — same seed for every
+//     rep in the triple (so the JS-side label permutation is fixed for
+//     the batched judge call, which is the fairness-critical use), but
+//     distinct across triples and judges.
 const fnvSeed = (benchmarkSeed: number, str: string): number =>
   fnv1a(benchmarkSeed, str) & 0x7fffffff;
 

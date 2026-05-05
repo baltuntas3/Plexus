@@ -21,21 +21,27 @@ interface LLMJudgeConfig {
 // fall back to their own defaults when temperature is omitted, and those
 // defaults are NOT zero (e.g. groq-provider.ts → 0.6, OpenAI → 1.0,
 // Anthropic → 1.0). Dropping the field would silently flip judging to
-// stochastic mode and break the rest of the analyzer.
+// fully stochastic mode and inflate every downstream uncertainty estimate.
 //
-// This is a fairness contract, not a knob:
-// - reproducibility — the same benchmark rerun produces the same scores,
-//   so persisted rows are stable across recomputed analyses.
-// - cluster bootstrap CI (analyzer's clusterBootstrapCI) assumes within-
-//   batch correlation comes only from the shared judge prompt; a
-//   stochastic judge would inject an extra noise source and invalidate
-//   the resampling distribution.
+// T=0 is a variance-floor policy, NOT a determinism guarantee. LLMs are
+// not bit-stable even at T=0+seed (FP reduction order on batched inference,
+// MoE routing, KV-cache layout, provider-side quantization), and Anthropic
+// ignores `seed` outright. Persisted rows stay reproducible across
+// re-rendered analyses because we save the votes once — not because
+// re-calling the judge would reproduce them. The downstream analyzer
+// tolerates this small residual judge noise:
+// - cluster bootstrap CI (analyzer's clusterBootstrapCI) treats within-
+//   batch correlation as coming from the shared judge prompt. At T=0
+//   residual judge re-roll noise is small relative to between-input
+//   variance, so the CI is a mild underestimate rather than a manufactured
+//   one; raising temperature would inflate that bias meaningfully.
 // - paired bootstrap tie-break in pickWithPairedSignificanceTieBreak
-//   compares per-cell score differences; with a stochastic judge those
-//   differences would partly reflect judge re-roll noise rather than
-//   real solver gaps.
-// - judgeAgreement diffs would conflate genuine rubric disagreement
-//   with the same judge sampling differently from itself.
+//   compares per-cell score differences. At T=0 those differences are
+//   dominated by real solver gaps; residual judge noise biases the test
+//   toward declaring ties (conservative) rather than spurious wins.
+// - judgeAgreement diffs would otherwise conflate genuine rubric
+//   disagreement between graders with the same grader sampling
+//   differently from itself between rows.
 //
 // There is intentionally no caller surface to override this; if you
 // ever want a stochastic judge, build it as a separate class so the

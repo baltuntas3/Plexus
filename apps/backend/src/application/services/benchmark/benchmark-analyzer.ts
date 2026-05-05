@@ -221,7 +221,7 @@ export const candidateKey = (c: Pick<
 
 // Per-analysis cross-reference index. Built once at the top of
 // computeAnalysis from the row set, then passed to every helper that
-// needs to look up rows by candidate or per-row final scores. Without
+// needs to look up rows by candidate or per-row rubric data. Without
 // this index, each helper rebuilt its own rowsByCandidate map and
 // recomputed `judgeRubricAggregate` on the same rows — turning an
 // O(rows) job into roughly O(rows × consumers).
@@ -229,29 +229,31 @@ interface AnalysisIndex {
   // Every result, keyed by candidate (promptVersionId::solverModel).
   // Includes failed rows (consumers like coverage signature need them).
   rowsByCandidate: ReadonlyMap<string, BenchmarkResult[]>;
-  // Final score (rubric-derived) for every COMPLETED row, keyed by row id.
-  // Failed rows are absent — they have no rubric and consumers must skip
-  // them anyway. Lookups return 0 via `.get(id) ?? 0` for the rare path
-  // where the row id is forwarded from a context that already filtered
-  // out failures.
-  finalScoreByRowId: ReadonlyMap<string, number>;
+  // Full rubric aggregate for every COMPLETED row with at least one judge
+  // vote, keyed by row id. Failed rows and judge-fail-only completed rows
+  // are absent — they have no rubric and consumers must skip them anyway.
+  // Tracking the full aggregate (not just finalScore) lets the per-
+  // candidate and per-(candidate, category) bucket fillers reuse the same
+  // single computation instead of recomputing accuracies/coherences/
+  // instructions every aggregation pass.
+  rubricByRowId: ReadonlyMap<string, ReturnType<typeof judgeRubricAggregate>>;
 }
 
 const buildAnalysisIndex = (
   results: readonly BenchmarkResult[],
 ): AnalysisIndex => {
   const rowsByCandidate = new Map<string, BenchmarkResult[]>();
-  const finalScoreByRowId = new Map<string, number>();
+  const rubricByRowId = new Map<string, ReturnType<typeof judgeRubricAggregate>>();
   for (const row of results) {
     const key = candidateKey(row);
     const bucket = rowsByCandidate.get(key);
     if (bucket) bucket.push(row);
     else rowsByCandidate.set(key, [row]);
     if (row.status === "completed" && row.judgeVotes.length > 0) {
-      finalScoreByRowId.set(row.id, judgeRubricAggregate(row.judgeVotes).finalScore);
+      rubricByRowId.set(row.id, judgeRubricAggregate(row.judgeVotes));
     }
   }
-  return { rowsByCandidate, finalScoreByRowId };
+  return { rowsByCandidate, rubricByRowId };
 };
 
 // Per-row metric accumulator shared by both aggregation passes (per-candidate
@@ -307,12 +309,17 @@ const accumulateMetricRow = (
 
 export const aggregateResults = (
   results: readonly BenchmarkResult[],
+  precomputedIndex?: AnalysisIndex,
 ): CandidateStats[] => {
   // Reps grouped by testCaseId. The runner judges all reps of the same
   // (candidate, testCase) in a single batched LLM call, so per-rep noise
   // is correlated within these groups. The CI is computed via cluster
   // bootstrap over these groups so the resampling distribution preserves
   // that correlation; treating reps as i.i.d. would understate spread.
+  // The optional `precomputedIndex` lets computeAnalysis share its single
+  // rubric pass with this aggregator; direct callers (tests, ad-hoc) omit
+  // it and we fall back to inline rubric computation per row.
+  const rubricByRowId = precomputedIndex?.rubricByRowId;
   type Bucket = MetricBucket & {
     promptVersionId: string;
     solverModel: string;
@@ -335,7 +342,10 @@ export const aggregateResults = (
       buckets.set(key, bucket);
     }
     bucket.totalCost += r.totalCostUsd;
-    const rubric = r.status === "failed" ? null : judgeRubricAggregate(r.judgeVotes);
+    const rubric =
+      r.status === "failed"
+        ? null
+        : rubricByRowId?.get(r.id) ?? judgeRubricAggregate(r.judgeVotes);
     accumulateMetricRow(bucket, r, rubric);
     if (rubric) {
       const cluster = bucket.scoresByTestCase.get(r.testCaseId) ?? [];
@@ -593,7 +603,9 @@ const categoryKeyForTestCase = (
 const aggregateCategoryBreakdown = (
   results: readonly BenchmarkResult[],
   testCasesById: Record<string, Pick<BenchmarkTestCase, "category" | "source">>,
+  precomputedIndex?: AnalysisIndex,
 ): CategoryBreakdownRow[] => {
+  const rubricByRowId = precomputedIndex?.rubricByRowId;
   type Bucket = MetricBucket & {
     candidateKey: string;
     promptVersionId: string;
@@ -617,7 +629,10 @@ const aggregateCategoryBreakdown = (
       };
       buckets.set(key, bucket);
     }
-    const rubric = r.status === "failed" ? null : judgeRubricAggregate(r.judgeVotes);
+    const rubric =
+      r.status === "failed"
+        ? null
+        : rubricByRowId?.get(r.id) ?? judgeRubricAggregate(r.judgeVotes);
     accumulateMetricRow(bucket, r, rubric);
   }
 
@@ -726,10 +741,11 @@ export const computeAnalysis = (
   options: AnalyzerOptions = {},
 ): BenchmarkAnalysis => {
   const index = buildAnalysisIndex(results);
-  const candidates = aggregateResults(results);
+  const candidates = aggregateResults(results, index);
   const categoryBreakdown = aggregateCategoryBreakdown(
     results,
     options.testCasesById ?? {},
+    index,
   );
   const comparableCoverageKeys = pickComparableCoverageKeys(candidates, index);
   const comparableCandidates = candidates.filter((candidate) =>
@@ -932,14 +948,14 @@ const buildEnsembleJudgeReport = (
           meanCoherence: mean(bucket.coherences),
           meanInstruction: mean(bucket.instructions),
           topRated: top
-            ? buildQuoteFromVote(top.row, top.vote, index.finalScoreByRowId.get(top.row.id) ?? 0)
+            ? buildQuoteFromVote(top.row, top.vote, index.rubricByRowId.get(top.row.id)?.finalScore ?? 0)
             : null,
           bottomRated:
             bottom && bottom !== top
               ? buildQuoteFromVote(
                   bottom.row,
                   bottom.vote,
-                  index.finalScoreByRowId.get(bottom.row.id) ?? 0,
+                  index.rubricByRowId.get(bottom.row.id)?.finalScore ?? 0,
                 )
               : null,
         };
@@ -996,7 +1012,7 @@ const resultSampleKey = (
 const pairedDifferenceCI = (
   leftRows: readonly BenchmarkResult[],
   rightRows: readonly BenchmarkResult[],
-  finalScoreByRowId: ReadonlyMap<string, number>,
+  rubricByRowId: AnalysisIndex["rubricByRowId"],
 ): { low: number; high: number } | null => {
   const left = new Map(leftRows.map((r) => [resultSampleKey(r), r] as const));
   const right = new Map(rightRows.map((r) => [resultSampleKey(r), r] as const));
@@ -1014,8 +1030,8 @@ const pairedDifferenceCI = (
     const r = right.get(key);
     if (!l || !r || l.status !== "completed" || r.status !== "completed") continue;
     const bucket = diffsByTestCase.get(l.testCaseId) ?? [];
-    const lScore = finalScoreByRowId.get(l.id) ?? 0;
-    const rScore = finalScoreByRowId.get(r.id) ?? 0;
+    const lScore = rubricByRowId.get(l.id)?.finalScore ?? 0;
+    const rScore = rubricByRowId.get(r.id)?.finalScore ?? 0;
     bucket.push(lScore - rScore);
     diffsByTestCase.set(l.testCaseId, bucket);
   }
@@ -1059,7 +1075,7 @@ export const pickWithPairedSignificanceTieBreak = (
   // (tests, ad-hoc) can omit it; we build a local index in that case so
   // the function stays callable as a unit.
   const index = precomputedIndex ?? buildAnalysisIndex(results);
-  const { rowsByCandidate, finalScoreByRowId } = index;
+  const { rowsByCandidate, rubricByRowId } = index;
   const top = ranking[0];
   if (!top) return null;
   const topStats = byKey.get(top.candidateKey);
@@ -1082,7 +1098,7 @@ export const pickWithPairedSignificanceTieBreak = (
     const diffCi = pairedDifferenceCI(
       rowsByCandidate.get(aKey) ?? [],
       rowsByCandidate.get(bKey) ?? [],
-      finalScoreByRowId,
+      rubricByRowId,
     );
     const tied = diffCi
       ? diffCi.low <= 0 && diffCi.high >= 0

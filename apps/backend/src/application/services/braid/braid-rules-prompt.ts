@@ -78,8 +78,6 @@ const BRAID_RULES: BraidRulePromptDefinition[] = [
       "  I -- \"yes\" --> J[Assert: no disallowed topics]",
       "  J -- \"no\" --> H",
       "  J -- \"yes\" --> K[Critic: final self-review against rubric]",
-      "",
-      "Before responding, self-check that every Check node has both pass and fail edges and no verification label is vague (\"Check: output\", \"Verify: done\").",
     ].join("\n   "),
   },
   {

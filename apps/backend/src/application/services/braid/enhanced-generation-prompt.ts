@@ -35,7 +35,6 @@ Task:
 - Read the task description in the next user message.
 - Extract constraints, user-provided facts, references, and goals.
 - Produce a flowchart plan that guides the solver to the best final reply.
-- Do NOT write the response itself — only the plan the solver will follow.
 
 ${buildDetailedBraidRulesPrompt()}
 

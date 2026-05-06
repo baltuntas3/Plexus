@@ -11,11 +11,7 @@ import type { IAIProviderFactory, TokenUsage } from "../ai-provider.js";
 import { calculateCost } from "../model-registry.js";
 import type { ICacheStore } from "../cache-store.js";
 import type { GraphLinter } from "./lint/graph-linter.js";
-import {
-  ENHANCED_SYSTEM_PROMPT,
-  MERMAID_OUTPUT_CONTRACT,
-} from "./enhanced-generation-prompt.js";
-import { buildDetailedBraidRulesPrompt } from "./braid-rules-prompt.js";
+import { ENHANCED_SYSTEM_PROMPT } from "./enhanced-generation-prompt.js";
 
 interface BraidGenerationInput {
   sourcePrompt: string;
@@ -48,20 +44,16 @@ const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 // Bump whenever the generation or repair prompt changes so stale cache
 // entries generated with older templates are not reused.
-const PROMPT_TEMPLATE_VERSION = "v6-shared-rules-repair";
+const PROMPT_TEMPLATE_VERSION = "v7-conversational-repair";
 
 const GENERATION_TEMPERATURE = 0;
 // Single repair attempt: the validator is deterministic and additional turns
-// rarely succeed where the first repair did not. The repair turn receives
-// the full rule book (REPAIR_SYSTEM_PROMPT) so the model is never asked to
-// fix a graph against criteria it can no longer see.
+// rarely succeed where the first repair did not. The repair turn is sent as
+// a continuation of the original conversation (same system prompt, original
+// user task, assistant's first attempt, then the diagnostic-driven user
+// follow-up) so the rule book is not re-emitted on every retry. Eliminates
+// roughly the size of the detailed rules prompt from the repair payload.
 const MAX_REPAIR_ATTEMPTS = 1;
-
-const REPAIR_SYSTEM_PROMPT = `You are an expert BRAID graph designer fixing a Mermaid flowchart that failed validation. Apply the listed validation failures while keeping every other aspect of the graph intact.
-
-${buildDetailedBraidRulesPrompt()}
-
-${MERMAID_OUTPUT_CONTRACT}`;
 
 export class BraidGenerator {
   constructor(
@@ -109,13 +101,14 @@ export class BraidGenerator {
     qualityScore: GraphQualityScore;
   }> {
     const provider = this.providers.forModel(input.generatorModel);
+    const initialMessages = [
+      { role: "system" as const, content: ENHANCED_SYSTEM_PROMPT },
+      { role: "user" as const, content: buildGenerationUserPrompt(input) },
+    ];
     const first = await provider.generate({
       model: input.generatorModel,
       temperature: GENERATION_TEMPERATURE,
-      messages: [
-        { role: "system", content: ENHANCED_SYSTEM_PROMPT },
-        { role: "user", content: buildGenerationUserPrompt(input) },
-      ],
+      messages: initialMessages,
     });
 
     let usage = { ...first.usage };
@@ -130,10 +123,11 @@ export class BraidGenerator {
         model: input.generatorModel,
         temperature: GENERATION_TEMPERATURE,
         messages: [
-          { role: "system", content: REPAIR_SYSTEM_PROMPT },
+          ...initialMessages,
+          { role: "assistant" as const, content: cleanMermaidCode(currentText) },
           {
-            role: "user",
-            content: buildRepairPrompt(input, currentText, validation.diagnostics),
+            role: "user" as const,
+            content: buildRepairFollowupPrompt(validation.diagnostics),
           },
         ],
       });
@@ -212,23 +206,15 @@ const buildGenerationUserPrompt = (input: BraidGenerationInput): string =>
     "---",
   ].join("\n");
 
-const buildRepairPrompt = (
-  input: BraidGenerationInput,
-  mermaidCode: string,
+// Repair message is appended to the original conversation (system + user
+// task + assistant's first graph), so the rules and source prompt are
+// already in context — we only need to surface the validator's findings
+// and re-state the output contract that holds across both turns.
+const buildRepairFollowupPrompt = (
   diagnostics: readonly string[],
 ): string =>
   [
-    `Task type: ${input.taskType}`,
-    "",
-    "Original classical prompt:",
-    "---",
-    input.sourcePrompt,
-    "---",
-    "",
-    "Current Mermaid graph:",
-    "```mermaid",
-    cleanMermaidCode(mermaidCode),
-    "```",
+    "Your previous graph failed validation. Fix the listed issues while keeping every other aspect of the graph intact.",
     "",
     "Validation failures to fix:",
     ...diagnostics.map((diagnostic) => `- ${diagnostic}`),

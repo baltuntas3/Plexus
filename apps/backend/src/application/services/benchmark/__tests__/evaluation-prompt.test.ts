@@ -30,7 +30,7 @@ describe("buildEvaluationPrompt", () => {
     const result = buildEvaluationPrompt(summary(graph));
     expect(result).toContain("OUTPUT ONLY THE FINAL RESULT");
     expect(result).toContain(graph);
-    expect(result).toContain("brevity is required");
+    expect(result).toContain("consumed by another program");
     // Wrapper must come BEFORE the graph so the model reads its job first.
     expect(result.indexOf("OUTPUT ONLY THE FINAL RESULT")).toBeLessThan(
       result.indexOf(graph),

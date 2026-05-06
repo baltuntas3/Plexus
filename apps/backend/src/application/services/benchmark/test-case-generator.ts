@@ -166,9 +166,7 @@ HARD RULES (a case that violates any of these is unacceptable; rewrite it):
   • Concrete contrast for a customer-satisfaction analyzer (Mode B):
     – WRONG: "Müşteri yorumu: 'Ürün gayet iyi ama kargo geç geldi.' Memnuniyet puanı kaç?"
     – WRONG: "Şu yorumu 5 üzerinden puanla: 'Ürün iyi.'"
-    – WRONG: "Bir müşteri şöyle dedi: ..."
     – RIGHT: "Ürün gayet iyi ama kargo geç geldi, biraz hayal kırıklığı yaşadım."
-    – RIGHT: "Fena değil aslında, beklediğim kadar iyi olmasa da kullanıyorum."
     – RIGHT: "⭐⭐⭐"
 - Every input must require this system's specific task to be answered well; if a generic chatbot could answer it identically, it is too generic — replace it.
 - Stay inside the system's declared scope. Do not ask the system to do tasks it was not built for unless the case is explicitly adversarial / edge_case AND the violation is the point.

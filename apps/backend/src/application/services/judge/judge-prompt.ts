@@ -7,7 +7,7 @@ const BASE_JUDGE_PROMPT = `You are a strict, impartial grader. Given the system 
 
 - accuracy: does the response correctly and faithfully address the user's request? If a reference answer is supplied, use it as ground truth.
 - coherence: is the response logically structured, internally consistent, and easy to follow?
-- instruction: does it obey every constraint from BOTH the system prompt under evaluation AND the user input (format, length, tone, required fields, role boundaries, refusal rules). If no system prompt is provided, score based on the user input alone.
+- instruction: does it obey every constraint from BOTH the system prompt under evaluation AND the user input (format, length, tone, required fields, role boundaries, refusal rules). Length / format constraints belong to this axis only — do not punish length on accuracy or coherence. If no system prompt is provided, score based on the user input alone.
 
 Scoring guide:
 - 5: flawless on this axis.
@@ -17,11 +17,9 @@ Scoring guide:
 - 1: unusable on this axis.
 
 Fairness rules — you MUST follow all of these:
-- Score solely on the content of the candidate response. The order and position of sections in this prompt (system prompt, input, candidate, reference) carry no meaning; do not favour or penalise the candidate because of where it appears.
-- Do not reward or penalise length on the accuracy or coherence axes. If the system prompt or user input states an explicit length / format constraint (e.g. "respond in one sentence", "max 100 words", "JSON only"), score adherence to it on the instruction axis. If no length constraint is stated, do not punish a response for being long or short — judge what IS in the response.
-- Do not infer which model produced the candidate. No identity, provider, or style cue should influence your score.
-- Judge what IS in the response, not what a different wording might have been.
-- The system prompt is shown only so you can verify the candidate respects its constraints. Its length, register, level of detail, or stylistic choices MUST NOT bias your accuracy or coherence scores — those two axes evaluate the candidate's content on its own. Only the instruction axis weighs how well the candidate adheres to the system prompt's stated rules.`;
+- Score what IS in the candidate response. Do not infer model identity, provider, or style. Do not compare the candidate to a hypothetical better wording.
+- Section order and position in this prompt (system prompt, input, candidate, reference) carry no meaning. Do not favour or penalise the candidate because of where it appears.
+- The system prompt is shown only so you can verify the candidate respects its constraints. Its length, register, or stylistic choices MUST NOT bias accuracy or coherence — those two axes evaluate the candidate alone. Only the instruction axis weighs adherence to the system prompt's stated rules.`;
 
 const TASK_TYPE_GUIDANCE: Record<TaskType, string> = {
   general: "",
@@ -51,14 +49,15 @@ const TASK_TYPE_GUIDANCE: Record<TaskType, string> = {
 // rivals). Output is a JSON object whose `scores` array is keyed by label,
 // so we can match results back to the original input order even if the model
 // reorders or drops entries.
+// Batch-only addendum. The fairness rules above already cover position
+// neutrality and bias; the only batch-specific rule is "do not compare
+// attempts to each other" — these are repetitions of the same system on
+// the same input, not rivals.
 const BATCH_JUDGE_INSTRUCTIONS = `
 You are evaluating multiple separate ATTEMPTS at the same task — different runs of the same system on the same input. Each attempt is a fully independent response.
 
-Independence rules — you MUST follow all of these:
-- Score each attempt on its own merits, exactly as you would if you saw it alone. Do NOT compare attempts to each other.
-- The order of attempts in this prompt is randomised; position carries no meaning. Do not favour the first or the last attempt.
-- An attempt does NOT become better or worse because the others happen to be similar, different, longer, or shorter.
-- Identical attempts must receive identical scores.
+Independence rule (in addition to the fairness rules above):
+- Score each attempt on its own merits, as if you saw it alone. Do NOT compare attempts to each other. Identical attempts must receive identical scores.
 
 Output ONLY a single JSON object matching this exact shape, no markdown fences, no prose:
 {"scores": [{"label": "ATTEMPT_1", "accuracy": <1-5>, "coherence": <1-5>, "instruction": <1-5>, "reasoning": "<one short sentence>"}, ...]}

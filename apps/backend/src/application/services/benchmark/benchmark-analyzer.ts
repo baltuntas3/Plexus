@@ -357,7 +357,7 @@ export const aggregateResults = (
   const out: CandidateStats[] = [];
   for (const [key, bucket] of buckets) {
     const completedCount = bucket.completedCount;
-    const withinCaseStddev = meanWithinClusterStddev(
+    const withinCaseStddev = pooledWithinClusterStddev(
       [...bucket.scoresByTestCase.values()],
     );
     const ci = clusterBootstrapCI(
@@ -447,13 +447,28 @@ const buildPPDRows = (
       };
     });
 
-// Composite score: weighted combination of quality (geometric mean — penalises
-// any dimension sitting at zero) and efficiency (additive — allows the worst
-// solver-latency/cost candidate to still contribute to quality-driven ranking),
-// followed by a soft reliability penalty. The hard gate still excludes
-// clearly unreliable candidates, but this soft penalty prevents a cliff where
-// a candidate with modest operational issues remains entirely unpenalised
-// until it crosses the eligibility threshold.
+// Composite score: weighted combination of quality (weighted geometric mean
+// across normalised rubric means + consistency) and efficiency (additive,
+// against-best harmonic on solver latency + cost), followed by a soft
+// reliability multiplier. Quality dimensions are clamped to a 0.1 floor
+// before the geometric mean so a single near-zero rubric drags the score
+// hard but does not collapse it to literal zero — the alternative (no
+// floor) would let one rubric dimension at the integer-valid bottom of
+// the scale (rubric = 1, normalised → 0.1) annihilate every other signal
+// when combined with consistency at zero. The floor is part of the policy,
+// not a numerical safety net; raising or lowering it changes how punishing
+// the geometric mean is in practice.
+//
+// The reliability multiplier is intentionally dual-coded with the rubric
+// pipeline: rubric aggregation skips failed rows (which would otherwise
+// drag means down), and this multiplier separately discounts the composite
+// by operational issue rate. The two are not double-counting the same
+// observation — they price the same incident on two different axes (what
+// the candidate produced when it worked, and how often it failed to
+// produce anything) — but they DO compound, which is intentional. A flaky
+// candidate that scores well on its surviving rows is meant to lose to a
+// reliable candidate of similar quality.
+//
 // Weights live in the module-level COMPOSITE_/QUALITY_/EFFICIENCY_ constants
 // above so the policy is greppable in one place.
 const computeCompositeRanking = (
@@ -518,9 +533,16 @@ const normaliseDescending = (value: number, bestValue: number): number => {
 };
 
 // Rubric means are the average of N integer judge votes in [1,5], so the
-// domain-valid range is [1,5]. Math.max/min clamps protect against
+// domain-valid range is [1,5]. The Math.max/min clamps protect against
 // floating-point drift; values outside [1,5] are not produceable by the
 // upstream zod schema (`z.number().int().min(1).max(5)` per vote).
+//
+// The output range is intentionally [0.1, 1.0] (not [0, 1]): the 0.1 floor
+// keeps the rubric input to the geometric mean strictly positive so a
+// single rubric at the bottom of the integer scale does not annihilate the
+// composite. This means the worst attainable rubric still contributes a
+// non-zero factor to quality — penalising it heavily but not infinitely.
+// See the doc on computeCompositeRanking for the policy rationale.
 const normaliseRubricMean = (value: number): number => {
   const bounded = Math.max(1, Math.min(5, value));
   return 0.1 + ((bounded - 1) / 4) * 0.9;
@@ -722,6 +744,16 @@ const computeJudgeAgreement = (
         meanAbsCoherenceDiff,
         meanAbsInstructionDiff,
       ]);
+      // `agreementScore` is `1 - MAE/4`: the average absolute rubric
+      // difference, normalised by the maximum possible diff on the
+      // integer 1-5 scale (= 4), and inverted so 1 means "graders agree"
+      // and 0 means "graders maximally disagree". This is NOT a
+      // chance-corrected agreement metric (Cohen's κ, Krippendorff's α)
+      // — it does not account for agreement expected by chance under the
+      // observed marginal distributions, so two judges who happen to
+      // cluster around the middle of the rubric will look more agreeable
+      // than they really are. The simple MAE form is what the UI needs:
+      // a per-pair number whose units are interpretable in rubric points.
       return {
         judgeModelA,
         judgeModelB,
@@ -781,6 +813,15 @@ export const computeAnalysis = (
   const scoreFloorPool = reliableCompleted.length > 0 ? reliableCompleted : completed;
   const bestScore = Math.max(...scoreFloorPool.map((c) => c.meanFinalScore));
   const fraction = options.minScoreFraction ?? SCORE_FLOOR_FRACTION;
+  // Score floor is a RELATIVE gate (`bestScore * fraction`) and therefore
+  // adapts to the cohort. With a single-candidate cohort, the floor
+  // collapses to the best score itself — that single candidate clears it
+  // by definition and is recommendable even if its absolute quality is
+  // low. This is intentional: PPD/Pareto/composite are all comparative
+  // views, and with one candidate there is nothing to compare against.
+  // Callers that need an absolute "is this prompt good enough to deploy"
+  // gate must enforce that policy upstream — the analyzer does not
+  // pretend to make that judgement.
   const scoreFloor = bestScore * fraction;
 
   const baseline = pickBaseline(comparableCandidates, scoreFloor);
@@ -1035,13 +1076,22 @@ const pairedDifferenceCI = (
     bucket.push(lScore - rScore);
     diffsByTestCase.set(l.testCaseId, bucket);
   }
-  const totalDiffs = [...diffsByTestCase.values()].reduce(
+  // Need at least two distinct testCase clusters AND at least two diffs
+  // overall for the cluster bootstrap to actually carry information about
+  // input-coverage uncertainty. With a single cluster the resampler can
+  // only ever draw that cluster, so the CI collapses to a point centred on
+  // the cluster mean and the downstream tie-break would mistake "no
+  // signal" for "0 ∈ CI ⇒ tied" — see callers.
+  const clustersWithDiffs = [...diffsByTestCase.values()].filter(
+    (bucket) => bucket.length > 0,
+  );
+  const totalDiffs = clustersWithDiffs.reduce(
     (sum, bucket) => sum + bucket.length,
     0,
   );
-  if (totalDiffs < 2) return null;
+  if (clustersWithDiffs.length < 2 || totalDiffs < 2) return null;
   const rng = mulberry32(fnv1a(BOOTSTRAP_SEED, sharedKeys.join("|")));
-  return clusterBootstrapCI([...diffsByTestCase.values()], rng);
+  return clusterBootstrapCI(clustersWithDiffs, rng);
 };
 
 // Pick the top-composite candidate; if any runner-up is not statistically
@@ -1089,21 +1139,26 @@ export const pickWithPairedSignificanceTieBreak = (
     };
   }
 
+  // Tie test is paired-bootstrap only. When the paired CI is unavailable
+  // (fewer than two testCase clusters with shared coverage), there is no
+  // honest evidence of equivalence — falling back to the marginal CI
+  // overlap on the candidates' own scores would manufacture a "tied"
+  // verdict in exactly the small-benchmark regime where the marginal CIs
+  // are themselves degenerate (single-cluster point estimates). Default
+  // to "not tied" so the recommendation falls back to the top-composite.
   const isPairTied = (
     aKey: string,
     bKey: string,
-    aStats: CandidateStats,
-    bStats: CandidateStats,
+    _aStats: CandidateStats,
+    _bStats: CandidateStats,
   ): { tied: boolean; diffCi: { low: number; high: number } | null } => {
     const diffCi = pairedDifferenceCI(
       rowsByCandidate.get(aKey) ?? [],
       rowsByCandidate.get(bKey) ?? [],
       rubricByRowId,
     );
-    const tied = diffCi
-      ? diffCi.low <= 0 && diffCi.high >= 0
-      : aStats.ci95Low <= bStats.ci95High && aStats.ci95High >= bStats.ci95Low;
-    return { tied, diffCi };
+    if (!diffCi) return { tied: false, diffCi: null };
+    return { tied: diffCi.low <= 0 && diffCi.high >= 0, diffCi };
   };
 
   // 1) Collect all candidates tied with the top under paired bootstrap.
@@ -1221,12 +1276,30 @@ const stddev = (values: readonly number[]): number => {
   return Math.sqrt(v);
 };
 
-const meanWithinClusterStddev = (
+// Pooled within-cluster standard deviation. Each cluster contributes its
+// sample variance weighted by (n_g - 1) — so a cluster with 10 reps speaks
+// 9× louder than a cluster with 2 reps about how noisy the within-case
+// signal really is. The previous implementation averaged the per-cluster
+// stddevs unweighted, which let a single noisy 2-rep cluster move the
+// number as much as a stable 10-rep cluster. Formula:
+//   sigma_pooled = sqrt( Σ (n_g - 1) · s_g² / Σ (n_g - 1) )
+// Reduces to a single cluster's sample stddev when only one cluster has
+// reps, and to 0 when no cluster has reps.
+const pooledWithinClusterStddev = (
   groups: readonly (readonly number[])[],
 ): number => {
   const repeated = groups.filter((group) => group.length >= 2);
   if (repeated.length === 0) return 0;
-  return mean(repeated.map(stddev));
+  let weightedVarianceSum = 0;
+  let degreesOfFreedom = 0;
+  for (const group of repeated) {
+    const dof = group.length - 1;
+    const s = stddev(group);
+    weightedVarianceSum += dof * s * s;
+    degreesOfFreedom += dof;
+  }
+  if (degreesOfFreedom <= 0) return 0;
+  return Math.sqrt(weightedVarianceSum / degreesOfFreedom);
 };
 
 // Linear taper from 1 (sd=0) to 0 (sd=CEILING). Clamped at the ends so the

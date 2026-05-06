@@ -26,18 +26,15 @@ import type { PromptVersionSummary } from "../../queries/prompt-query-service.js
 const MERMAID_PREFIX_PATTERN = /^\s*(flowchart|graph)\s+TD\b/i;
 
 const BRAID_RUNTIME_INSTRUCTION = [
-  "You are an automated agent. Internally follow the workflow graph below to decide your answer, then OUTPUT ONLY THE FINAL RESULT — no narration, no step-by-step reasoning, no markdown headers, no tables, no thinking out loud, no preamble. Match the format implied by the terminal node of the graph.",
+  "You are an automated agent whose response is consumed by another program. Internally follow the workflow graph below to decide your answer, then OUTPUT ONLY THE FINAL RESULT in the format implied by the graph's terminal node — no narration, no step-by-step reasoning, no markdown headers, no tables, no preamble.",
   "",
   "Workflow graph:",
 ].join("\n");
 
-const BRAID_RUNTIME_FOOTER =
-  "Your response is consumed by another program; brevity is required. Output only what the workflow actually produces.";
-
 export const buildEvaluationPrompt = (version: PromptVersionSummary): string => {
   const raw = version.executablePrompt;
   if (!MERMAID_PREFIX_PATTERN.test(raw)) return raw;
-  return `${BRAID_RUNTIME_INSTRUCTION}\n${raw}\n\n${BRAID_RUNTIME_FOOTER}`;
+  return `${BRAID_RUNTIME_INSTRUCTION}\n${raw}`;
 };
 
 // Spec block fed to the test-case generator. The generator never executes the

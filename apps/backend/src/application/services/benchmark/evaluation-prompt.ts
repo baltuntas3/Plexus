@@ -1,4 +1,8 @@
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
+import {
+  TEMPLATE_VARIABLE_PLACEHOLDER_RULE_FULL,
+  formatTemplateVariableList,
+} from "../template-variables-prompt.js";
 
 // Single source of truth for the prompt content used during benchmarking.
 //
@@ -59,17 +63,10 @@ export const buildVersionGenerationSection = (
       `BRAID workflow graph (the prompt decomposed into atomic decision steps; the system follows this graph at runtime):\n${version.braidGraph}`,
     );
   }
-  if (version.variables.length > 0) {
-    const lines = version.variables.map((v) => {
-      const parts: string[] = [`{{${v.name}}}${v.required ? "" : " (optional)"}`];
-      const desc = v.description?.trim();
-      if (desc) parts.push(`— ${desc}`);
-      const def = v.defaultValue?.trim();
-      if (def) parts.push(`(default: ${def})`);
-      return `- ${parts.join(" ")}`;
-    });
+  const variableList = formatTemplateVariableList(version.variables);
+  if (variableList) {
     blocks.push(
-      `Template variables (literal placeholders the runtime substitutes; never invent new ones):\n${lines.join("\n")}`,
+      `Template variables — ${TEMPLATE_VARIABLE_PLACEHOLDER_RULE_FULL}\n${variableList}`,
     );
   }
   return blocks.join("\n\n");

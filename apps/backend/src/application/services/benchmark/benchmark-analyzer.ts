@@ -6,6 +6,22 @@
 // bootstrap 95% confidence interval on `meanFinalScore` so two candidates
 // can be compared as "significantly different vs. within noise".
 //
+// Two distinct quality scales coexist intentionally:
+// - `meanFinalScore`, `ci95Low/High`, `ppd` and `paretoFrontier` operate on
+//   the RAW [0, 1] rubric mean (`(rubricMean - 1) / 4`). These are absolute,
+//   chart-friendly numbers — what the UI labels "Avg score", what PPD divides
+//   into the cost ratio, and what Pareto compares for dominance.
+// - The composite ranking pipeline (`computeCompositeRanking`) maps each
+//   rubric dimension and the consistency score onto [0.1, 1.0] before
+//   feeding them into a weighted geometric mean. The 0.1 floor is a policy
+//   choice (see `normaliseRubricMean` and the doc on
+//   `computeCompositeRanking`) — without it, a single rubric dimension
+//   bottoming out at integer 1 would force the whole geometric mean to
+//   zero and dominate every other signal. Composite is therefore NOT
+//   directly comparable to `meanFinalScore` and is never sent through PPD
+//   or Pareto. UI surfaces both deliberately: PPD/Pareto for absolute
+//   trade-off views, composite for the recommendation rule.
+//
 // The analyzer then produces three ranked views:
 //
 //   1. Pareto frontier on (maximize meanFinalScore, minimize totalCostUsd) —
@@ -509,15 +525,23 @@ const computeCompositeRanking = (
     .sort((a, b) => b.compositeScore - a.compositeScore);
 };
 
-// Returns the smallest pick(item) across the cohort. Used by efficiency
-// normalisation as the "best" reference value (lowest latency / cost).
-// Empty / non-finite cohorts collapse to 0 — `normaliseDescending` then
-// short-circuits because bestValue <= 0.
+// Returns the smallest STRICTLY POSITIVE pick(item) across the cohort —
+// used by efficiency normalisation as the "best" reference value (lowest
+// non-zero latency / cost). Zero or negative observations are skipped:
+// a candidate with `meanCostUsd = 0` (e.g. provider that did not report
+// usage on a failed row) would otherwise drag bestCost down to 0,
+// `normaliseDescending` would then short-circuit to 1 for EVERY
+// candidate, and the cost dimension of efficiency would silently
+// collapse for the whole cohort. Skipping non-positive values keeps the
+// reference "best" anchored to a candidate that actually carries cost
+// signal. When no candidate has a positive observation, returns 0 and
+// `normaliseDescending` consistently emits 1 — that path is genuine
+// "no signal", not the silent-collapse failure mode it used to cover.
 const minOf = <T>(items: readonly T[], pick: (item: T) => number): number => {
   let min = Number.POSITIVE_INFINITY;
   for (const item of items) {
     const value = pick(item);
-    if (value < min) min = value;
+    if (value > 0 && value < min) min = value;
   }
   return Number.isFinite(min) ? min : 0;
 };
@@ -898,6 +922,13 @@ export const computeAnalysis = (
   };
 };
 
+// Returns the per-vote rubric mean on the RAW integer scale [1, 5] —
+// NOT the normalised [0, 1] `finalScore` the UI displays. The two are
+// monotonically related (`finalScore = (rubricMean - 1) / 4`) so any
+// ordering done with `overallJudgeMean` matches the ordering you would
+// get from `finalScore`. The function is internal-only; it exists to
+// rank votes against each other when picking the per-judge top/bottom
+// quote, where the absolute scale is irrelevant.
 const overallJudgeMean = (vote: JudgeVote): number =>
   (vote.accuracy + vote.coherence + vote.instruction) / 3;
 
@@ -1370,11 +1401,21 @@ const clusterBootstrapCI = (
     samples[i] = count === 0 ? 0 : sum / count;
   }
   samples.sort((a, b) => a - b);
+  // 95% percentile CI with EQUAL-COUNT tails. With N=10_000:
+  //   lowIdx = floor(0.025·N) = 250  → 250 samples (indices 0..249) below
+  //   highIdx = ceil(0.975·N) − 1 = 9749  → 250 samples (indices 9750..9999) above
+  // Each tail holds exactly 2.5% of the resampled means, which is the
+  // honest empirical 95% interval. Alternative quantile conventions
+  // (e.g. (k+1)/N or k/(N-1) Hyndman-Fan #6/#7) would shift one tail by
+  // a single sample and break this count-symmetry.
   const lowIdx = Math.floor(0.025 * BOOTSTRAP_SAMPLES);
-  const highIdx = Math.ceil(0.975 * BOOTSTRAP_SAMPLES) - 1;
+  const highIdx = Math.min(
+    BOOTSTRAP_SAMPLES - 1,
+    Math.ceil(0.975 * BOOTSTRAP_SAMPLES) - 1,
+  );
   return {
     low: samples[lowIdx] ?? 0,
-    high: samples[Math.min(highIdx, BOOTSTRAP_SAMPLES - 1)] ?? 0,
+    high: samples[highIdx] ?? 0,
   };
 };
 

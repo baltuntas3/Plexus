@@ -17,6 +17,7 @@
 import type { IAIProvider } from "../ai-provider.js";
 import type { BraidChatTurn, TaskType } from "@plexus/shared-types";
 import { ValidationError } from "../../../domain/errors/domain-error.js";
+import { TEMPLATE_VARIABLE_PLACEHOLDER_RULE_SHORT } from "../template-variables-prompt.js";
 import { buildCompactBraidRulesPrompt } from "./braid-rules-prompt.js";
 
 type ChatOutputType = "diagram" | "question";
@@ -140,8 +141,9 @@ export class BraidChatAgent {
     lines.push("---");
     if (ctx.variableNames.length > 0) {
       lines.push("");
+      lines.push(TEMPLATE_VARIABLE_PLACEHOLDER_RULE_SHORT);
       lines.push(
-        `Declared template variables (preserve as {{name}} placeholders in node labels — do NOT substitute literal values): ${ctx.variableNames.map((n) => `{{${n}}}`).join(", ")}`,
+        `Declared variables: ${ctx.variableNames.map((n) => `{{${n}}}`).join(", ")}`,
       );
     }
     if (ctx.currentMermaid) {

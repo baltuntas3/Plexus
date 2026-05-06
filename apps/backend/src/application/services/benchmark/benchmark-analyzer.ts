@@ -304,15 +304,38 @@ const emptyMetricBucket = (): MetricBucket => ({
 // Caller computes the rubric once per row (it is also needed for the
 // per-test-case score cluster outside the bucket) and passes it in so
 // neither side recomputes the same per-vote sums.
+//
+// Latency / cost contribution rules:
+//   - Completed rows always contribute their measurements. The runner
+//     stamps `solverLatencyMs = Date.now() - start` on the success path,
+//     so a value of 0 there is a legitimate "essentially instant" call;
+//     including it keeps the mean honest about cohort-wide solver wall
+//     time.
+//   - Failed rows contribute only when their measurement is positive.
+//     The triple-timeout / pre-flight-error path constructs failed rows
+//     with `solverLatencyMs = 0` / `totalCostUsd = 0` because no
+//     measurement was ever taken (the request never produced a first
+//     byte). Pushing those zeros into the running mean would pull
+//     `meanSolverLatencyMs` and `meanCostUsd` artificially DOWN — a
+//     flaky candidate would look faster and cheaper than its working
+//     siblings, which inverts the signal we want from these means.
+//     Failed rows that DID record a partial measurement (solver
+//     succeeded but post-processing failed, partial judge usage on
+//     parse error) still contribute — their value is positive.
 const accumulateMetricRow = (
   bucket: MetricBucket,
   r: BenchmarkResult,
   rubric: ReturnType<typeof judgeRubricAggregate> | null,
 ): void => {
-  bucket.latencies.push(r.solverLatencyMs);
-  bucket.costs.push(r.totalCostUsd);
+  const isFailed = r.status === "failed" || !rubric;
+  if (!isFailed || r.solverLatencyMs > 0) {
+    bucket.latencies.push(r.solverLatencyMs);
+  }
+  if (!isFailed || r.totalCostUsd > 0) {
+    bucket.costs.push(r.totalCostUsd);
+  }
   bucket.operationalIssueCount += operationalIssueWeight(r);
-  if (r.status === "failed" || !rubric) {
+  if (isFailed) {
     bucket.failedCount += 1;
     return;
   }
@@ -503,7 +526,15 @@ const computeCompositeRanking = (
       const acc = normaliseRubricMean(c.meanAccuracy);
       const coh = normaliseRubricMean(c.meanCoherence);
       const ins = normaliseRubricMean(c.meanInstruction);
-      const con = Math.max(0.1, c.consistencyScore);
+      // Consistency lives on [0,1] natively, so the same affine map used
+      // by `normaliseRubricMean` is applied as `0.1 + 0.9·x` (clamped).
+      // The previous form was `Math.max(0.1, x)` — a plain clamp that
+      // left consistency in [0,1]'s linear scale while rubric was already
+      // mapped to [0.1,1]. Mixing the two scales inside the geometric
+      // mean made consistency weigh slightly less than rubric per "unit
+      // of intuitive quality" (mid consistency=0.5 → 0.5 vs mid rubric=3
+      // → 0.55). Sharing the affine map removes that asymmetry.
+      const con = normaliseUnitInterval(c.consistencyScore);
       const quality =
         Math.pow(acc, QUALITY_ACCURACY_FRACTION) *
         Math.pow(coh, QUALITY_COHERENCE_FRACTION) *
@@ -570,6 +601,15 @@ const normaliseDescending = (value: number, bestValue: number): number => {
 const normaliseRubricMean = (value: number): number => {
   const bounded = Math.max(1, Math.min(5, value));
   return 0.1 + ((bounded - 1) / 4) * 0.9;
+};
+
+// Same [0.1, 1.0] target range as `normaliseRubricMean`, applied to a
+// value already on [0,1] (consistency, etc.). Affine map `0.1 + 0.9·x`
+// preserves linear interpretation: 0 → 0.1, 0.5 → 0.55, 1 → 1.0.
+// Clamps protect against floating-point drift past the unit interval.
+const normaliseUnitInterval = (value: number): number => {
+  const bounded = Math.max(0, Math.min(1, value));
+  return 0.1 + bounded * 0.9;
 };
 
 const isReliableForComparativeViews = (candidate: CandidateStats): boolean =>

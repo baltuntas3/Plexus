@@ -30,6 +30,21 @@ A[Short] --> B[${longLabel}];`);
     expect(result.issues).toHaveLength(1);
     expect(result.issues[0]?.nodeId).toBe("B");
   });
+
+  it("does not count {{var}} placeholders against the atomicity budget", () => {
+    // Placeholder alone is 53 chars (~14 tokens). Surrounding literal
+    // is "Extract  now" (12 chars). Total label without strip = 65
+    // chars ≈ 17 tokens, which would exceed the 15-token budget and
+    // get flagged. After stripping the placeholder (CLAUDE.md
+    // contract — references are slots, not literal content), only
+    // 12 chars remain, ≈ 3 tokens, well under budget.
+    const placeholderHeavy = "{{thisIsAReallyLongVariableNameForRegressionTesting}}";
+    const graph = parse(`flowchart TD;
+A[Extract ${placeholderHeavy} now] --> B[Done];`);
+    const result = rule.check(graph);
+    expect(result.score).toBe(100);
+    expect(result.issues).toHaveLength(0);
+  });
 });
 
 describe("AnswerLeakageRule", () => {

@@ -1,8 +1,5 @@
 import type { PromptVersionSummary } from "../../queries/prompt-query-service.js";
-import {
-  TEMPLATE_VARIABLE_PLACEHOLDER_RULE_FULL,
-  formatTemplateVariableList,
-} from "../template-variables-prompt.js";
+import { formatTemplateVariableList } from "../template-variables-prompt.js";
 
 // Single source of truth for the prompt content used during benchmarking.
 //
@@ -63,11 +60,13 @@ export const buildVersionGenerationSection = (
       `BRAID workflow graph (the prompt decomposed into atomic decision steps; the system follows this graph at runtime):\n${version.braidGraph}`,
     );
   }
+  // Variable LIST only — the placeholder-handling RULE itself is emitted
+  // once at the prompt level by buildGenerationPrompt (PHASE 1 #6),
+  // so duplicating it per-version here would re-state the same rule
+  // twice in a single LLM call.
   const variableList = formatTemplateVariableList(version.variables);
   if (variableList) {
-    blocks.push(
-      `Template variables — ${TEMPLATE_VARIABLE_PLACEHOLDER_RULE_FULL}\n${variableList}`,
-    );
+    blocks.push(`Declared template variables:\n${variableList}`);
   }
   return blocks.join("\n\n");
 };

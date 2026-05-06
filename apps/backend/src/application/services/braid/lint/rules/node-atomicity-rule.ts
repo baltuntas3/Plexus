@@ -10,7 +10,18 @@ import type { IGraphLintRule } from "../graph-lint-rule.js";
 const MAX_TOKENS_PER_NODE = 15;
 const CHARS_PER_TOKEN = 4;
 
-const estimateTokens = (text: string): number => Math.ceil(text.length / CHARS_PER_TOKEN);
+// `{{varName}}` references are structural placeholders the runtime
+// substitutes server-side. CLAUDE.md (BRAID rules) requires them to be
+// excluded from atomicity token counts: they describe a slot, not the
+// literal content that drives the 15-token budget. Without this strip,
+// a label like "Extract {{userQuery}}" charges ~6 tokens against the
+// budget when the actual reasoning content is just "Extract " (~2).
+const TEMPLATE_VARIABLE_PATTERN = /\{\{[^}]+\}\}/g;
+
+const estimateTokens = (text: string): number => {
+  const stripped = text.replace(TEMPLATE_VARIABLE_PATTERN, "");
+  return Math.ceil(stripped.length / CHARS_PER_TOKEN);
+};
 
 export class NodeAtomicityRule implements IGraphLintRule {
   readonly id = "node-atomicity";

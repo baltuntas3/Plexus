@@ -6,15 +6,34 @@ import { formatTemplateVariableList } from "../template-variables-prompt.js";
 // Fairness rule: each version is evaluated using only its own stored prompt
 // content. Benchmarking must not prepend extra framework-specific
 // instructions, otherwise one prompt family receives hidden assistance that
-// the others do not. The one exception is the BRAID runtime wrapper below
-// — it is applied UNIFORMLY to every BRAID version (so no BRAID version
-// gets help over another BRAID version) and it ONLY restores parity with
-// classical prompts, which already carry their own implicit output spec
-// inside their text. Without the wrapper, a classical prompt that says
-// "respond in JSON" gets a terse JSON answer while an equivalent BRAID
-// graph with the same intended output gets a multi-paragraph narration
-// (the model sees mermaid as "explain this graph" rather than "execute
-// this workflow silently"), which biases the comparison against BRAID.
+// the others do not. The one exception is the BRAID runtime wrapper below.
+//
+// Why the BRAID wrapper exists: a default LLM, given a mermaid graph as a
+// system prompt, treats it as "explain this diagram" rather than "execute
+// this workflow silently and emit only the terminal output". So a BRAID
+// version that decomposes a "respond in JSON" task into a graph would, by
+// default, narrate the graph traversal back to the user — and the judge's
+// instruction axis would penalise it for ignoring the implicit output
+// contract that exists everywhere outside the mermaid representation.
+// The wrapper restores the "act on the workflow, then output the final
+// result" semantics that classical prompts get for free.
+//
+// Asymmetry — fully acknowledged: the wrapper is applied to BRAID versions
+// only. Two situations where this is not perfectly fair:
+//   1. A classical prompt that does NOT specify an output discipline still
+//      lets the solver narrate freely. A BRAID version of "the same task"
+//      with the wrapper will produce terse output. If the judge's
+//      instruction axis interprets verbosity as a failure to "follow
+//      implied formatting", BRAID gets a small lift it did not earn.
+//   2. The wrapper text itself is fixed, so it cannot follow the specific
+//      output contract a particular BRAID graph encodes — a graph whose
+//      terminal node implies "explain the reasoning step by step" will be
+//      pushed by the wrapper toward terseness anyway, biasing AGAINST
+//      BRAID for that subclass of tasks.
+// Both directions are mild in practice and the wrapper is uniform across
+// every BRAID candidate (so no BRAID version gets help over another),
+// which is the comparison the analyzer is actually built around. This
+// stays a deliberate trade-off rather than a clean fairness fix.
 //
 // Takes a read projection rather than the write-side entity — benchmarking
 // only reads prompt text, never mutates, so a mutable aggregate here would

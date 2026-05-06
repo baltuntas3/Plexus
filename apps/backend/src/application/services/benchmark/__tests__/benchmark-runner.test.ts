@@ -876,6 +876,85 @@ describe("BenchmarkRunner.run", () => {
     expect(classicalCall).toBeDefined();
   });
 
+  it("hides the BRAID runtime wrapper from the judge so it does not score adherence to a framework directive", async () => {
+    // The BRAID runtime wrapper ("...OUTPUT ONLY THE FINAL RESULT — no
+    // narration, no markdown, no preamble") is attached to the SOLVER's
+    // system prompt to nudge the model into executing the graph instead
+    // of narrating it. It is NOT a user-stated constraint, so showing it
+    // to the judge would cause the judge to penalise candidates on the
+    // instruction axis for failing to satisfy a synthetic format rule
+    // that classical prompts never carry. Judge must see the raw
+    // executable prompt only.
+    const { benchmarks, results, queries } = await buildScaffold();
+
+    const versionWithBraid = createVersion(queries, {
+      promptId: "p1",
+      version: "v2",
+      sourcePrompt: "classical",
+      braidGraph: "graph TD\nA[start] --> B[end]",
+      generatorModel: "openai/gpt-oss-120b",
+    });
+
+    const provider = new RecordingProvider(() => ({
+      text: "candidate output",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+
+    const capturedJudgeSystemPrompts: string[] = [];
+    const judge = judgeFromPerCandidate(async (input) => {
+      if (input.systemPrompt !== undefined) {
+        capturedJudgeSystemPrompts.push(input.systemPrompt);
+      }
+      return {
+        score: buildJudgeScore(
+          { accuracy: 4, coherence: 4, instruction: 4 },
+          "stub reasoning",
+        ),
+        usage: { inputTokens: 1, outputTokens: 1 },
+        model: "stub",
+      };
+    });
+
+    const runner = new BenchmarkRunner({
+      benchmarks,
+      results,
+      promptQueries: queries,
+      providers: new SingleProviderFactory(provider),
+      judgeFactory: () => judge,
+    });
+
+    const bm = await queueBenchmark(benchmarks, {
+      testCases: [
+        {
+          id: "tc1",
+          input: "q1?",
+          expectedOutput: null,
+          category: null,
+          source: "generated" as const,
+        },
+      ],
+      promptVersionIds: ["1", versionWithBraid.id],
+    });
+
+    await runner.run(bm.id, buildContext().ctx);
+
+    const braidJudgePrompt = capturedJudgeSystemPrompts.find((p) =>
+      p.includes("graph TD"),
+    );
+    expect(braidJudgePrompt).toBeDefined();
+    // Judge sees the raw graph...
+    expect(braidJudgePrompt).toContain("graph TD\nA[start] --> B[end]");
+    // ...but NOT the BRAID runtime wrapper.
+    expect(braidJudgePrompt).not.toContain("OUTPUT ONLY THE FINAL RESULT");
+    expect(braidJudgePrompt).not.toContain("no narration");
+
+    const classicalJudgePrompt = capturedJudgeSystemPrompts.find(
+      (p) => p === "Answer concisely.",
+    );
+    expect(classicalJudgePrompt).toBeDefined();
+  });
+
   it("keeps a row completed when one judge in the ensemble fails", async () => {
     const { benchmarks, results, queries } = await buildScaffold();
     const provider = new RecordingProvider(() => ({

@@ -86,7 +86,23 @@ const QUALITY_INSTRUCTION_FRACTION = 20 / 80;
 const QUALITY_CONSISTENCY_FRACTION = 15 / 80;
 const EFFICIENCY_LATENCY_WEIGHT = 0.1;
 const EFFICIENCY_COST_WEIGHT = 0.1;
-const SOFT_RELIABILITY_PENALTY_WEIGHT = 0.5;
+// Soft reliability multiplier inside the composite. Hard reliability is
+// enforced by `MAX_OPERATIONAL_ISSUE_RATE_FOR_RECOMMENDATION` (only candidates
+// with rate ≤ 0.1 reach this stage), so this weight only differentiates
+// *eligible* candidates against each other along [0, 0.1].
+//
+// Sized so the differentiation is felt at the ranking layer:
+//   rate 0.00 → multiplier 1.00 (clean)
+//   rate 0.03 → multiplier 0.91 ( ~9% penalty)
+//   rate 0.05 → multiplier 0.85 (~15% penalty)
+//   rate 0.10 → multiplier 0.70 (~30% penalty, edge of the gate)
+// The previous value of 0.5 maxed out at a 5% penalty for an
+// at-the-gate candidate, which the hard cutoff already dwarfed — making
+// the multiplier cosmetic. 3.0 makes a clean candidate clearly preferred
+// over a mildly flaky one of similar quality without overwhelming the
+// rubric (a top-quality flaky candidate at rate 0.05 still typically
+// outranks a 15%-worse-quality clean candidate).
+const SOFT_RELIABILITY_PENALTY_WEIGHT = 3.0;
 
 interface CandidateStats {
   candidateKey: string;
@@ -811,13 +827,22 @@ const computeJudgeAgreement = (
       // `agreementScore` is `1 - MAE/4`: the average absolute rubric
       // difference, normalised by the maximum possible diff on the
       // integer 1-5 scale (= 4), and inverted so 1 means "graders agree"
-      // and 0 means "graders maximally disagree". This is NOT a
-      // chance-corrected agreement metric (Cohen's κ, Krippendorff's α)
-      // — it does not account for agreement expected by chance under the
-      // observed marginal distributions, so two judges who happen to
+      // and 0 means "graders maximally disagree".
+      //
+      // IMPORTANT — this is a rubric-closeness metric, NOT an
+      // inter-rater-reliability statistic. It is *not* chance-corrected
+      // (no Cohen κ, no Krippendorff α), so two judges who happen to
       // cluster around the middle of the rubric will look more agreeable
-      // than they really are. The simple MAE form is what the UI needs:
-      // a per-pair number whose units are interpretable in rubric points.
+      // than they really are; with a 5-point rubric the chance level
+      // alone produces a non-trivial "agreement" floor. Read the field
+      // as "how close are these judges in rubric points?", not as "are
+      // these judges reliable?".
+      //
+      // The field name and zero-to-one range survived a deliberate
+      // backend↔SDK↔frontend rename audit; renaming would break the
+      // shared-types contract for no real safety win, so the policy is
+      // documented here, in the shared-types DTO comment, and as a
+      // tooltip + section blurb on the UI table that displays it.
       return {
         judgeModelA,
         judgeModelB,
@@ -1217,19 +1242,32 @@ export const pickWithPairedSignificanceTieBreak = (
   // verdict in exactly the small-benchmark regime where the marginal CIs
   // are themselves degenerate (single-cluster point estimates). Default
   // to "not tied" so the recommendation falls back to the top-composite.
+  //
+  // Memoise per unordered-pair key. The transitivity guard re-tests
+  // (cheapest, other) for every other-tied-with-top, and (top, other) was
+  // already tested in step 1 — without a cache the same 10 000-sample
+  // cluster bootstrap could be invoked twice for the same pair on every
+  // analysis. Cache key is order-independent so (a,b) and (b,a) collapse.
+  const tieCache = new Map<string, { tied: boolean; diffCi: { low: number; high: number } | null }>();
+  const pairCacheKey = (aKey: string, bKey: string): string =>
+    aKey < bKey ? `${aKey}::${bKey}` : `${bKey}::${aKey}`;
   const isPairTied = (
     aKey: string,
     bKey: string,
-    _aStats: CandidateStats,
-    _bStats: CandidateStats,
   ): { tied: boolean; diffCi: { low: number; high: number } | null } => {
+    const key = pairCacheKey(aKey, bKey);
+    const cached = tieCache.get(key);
+    if (cached) return cached;
     const diffCi = pairedDifferenceCI(
       rowsByCandidate.get(aKey) ?? [],
       rowsByCandidate.get(bKey) ?? [],
       rubricByRowId,
     );
-    if (!diffCi) return { tied: false, diffCi: null };
-    return { tied: diffCi.low <= 0 && diffCi.high >= 0, diffCi };
+    const result = !diffCi
+      ? { tied: false, diffCi: null }
+      : { tied: diffCi.low <= 0 && diffCi.high >= 0, diffCi };
+    tieCache.set(key, result);
+    return result;
   };
 
   // 1) Collect all candidates tied with the top under paired bootstrap.
@@ -1242,12 +1280,7 @@ export const pickWithPairedSignificanceTieBreak = (
   for (const other of ranking.slice(1)) {
     const otherStats = byKey.get(other.candidateKey);
     if (!otherStats) continue;
-    const { tied, diffCi } = isPairTied(
-      top.candidateKey,
-      other.candidateKey,
-      topStats,
-      otherStats,
-    );
+    const { tied, diffCi } = isPairTied(top.candidateKey, other.candidateKey);
     if (tied) {
       tiedWithTop.push({ rank: other, stats: otherStats, diffCiVsTop: diffCi });
     }
@@ -1296,8 +1329,6 @@ export const pickWithPairedSignificanceTieBreak = (
     const { tied } = isPairTied(
       cheapest.rank.candidateKey,
       entry.rank.candidateKey,
-      cheapest.stats,
-      entry.stats,
     );
     if (!tied) {
       return {

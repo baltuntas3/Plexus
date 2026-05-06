@@ -244,6 +244,11 @@ export interface JudgeAgreementRowDto {
   meanAbsCoherenceDiff: number;
   meanAbsInstructionDiff: number;
   exactAgreementRate: number;
+  // `1 - MAE/4` on the 1-5 rubric (zero = maximally disagree, one = identical
+  // votes). NOT a chance-corrected inter-rater-reliability statistic
+  // (Cohen κ / Krippendorff α). Two judges that cluster around the middle
+  // of the rubric will look more agreeable than they really are. Treat as
+  // a drift / closeness signal, not as an IRR certificate.
   agreementScore: number;
 }
 

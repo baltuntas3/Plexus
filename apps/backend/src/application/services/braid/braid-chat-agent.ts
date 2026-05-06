@@ -112,6 +112,13 @@ export class BraidChatAgent {
       model: this.model,
       temperature: 0,
       messages,
+      // The agent contract is "respond with one of two JSON shapes". Asking
+      // the provider to enforce JSON output (where supported) shrinks the
+      // surface where parseAgentResponse has to recover from leaked
+      // markdown fences or partial-prose preambles. Providers that do not
+      // honour the field fall back to prompt-only enforcement, which the
+      // RESPONSE_FORMAT block already drives.
+      responseFormat: "json",
     });
     return this.buildOutput(response.text, response.usage.inputTokens, response.usage.outputTokens);
   }

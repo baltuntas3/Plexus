@@ -137,7 +137,7 @@ export class BenchmarkRunner {
       const estimatedCellCostUsd = estimateCellCostUsd(benchmark, cells.length);
       const existingRows = await this.deps.results.listByBenchmark(benchmarkId);
       const existingByKey = new Map(
-        existingRows.map((row) => [rowKey(row), row] as const),
+        existingRows.map((row) => [cellKey(row), row] as const),
       );
       const total = cells.length;
       let processed = cells.reduce((sum, cell) => {
@@ -316,7 +316,33 @@ export class BenchmarkRunner {
     judges: ReadonlyArray<{ model: string; judge: IJudge }>,
   ): Promise<UpsertableBenchmarkResult[]> {
     const firstCell = triple.cells[0] as MatrixCell;
-    const systemPrompt = buildEvaluationPrompt(firstCell.version);
+    // Solver and judge see DIFFERENT system prompts.
+    //
+    // The solver receives `buildEvaluationPrompt(version)`, which wraps a
+    // BRAID graph with the BRAID_RUNTIME_INSTRUCTION ("you are an
+    // automated agent... output only the final result, no narration..." —
+    // see evaluation-prompt.ts). That wrapper is a runtime execution
+    // hint, not a user-stated constraint: it nudges the solver into
+    // "execute this graph silently" mode rather than "explain this
+    // graph", restoring parity with classical prompts that already imply
+    // their output shape inside their own text.
+    //
+    // The judge receives the RAW `version.executablePrompt` (graph for
+    // BRAID, prose for classical) WITHOUT the wrapper. Feeding the
+    // wrapper to the judge would let it score adherence to a framework
+    // directive as if it were a user constraint — and the wrapper's
+    // "OUTPUT ONLY THE FINAL RESULT — no narration, no markdown, no
+    // preamble" reads as exactly the kind of strict format rule the
+    // instruction axis enforces. Classical versions never carry such a
+    // wrapper, so judging BRAID with the wrapper visible imposed a
+    // stricter standard on BRAID than on classical — the opposite of
+    // the parity the wrapper was meant to restore. Real user-stated
+    // constraints encoded in BRAID terminal-verification nodes
+    // ("Check: tone empathetic AND under 250 words") still flow to the
+    // judge through the executable prompt, so legitimate format
+    // requirements continue to be enforced.
+    const solverSystemPrompt = buildEvaluationPrompt(firstCell.version);
+    const judgeSystemPrompt = firstCell.version.executablePrompt;
     const provider = this.deps.providers.forModel(triple.solverModel);
 
     // Solver phase — one call per rep. Failures are captured as per-rep
@@ -341,7 +367,7 @@ export class BenchmarkRunner {
           const candidate = await provider.generate({
             model: cell.solverModel,
             messages: [
-              { role: "system", content: systemPrompt },
+              { role: "system", content: solverSystemPrompt },
               { role: "user", content: cell.testCase.input },
             ],
             temperature: SOLVER_TEMPERATURE,
@@ -414,7 +440,7 @@ export class BenchmarkRunner {
           candidates: successful.map((s) => s.candidate.text),
           seed: deriveBatchJudgeSeed(benchmark.seed, triple, model),
           reference: firstCell.testCase.expectedOutput ?? undefined,
-          systemPrompt,
+          systemPrompt: judgeSystemPrompt,
         });
         // The judge prompt is shared, so exact per-candidate attribution is
         // unknowable. Split tokens as evenly as possible while preserving the
@@ -578,29 +604,40 @@ const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
   ]);
 };
 
-const cellKey = (cell: MatrixCell): string =>
-  benchmarkResultKey(
-    cell.testCase.id,
-    cell.version.id,
-    cell.solverModel,
-    cell.runIndex,
+// Unified matrix-coordinate key: a MatrixCell carries its coordinates under
+// `testCase.id` / `version.id` while a persisted row carries the same
+// coordinates as flat `testCaseId` / `promptVersionId` fields. Both shapes
+// hash to the same key, so the resume-path lookup can match cells against
+// already-persisted rows without two near-identical helpers.
+type MatrixCoord =
+  | MatrixCell
+  | Pick<
+      UpsertableBenchmarkResult,
+      "testCaseId" | "promptVersionId" | "solverModel" | "runIndex"
+    >;
+
+const isMatrixCell = (coord: MatrixCoord): coord is MatrixCell =>
+  (coord as MatrixCell).testCase !== undefined;
+
+const cellKey = (coord: MatrixCoord): string => {
+  if (isMatrixCell(coord)) {
+    return benchmarkResultKey(
+      coord.testCase.id,
+      coord.version.id,
+      coord.solverModel,
+      coord.runIndex,
+    );
+  }
+  return benchmarkResultKey(
+    coord.testCaseId,
+    coord.promptVersionId,
+    coord.solverModel,
+    coord.runIndex,
   );
+};
 
 const tripleKey = (cell: MatrixCell): string =>
   `${cell.testCase.id}::${cell.version.id}::${cell.solverModel}`;
-
-const rowKey = (
-  row: Pick<
-    UpsertableBenchmarkResult,
-    "testCaseId" | "promptVersionId" | "solverModel" | "runIndex"
-  >,
-): string =>
-  benchmarkResultKey(
-    row.testCaseId,
-    row.promptVersionId,
-    row.solverModel,
-    row.runIndex,
-  );
 
 const buildFailedInput = (
   benchmarkId: string,

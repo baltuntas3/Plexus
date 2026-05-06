@@ -935,7 +935,7 @@ const AnalysisPanel = ({
         <Stack gap="xs">
           <Text fw={600}>Judge agreement</Text>
           <Text size="xs" c="dimmed">
-            Pairwise disagreement across judge votes on the same completed rows.
+            Pairwise rubric closeness across judge votes on the same completed rows. The "Agreement" column is <code>1 − MAE/4</code> on the 1-5 rubric, NOT a chance-corrected reliability statistic (Cohen κ / Krippendorff α). Two judges that happen to cluster around the middle of the scale will look more agreeable than they really are; use this column to spot drift, not to certify reliability.
           </Text>
           {analysis.judgeAgreement.length === 0 ? (
             <Text size="sm" c="dimmed">Not enough multi-judge data.</Text>
@@ -945,7 +945,18 @@ const AnalysisPanel = ({
                 <Table.Tr>
                   <Table.Th>Judge pair</Table.Th>
                   <Table.Th>Shared rows</Table.Th>
-                  <Table.Th>Agreement</Table.Th>
+                  <Table.Th>
+                    <Tooltip
+                      label="1 - MAE/4 on the 1-5 rubric. NOT chance-corrected; mid-scale clustering inflates this. Use for drift, not for IRR."
+                      withArrow
+                      multiline
+                      w={320}
+                    >
+                      <Text size="sm" component="span" style={{ borderBottom: "1px dotted" }}>
+                        Rubric match (MAE-based)
+                      </Text>
+                    </Tooltip>
+                  </Table.Th>
                   <Table.Th>Exact match</Table.Th>
                 </Table.Tr>
               </Table.Thead>

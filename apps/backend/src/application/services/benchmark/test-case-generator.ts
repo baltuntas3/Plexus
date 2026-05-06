@@ -169,18 +169,18 @@ HARD RULES (a case that violates any of these is unacceptable; rewrite it):
 - No meta commentary, category names, or rationale text inside the "input" field.
 - Adversarial cases exploit a constraint actually stated in the spec; for Mode B, adversarial inputs are artifacts whose own contents carry the prompt-injection payload, not meta-questions about the system.
 - Inputs must be coherent, complete, and self-contained — no "...", no "[insert X]" placeholders.
-- Cases must be materially distinct from each other, and exactly ${count} of them. Use only the listed category labels.
+- Cases must be materially distinct from each other, and exactly ${count} of them.
 
 Respond with a JSON object in this exact format. The "input" string is the
-raw user message (Mode A) or raw artifact (Mode B) — nothing else:
+raw user message (Mode A) or raw artifact (Mode B) — nothing else. Use only
+the seven category labels listed above (typical, complex, ambiguous,
+adversarial, edge_case, contradictory, stress):
 {
   "testCases": [
     { "input": "<raw user message OR raw artifact>", "category": "typical" },
     { "input": "<raw user message OR raw artifact>", "category": "adversarial" }
   ]
 }
-
-Use category values from this set only: typical, complex, ambiguous, adversarial, edge_case, contradictory, stress.
 
 Return only the JSON object, no other text.`;
 
